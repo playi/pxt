@@ -526,7 +526,7 @@ export class ProjectView
             return Promise.resolve()
 
         this.stopSimulator(true);
-        pxt.blocks.cleanBlocks();
+        if (pxt.blocks.cleanBlocks) pxt.blocks.cleanBlocks();
         let logs = this.refs["logs"] as logview.LogView;
         logs.clear();
         this.setState({
@@ -1951,6 +1951,14 @@ function initTheme() {
             boardDef.image = patchCdn(boardDef.image)
             if (boardDef.outlineImage) boardDef.outlineImage = patchCdn(boardDef.outlineImage)
         }
+    }
+
+    if (pxt.appTarget.experiments) {
+        Object.keys(pxt.appTarget.experiments).forEach((key) => {
+            if (pxt.shell.inExperiment(key)) {
+                Util.jsonMergeFrom(theme, pxt.appTarget.experiments[key].appTheme);
+            }
+        })
     }
 }
 

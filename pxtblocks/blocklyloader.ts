@@ -5,21 +5,6 @@ import Util = pxt.Util;
 let lf = Util.lf;
 
 namespace pxt.blocks {
-    export const blockColors: Map<number | string> = {
-        loops: '#107c10',
-        logic: '#006970',
-        math: '#712672',
-        images: '#5C2D91',
-        variables: '#A80000',
-        text: '#996600',
-        lists: '#D83B01'
-    }
-
-    export enum CategoryMode {
-        All,
-        None,
-        Basic
-    }
 
     const typeDefaults: Map<{ field: string, block: string, defaultValue: string }> = {
         "string": {
@@ -44,11 +29,9 @@ namespace pxt.blocks {
 
     // list of built-in blocks, should be touched.
     const builtinBlocks: Map<{
-        block: B.BlockDefinition;
+        block: Blockly.BlockDefinition;
         symbol?: pxtc.SymbolInfo;
     }> = {};
-    Object.keys(Blockly.Blocks)
-        .forEach(k => builtinBlocks[k] = { block: Blockly.Blocks[k] });
     export const buildinBlockStatements: Map<boolean> = {
         "controls_if": true,
         "controls_for": true,
@@ -92,6 +75,7 @@ namespace pxt.blocks {
         const typeInfo = typeDefaults[type];
 
         shadow.setAttribute("type", shadowType || typeInfo && typeInfo.block || type);
+        if (newBlocks) shadow.setAttribute("colour", (Blockly as any).Colours.textField);
 
         if (typeInfo) {
             const field = document.createElement("field");
@@ -489,7 +473,7 @@ namespace pxt.blocks {
         if (pre)
             i.appendField(pre);
         if (right)
-            i.setAlign(Blockly.ALIGN_RIGHT)
+            i.setAlign(Blockly.ALIGN_LEFT)
         // ignore generic types
         if (type && type != "T")
             i.setCheck(type);
@@ -538,8 +522,17 @@ namespace pxt.blocks {
         }
 
         block.setTooltip(fn.attributes.jsDoc);
-        block.setColour(color);
-
+        if (newBlocks) {
+            block.setColour(color, Blockly.PXTUtils.fadeColour(color as string, 0.5, true), Blockly.PXTUtils.fadeColour(color as string, 0.5, false));
+            switch (fn.retType) {
+                case "number": block.setOutputShape(Blockly.OUTPUT_SHAPE_ROUND); break;
+                case "boolean": block.setOutputShape(Blockly.OUTPUT_SHAPE_HEXAGONAL); break;
+                case "string": block.setOutputShape(Blockly.OUTPUT_SHAPE_SQUARE); break;
+                default: block.setOutputShape(Blockly.OUTPUT_SHAPE_ROUND);
+            }
+        }
+        else
+            block.setColour(color);
         parseFields(fn.attributes.block).map(field => {
             let i: any;
             if (!field.p) {
@@ -577,7 +570,8 @@ namespace pxt.blocks {
                                 src: pxt.webConfig.commitCdnUrl + `blocks/${v.namespace.toLowerCase()}/${v.name.toLowerCase()}.png`,
                                 alt: k,
                                 width: 32,
-                                height: 32
+                                height: 32,
+                                value: v.name
                             } : k,
                             v.namespace + "." + v.name
                         ];
@@ -1134,9 +1128,14 @@ namespace pxt.blocks {
     }
 
     let blocklyInitialized = false;
+    let newBlocks: boolean = undefined;
     function init() {
         if (blocklyInitialized) return;
         blocklyInitialized = true;
+
+        newBlocks = pxt.appTarget.appTheme && pxt.appTarget.appTheme.blocksVersion === 2;
+        Object.keys(Blockly.Blocks)
+            .forEach(k => builtinBlocks[k] = { block: Blockly.Blocks[k] });
 
         goog.provide('Blockly.Blocks.device');
         goog.require('Blockly.Blocks');
@@ -1583,7 +1582,6 @@ namespace pxt.blocks {
 
             if (a === null) {
                 collapseSubcategories(that.selectedItem_);
-                editor.lastInvertedCategory = that.selectedItem_;
             }
 
             oldSetSelectedItem.call(that, a);
@@ -1831,7 +1829,7 @@ namespace pxt.blocks {
             mInfo.name,
             (pxt.appTarget.compile && pxt.appTarget.compile.floatingPoint) ? lf("a decimal number") : lf("an integer number"),
             mInfo.url,
-            String(blockColors[mInfo.category])
+            newBlocks ? (Blockly as any).Colours.textField : String(blockColors[mInfo.category])
         );
 
         // builtin math_number_minmax
@@ -1842,7 +1840,7 @@ namespace pxt.blocks {
             mMInfo.name,
             (pxt.appTarget.compile && pxt.appTarget.compile.floatingPoint) ? lf("a decimal number") : lf("an integer number"),
             mMInfo.url,
-            String(blockColors[mMInfo.category])
+            newBlocks ? (Blockly as any).Colours.textField : String(blockColors[mMInfo.category])
         );
 
         // builtin math_arithmetic
