@@ -1,10 +1,6 @@
 /// <reference path="../localtypings/pxtparts.d.ts"/>
 
 namespace pxsim {
-    export interface SimulatorMessage {
-        type: string;
-    }
-
     export interface SimulatorRunMessage extends SimulatorMessage {
         type: "run";
         id?: string;
@@ -79,6 +75,7 @@ namespace pxsim {
 
     export interface SimulatorRadioPacketPayload {
         type: number;
+        groupId: number;
         stringData?: string;
         numberData?: number;
     }

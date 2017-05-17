@@ -134,6 +134,7 @@ declare namespace pxt {
         homeUrl?: string;
         shareUrl?: string;
         embedUrl?: string;
+        betaUrl?: string;
         legacyDomain?: string;
         docMenu?: DocMenuEntry[];
         TOC?: TOCMenuEntry[];
@@ -188,6 +189,9 @@ declare namespace pxt {
         extendEditor?: boolean; // whether a target specific editor.js is loaded
         highContrast?: boolean; // simulator has a high contrast mode
         selectLanguage?: boolean; // add language picker to settings menu
+        useUploadMessage?: boolean; // change "Download" text to "Upload"
+        downloadIcon?: string; // which icon io use for download
+        blockColors?: Map<string>; // block namespace colors, used for build in categories
     }
 
     interface DocMenuEntry {
@@ -223,6 +227,7 @@ declare namespace ts.pxtc {
         nativeType?: string; // currently only "thumb"
         hasHex: boolean;
         useUF2?: boolean;
+        useModulator?: boolean;
         hexMimeType?: string;
         driveName?: string;
         jsRefCounting?: boolean;
