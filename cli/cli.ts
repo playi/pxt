@@ -1210,8 +1210,23 @@ function maxMTimeAsync(dirs: string[]) {
 export function buildTargetAsync(): Promise<void> {
     if (pxt.appTarget.id == "core")
         return buildTargetCoreAsync()
-    return simshimAsync()
-        .then(() => buildFolderAsync('sim', true, 'sim'))
+
+    let initPromise: Promise<void>;
+
+    const commonPackageDir = path.resolve("node_modules/pxt-common-packages")
+
+    // Make sure to build common sim in case of a local clean. This will do nothing for
+    // targets without pxt-common-packages installed.
+    if (!inCommonPkg("built/common-sim.js") || !inCommonPkg("built/common-sim.d.ts")) {
+        initPromise = buildCommonSimAsync();
+    }
+    else  {
+        initPromise = Promise.resolve();
+    }
+
+    return initPromise
+        .then(() => { copyCommonSim(); return simshimAsync() })
+        .then(() => buildFolderAsync('sim', true, pxt.appTarget.id === 'common' ? 'common-sim' : 'sim'))
         .then(buildTargetCoreAsync)
         .then(() => buildFolderAsync('cmds', true))
         .then(buildSemanticUIAsync)
@@ -1226,6 +1241,10 @@ export function buildTargetAsync(): Promise<void> {
             return Promise.resolve();
         })
         .then(() => buildFolderAsync('server', true, 'server'))
+
+    function inCommonPkg(p: string) {
+        return fs.existsSync(path.join(commonPackageDir, p));
+    }
 }
 
 function buildFolderAsync(p: string, optional?: boolean, outputName?: string): Promise<void> {
@@ -1250,6 +1269,15 @@ function buildFolderAsync(p: string, optional?: boolean, outputName?: string): P
         args: ["../node_modules/typescript/bin/tsc"],
         cwd: p
     })
+}
+
+function copyCommonSim() {
+    const p = "node_modules/pxt-common-packages/built";
+    if (fs.existsSync(p)) {
+        pxt.log(`copying common-sim...`)
+        nodeutil.cp(path.join(p, "common-sim.js"), "built");
+        nodeutil.cp(path.join(p, "common-sim.d.ts"), "built");
+    }
 }
 
 function buildFolderAndBrowserifyAsync(p: string, optional?: boolean, outputName?: string): Promise<void> {
@@ -1742,14 +1770,40 @@ function buildAndWatchTargetAsync(includeSourceMaps = false) {
         return Promise.resolve()
     }
 
+    const hasCommonPackages = fs.existsSync(path.resolve("node_modules/pxt-common-packages"));
+
+    let simDirectories: string[] = [];
+    if (hasCommonPackages) {
+        const libsdir = path.resolve("node_modules/pxt-common-packages/libs");
+        simDirectories = fs.readdirSync(libsdir).map(fn => path.join(libsdir, fn, "sim"));
+        simDirectories = simDirectories.filter(fn => fs.existsSync(fn));
+    }
+
     return buildAndWatchAsync(() => buildPxtAsync(includeSourceMaps)
+        .then(buildCommonSimAsync, e => buildFailed("common sim build failed: " + e.message, e))
         .then(() => buildTargetAsync().then(r => { }, e => {
             buildFailed("target build failed: " + e.message, e)
         }))
         .then(() => buildTargetDocsAsync(false, true).then(r => { }, e => {
             buildFailed("target build failed: " + e.message, e)
         }))
-        .then(() => [path.resolve("node_modules/pxt-core")].concat(dirsToWatch)));
+        .then(() => {
+            let toWatch = [path.resolve("node_modules/pxt-core")].concat(dirsToWatch)
+            if (hasCommonPackages) {
+                toWatch = toWatch.concat(simDirectories);
+            }
+            return toWatch;
+        }));
+}
+
+function buildCommonSimAsync() {
+    const simPath = path.resolve("node_modules/pxt-common-packages/sim");
+    if (fs.existsSync(simPath)) {
+        return buildFolderAsync(simPath)
+    }
+    else {
+        return Promise.resolve();
+    }
 }
 
 function renderDocs(builtPackaged: string, localDir: string) {
@@ -2574,9 +2628,14 @@ function simulatorCoverage(pkgCompileRes: pxtc.CompileResult, pkgOpts: pxtc.Comp
 
     pxt.log("checking for missing sim implementations...")
 
+    const sources = ["built/sim.d.ts", "node_modules/pxt-core/built/pxtsim.d.ts"];
+    if (fs.existsSync("built/common-sim.d.ts")) {
+        sources.push("built/common-sim.d.ts")
+    }
+
     let opts: pxtc.CompileOptions = {
         fileSystem: {},
-        sourceFiles: ["built/sim.d.ts", "node_modules/pxt-core/built/pxtsim.d.ts"],
+        sourceFiles: sources,
         target: mainPkg.getTargetOptions(),
         ast: true,
         noEmit: true,

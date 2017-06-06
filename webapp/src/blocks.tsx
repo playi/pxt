@@ -98,6 +98,7 @@ export class Editor extends srceditor.Editor {
                                 .then((fns: pxtc.service.SearchInfo[]) => fns),
                             searchTb => this.updateToolbox(searchTb, this.showToolboxCategories, true));
                     }
+                    pxt.blocks.initFlyouts(this.editor);
 
                     let xml = this.delayLoadXml;
                     this.delayLoadXml = undefined;
@@ -167,13 +168,30 @@ export class Editor extends srceditor.Editor {
     }
 
     private initLayout() {
-        // layout on first load if no data info
-        const needsLayout = this.editor.getTopBlocks(false).some(b => {
+        let minX: number;
+        let minY: number;
+        let needsLayout = false;
+
+        this.editor.getTopBlocks(false).forEach(b => {
             const tp = b.getBoundingRectangle().topLeft;
-            return b.type != ts.pxtc.ON_START_TYPE && tp.x == 0 && tp.y == 0
+            if (minX === undefined || tp.x < minX) {
+                minX = tp.x;
+            }
+            if (minY === undefined || tp.y < minY) {
+                minY = tp.y;
+            }
+
+            needsLayout = needsLayout || (b.type != ts.pxtc.ON_START_TYPE && tp.x == 0 && tp.y == 0);
         });
-        if (needsLayout)
+
+        if (needsLayout) {
+            // If the blocks file has no location info (e.g. it's from the decompiler), format the code
             pxt.blocks.layout.flow(this.editor);
+        }
+        else {
+            // Otherwise translate the blocks so that they are positioned on the top left
+            this.editor.getTopBlocks(false).forEach(b => b.moveBy(-minX, -minY))
+        }
     }
 
     private initPrompts() {
@@ -216,7 +234,7 @@ export class Editor extends srceditor.Editor {
                 disagreeIcon: "checkmark",
                 size: "small"
             }).then(b => {
-                callback(b == 0);
+                callback(b == 1);
             })
         };
 
@@ -599,7 +617,10 @@ export class Editor extends srceditor.Editor {
             comments: true,
             disable: false,
             readOnly: readOnly,
-            toolboxType: pxt.appTarget.appTheme.coloredToolbox ? 'coloured' : pxt.appTarget.appTheme.invertedToolbox ? 'inverted' : 'normal',
+            toolboxOptions: {
+                colour: pxt.appTarget.appTheme.coloredToolbox,
+                inverted: pxt.appTarget.appTheme.invertedToolbox
+            },
             zoom: {
                 enabled: false,
                 controls: false,
