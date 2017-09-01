@@ -1134,6 +1134,10 @@ export class ProjectView
         this.setState({ fullscreen: !this.state.fullscreen });
     }
 
+    closeFlyout() {
+        this.editor.closeFlyout();
+    }
+
     toggleMute() {
         pxt.tickEvent("simulator.mute", { view: 'computer', muteTo: '' + !this.state.mute });
         simulator.mute(!this.state.mute);
@@ -2286,7 +2290,7 @@ $(document).ready(() => {
             }
 
             // default handlers
-            if (hd) return theEditor.loadHeaderAsync(hd, null)
+            if (hd) return theEditor.loadHeaderAsync(hd, theEditor.state.filters)
             else theEditor.newProject();
             return Promise.resolve();
         })
