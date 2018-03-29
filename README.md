@@ -30,8 +30,10 @@ Examples of Editors built with PXT:
 
 ## Branches
 
-* `wonder_freshcoat` is the branch that we use for Code builds. JTBC, we do NOT use master.
-* ``master`` is the active development branch used by MS. To update `wonder_freschoat` with the latest work from MS:
+* This repo is a fork of MS's pxt repo.
+* The `wonder_freshcoat` branch of our fork is the branch that we use for Code builds. JTBC, we do NOT use master.
+* The `master` branch of MS's pxt repo is the active development branch used by MS. To update `wonder_freschoat` with the latest work from MS:
+0. On Github, merge PXT's master to our master.
 0. `git checkout master`
 0. `git pull`
 1. `git checkout wonder_freshcoat`
@@ -40,6 +42,9 @@ Examples of Editors built with PXT:
 3. `git merge master`
 4. After merging, be sure to test out the editor to make sure that updating didn't break anything. See the pxt-wonder README for a bit more on this.
 5. Push up your `updatePXT[date]` branch and make a PR to `wonder_freshcoat`
+6. In `pxt-wonder`'s package.json, update the version number for `pxt-core` to whatever version of pxt you just merged in to `wonder_freshcoat`.
+
+It's worth really knowing what you're doing or checking with MS before you do the above. E.g. right now we're waiting on the word from them to update to the new version of PXT, which is written in TypeScript 2 instead of TS 1.
 
 ## Running a target from localhost
 
