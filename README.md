@@ -34,17 +34,33 @@ Examples of Editors built with PXT:
 ## Branches
 
 * `wonder_master` is the branch that we use for Code builds.
-* `stable(stable build)` stable branches from the upstream reopsitory
-* `wonder_stable(stable build)` stable brances with our changes merged in
+* `stable(stable build)` stable branches from the upstream reopsitory (Microsoft/pxt)
+* `wonder_stable(stable build)` stable branches with our changes merged in
 * To update PXT in pxt-wonder with a new stable branch from microsoft, follow these steps:
 0. `git fetch upstream stable(stable build)` fetch the upstream stable branch from microsoft/pxt
-1. `git checkout stable(stable branch)` check out the stable branch
-2. `git checkout -b wonder_stable(stable build)` branch off the stable branch adding the prefix `wonder_`
-3. `git merge wonder_master` merge the current state of wonder_master (containing our own changes) into the wonder_stable branch you just made
-4. `git checkout wonder_master`
-5. `git merge wonder_stable(stable build)` merge the changes from the wonder_stable branch back into wonder_master. they should now be in sync
-6. `git push origin wonder_master`
-7. Commit the new pxt submodule commit in pxt-wonder
+    (Note, if you have not set your 'upstream' to be Microsoft/pxt branch, then you can either create a remote upstream      
+    pointing to the MS repro, or you can use the MS Repro https url instead of 'upstream')
+1. `git checkout stable(stable branch)` check out Microsoft's stable branch
+2. `git checkout -b wonder_stable(stable build)` create a local branch off the stable branch adding the prefix `wonder_`
+3. `git merge wonder_master` merge the wonder workshop specific changes from our wonder_master branch down
+4. Fix any merge conflict issues. (I reccomend setting up p4 as a git mergetool)
+5. `git push origin wonder_stable(StableBuild#)` Push the wonder_stable branch to github as a record of the changes
+6. Build/ spotTest the new pxt changes to make sure there are no major regressions/ issues
+7. go to the 'wonder_stable(Build#)' branch on github
+8. click the 'new pull request' button
+9. change the 'branch' to merge into to 'wonder_master' (it will default to Microsoft/pxt)
+10. Create the pull request to wonder_master
+11. Merge the PR into wonder_master
+
+
+12. Now you need to update pxt-wonder repro's 'pxt' submodule
+13. In your pxt-wonder repro, cd into `modules/pxt` submodule folder
+14. `git checkout wonder_master` branch
+15. git pull origin wonder_master to get the latest changes you have just committed to the pxt
+16. cd ../.. to be in your 'pxt-wonder' repo
+17. commit your new pxt submodule to pxt-wonder (note you may need to create a branch and merge that pr into pxt-wonder master)
+
+Congrats, you have updated the pxt submodule!
 
 ## Running a target from localhost
 
