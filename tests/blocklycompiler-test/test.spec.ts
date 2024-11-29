@@ -19,6 +19,7 @@ pxt.setAppTarget({
         isNative: false,
         hasHex: false,
         jsRefCounting: true,
+        switches: {}
     },
     bundledpkgs: {},
     appTheme: {},
@@ -36,6 +37,9 @@ pxt.webConfig = {
     verprefix: undefined,
     workerjs: WEB_PREFIX + "/blb/worker.js",
     monacoworkerjs: undefined,
+    gifworkerjs: undefined,
+    serviceworkerjs: undefined,
+    typeScriptWorkerJs: undefined,
     pxtVersion: undefined,
     pxtRelId: undefined,
     pxtCdnUrl: undefined,
@@ -47,6 +51,8 @@ pxt.webConfig = {
     targetUrl: undefined,
     targetId: undefined,
     simUrl: undefined,
+    simserviceworkerUrl: undefined,
+    simworkerconfigUrl: undefined,
     partsUrl: undefined,
     runUrl: undefined,
     docsUrl: undefined,
@@ -109,14 +115,14 @@ class BlocklyCompilerTestHost implements pxt.Host {
                     },
                     "description": "",
                     "files": [
-                        "main.blocks",
-                        "main.ts",
+                        pxt.MAIN_BLOCKS,
+                        pxt.MAIN_TS,
                         "pxt-core.d.ts",
                         "pxt-helpers.ts"
                     ]
                 });
             }
-            else if (filename == "main.blocks") {
+            else if (filename == pxt.MAIN_BLOCKS) {
                 return "";
             }
             else if (filename == "pxt-core.d.ts" || filename == "pxt-helpers.ts") {
@@ -142,7 +148,7 @@ class BlocklyCompilerTestHost implements pxt.Host {
     }
 
     getHexInfoAsync(extInfo: pxtc.ExtensionInfo): Promise<pxtc.HexInfo> {
-        return pxt.hex.getHexInfoAsync(this, extInfo)
+        return pxt.hexloader.getHexInfoAsync(this, extInfo)
     }
 
     cacheStoreAsync(id: string, val: string): Promise<void> {
@@ -158,7 +164,8 @@ class BlocklyCompilerTestHost implements pxt.Host {
     }
 }
 
-function fail(msg: string) {
+// @ts-ignore
+function fail(msg: string): never {
     chai.assert(false, msg);
 }
 
@@ -183,7 +190,7 @@ function getBlocksInfoAsync(): Promise<pxtc.BlocksInfo> {
                 return Promise.reject("Could not compile");
 
             // decompile to blocks
-            let apis = pxtc.getApiInfo(opts, resp.ast);
+            let apis = pxtc.getApiInfo(resp.ast, opts.jres);
             let blocksInfo = pxtc.getBlocksInfo(apis);
             pxt.blocks.initializeAndInject(blocksInfo);
 
@@ -209,8 +216,7 @@ function blockTestAsync(name: string) {
             const workspace = new Blockly.Workspace();
             (Blockly as any).mainWorkspace = workspace;
             const xml = Blockly.Xml.textToDom(blocksFile);
-            Blockly.Xml.domToWorkspace(xml, workspace);
-
+            pxt.blocks.domToWorkspaceNoEvents(xml, workspace);
             return pxt.blocks.compileAsync(workspace, blocksInfo)
         }, err => fail(`Unable to get block info: ` + JSON.stringify(err)))
         .then((res: pxt.blocks.BlockCompilationResult) => {
@@ -223,8 +229,8 @@ function blockTestAsync(name: string) {
                 console.log(compiledTs);
             }
 
-            chai.assert(compiledTs === baselineTs, "Compiled result did not match baseline");
-        }, err => fail('Compiling blocks failed'));
+            chai.assert(compiledTs === baselineTs, "Compiled result did not match baseline: " + name + " " + res.source);
+        }, err => fail('Compiling blocks failed with error: ' + err));
 }
 
 describe("blockly compiler", function () {
@@ -279,12 +285,28 @@ describe("blockly compiler", function () {
             blockTestAsync("lists_length_with_for_of").then(done, done);
         });
 
+        it("should not declare strings as stris when using for each string block", (done: () => void) => {
+            blockTestAsync("for_each_string").then(done, done);
+        });
+
         it("should handle empty array blocks", (done: () => void) => {
             blockTestAsync("lists_empty_arrays").then(done, done);
         });
 
         it("should handle functions with list return types", (done: () => void) => {
             blockTestAsync("array_return_type").then(done, done);
+        });
+
+        it("should correctly infer types for arrays initialized to empty", (done: () => void) => {
+            blockTestAsync("empty_array_inference").then(done, done);
+        });
+
+        it("should give variables that are only assigned the empty array a type of number[]", (done: () => void) => {
+            blockTestAsync("just_empty_array").then(done, done);
+        });
+
+        it("should compile aliases for pop, shift, unshift, and removeAt", (done: () => void) => {
+            blockTestAsync("array_aliases").then(done, done);
         });
     });
 
@@ -295,6 +317,10 @@ describe("blockly compiler", function () {
 
         it("should handle all the logic operators", (done: () => void) => {
             blockTestAsync("logic_all_operators").then(done, done);
+        });
+
+        it("should handle non-number inputs in logic operators", (done: () => void) => {
+            blockTestAsync("logic_non_numeric").then(done, done);
         });
     });
 
@@ -356,12 +382,104 @@ describe("blockly compiler", function () {
         it("should change reserved names", (done: () => void) => {
             blockTestAsync("variables_reserved_names").then(done, done);
         });
+
+        it("should change variable names when escaped name matches", (done: () => void) => {
+            blockTestAsync("escaped_name_equal").then(done, done);
+        });
+
+        it("should handle collisions with variables declared by the destructuring mutator", (done: () => void) => {
+            blockTestAsync("old_radio_mutator").then(done, done);
+        });
+
+        it("should handle collisions with variables declared by callback arguments", (done: () => void) => {
+            blockTestAsync("new_radio_block").then(done, done);
+        });
+
+        it("should handle collisions with variables declared by the minecraft destructuring mutator", (done: () => void) => {
+            blockTestAsync("mc_old_chat_blocks").then(done, done);
+        });
+
+        it("should handle collisions with variables declared by optional callback arguments", (done: () => void) => {
+            blockTestAsync("mc_chat_blocks").then(done, done);
+        });
+
+        it("should hoist variable declarations when the first set references the target", (done: () => void) => {
+            blockTestAsync("self_reference_vars").then(done, done);
+        });
+
+        it("should allow variables declared in a for-loop at the top of on-start", (done: () => void) => {
+            blockTestAsync("on_start_with_for_loop").then(done, done);
+        });
+
+        it("should handle variables declared within grey blocks", (done: () => void) => {
+            blockTestAsync("grey_block_declared_vars").then(done, done);
+        });
+
+        it("should declare variable types when the initializer expression has a generic type", (done: () => void) => {
+            blockTestAsync("array_type_declaration_in_set").then(done, done);
+        });
     });
 
     describe("compiling functions", () => {
         it("should handle name collisions", (done: () => void) => {
             blockTestAsync("functions_names").then(done, done);
         });
+
+        it("should handle function declarations", (done: () => void) => {
+            blockTestAsync("functions_v2").then(done, done);
+        });
+
+        it("should handle function reporters", (done: () => void) => {
+            blockTestAsync("functions_v2_reporters").then(done, done);
+        });
+
+        it("should narrow variable types when used as function call arguments", (done: () => void) => {
+            blockTestAsync("function_call_inference").then(done, done);
+        });
+
+        it("should handle return statements", (done: () => void) => {
+            blockTestAsync("return_statement").then(done, done);
+        });
+
+        it("should handle functions that return values", (done: () => void) => {
+            blockTestAsync("function_output").then(done, done);
+        });
+
+        it("should output a return type for recursive functions", (done: () => void) => {
+            blockTestAsync("function_recursion").then(done, done);
+        });
+
+        it("should bail out of type checking when a recursive function calls itself", (done: () => void) => {
+            blockTestAsync("function_bad_recursion").then(done, done);
+        });
+
+        it("should handle an array of arrays as array argument", (done: () => void) => {
+            blockTestAsync("array_parameter_arrays").then(done, done);
+        })
+
+        it("should handle an array of strings as array argument", (done: () => void) => {
+            blockTestAsync("array_parameter_strings").then(done, done);
+        })
+
+        it("should handle a variable as array argument", (done: () => void) => {
+            blockTestAsync("array_parameter_variable").then(done, done);
+        })
+
+        it("should handle an array of variables as array argument", (done: () => void) => {
+            blockTestAsync("array_parameter_variables").then(done, done);
+        })
+
+        it("should handle an empty array as array argument", (done: () => void) => {
+            blockTestAsync("array_parameter_empty").then(done, done);
+        })
+
+        it("should handle an array of booleans as array argument", (done: () => void) => {
+            blockTestAsync("array_parameter_booleans").then(done, done);
+        })
+
+        it("should handle an array of empty arrays as array argument", (done: () => void) => {
+            blockTestAsync("array_parameter_empty_arrays").then(done, done);
+        })
     });
 
     describe("compiling special blocks", () => {
@@ -375,6 +493,14 @@ describe("blockly compiler", function () {
 
         it("should convert handler parameters to draggable variables", done => {
             blockTestAsync("draggable_parameters").then(done, done);
+        });
+
+        it("should set the right check for primitive draggable parameters in blockly loader", done => {
+            blockTestAsync("draggable_primitive_reporter").then(done, done);
+        });
+
+        it("should convert enums to constants when emitAsConstant is set", done => {
+            blockTestAsync("enum_constants").then(done, done);
         });
     });
 
@@ -410,9 +536,21 @@ describe("blockly compiler", function () {
         });
     });
 
+    describe("compiling KIND_GET blocks", () => {
+        it("should declare namespaces for declared kinds", done =>{
+            blockTestAsync("sprite_kind").then(done, done);
+        });
+    });
+
     describe("compiling events blocks", () => {
         it("should handle APIs where the handler's type uses the Action alias", done => {
             blockTestAsync("action_event").then(done, done);
+        });
+    })
+
+    describe("compiling variable set", () => {
+        it("should attempt narrow types to the most specific type when set", done => {
+            blockTestAsync("inheritance").then(done, done);
         });
     })
 });

@@ -93,11 +93,11 @@ Run ``pxt help`` for the list of all commands. The following list of links conta
 * [bump](/cli/bump), increment the version number
 * [checkdocs](/cli/checkdocs), validates the documentation links and snippets
 * [staticpkg](/cli/staticpkg), compiles editor into flat file system
+* [install](/cli/install), copy extensions to `pxt_modules/`
 
 ## Debugging Commands
 
 * [gdb](/cli/gdb), attempt to start OpenOCD and GDB
-* [serial](/cli/serial), monitor UART ``serial.writeLine(...)`` from certain boards
 * [hidserial](/cli/hidserial), monitor ``console.log(...)`` from certain boards
 * [hiddmesg](/cli/hiddmesg), fetch ``DMESG`` buffer over HID and print it
 

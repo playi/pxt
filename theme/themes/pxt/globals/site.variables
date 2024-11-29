@@ -6,7 +6,8 @@
 *******************************/
 
 @primaryColor: @pink;
-@secondaryColor: @grey;
+@secondaryColor: rgba(0, 0, 0, 0.55);
+@docsHue: 257;
 
 @red:#A80000;
 @orange:#D83B01;
@@ -14,7 +15,6 @@
 @green:#107C10;
 @teal:#008272;
 @blue:#0078D7;
-@violet:#B4009E;
 @purple:#5C2D91;
 @pink:#E2008C;
 @brown:#00BCF2;
@@ -22,8 +22,9 @@
 @lightGrey: #d9d9d9;
 
 @greenTextColor: darken(@green, 5);
+@yellowTextColor: #8e6505;
 
-@lightTextColor              : rgba(0, 0, 0, 0.68);
+@lightTextColor              : darken(@secondaryColor, 15%);
 @invertedUnselectedTextColor : rgba(255, 255, 255, 0.8);
 
 @pageBackground: #ffffff;
@@ -38,27 +39,23 @@
 @docsHeaderFont: "Helvetica Neue", Helvetica, Arial, sans-serif;
 @docsPageFont: "Helvetica Neue", Helvetica, Arial, sans-serif;
 
+@segoeUIFont: "Segoe UI", Tahoma, Geneva, Verdana;
+
 @emSize      : 14px;
 @fontSize    : 12pt;
+
+@smallFontSize    : 0.875rem;
 
 /*-------------------
    Links
 --------------------*/
 
-@linkColor           : #4183c4;
+@linkColor           : #3977b4;
 @linkHoverUnderline  : underline;
 
 /*-------------------
    Breakpoints
 --------------------*/
-
-/*
-@mobileBreakpoint            : unit( (63 * @emSize), px);
-@tabletBreakpoint            : unit( (79 * @emSize), px);
-@computerBreakpoint          : unit( (91 * @emSize), px);
-@largeMonitorBreakpoint      : unit( (99 * @emSize), px);
-@widescreenMonitorBreakpoint : unit( (119 * @emSize), px);
-*/
 
 @tallEditorBreakpoint: 44rem;
 @thinEditorBreakpoint: 50rem;
@@ -91,7 +88,7 @@
 --------------------*/
 
 @useCustomScrollbars: false;
-@customScrollbarWidth: 7px;
+@customScrollbarWidth: 10px;
 
 @thumbBackground: rgba(0, 0, 0, 0.25);
 @thumbInvertedBackground: rgba(255, 255, 255, 0.25);
@@ -108,6 +105,9 @@
 
 @githubFileLogoUrl: "../docs/static/githubfilelogo.svg";
 @githubFileLogo: data-uri(@githubFileLogoUrl);
+
+@testFileLogoUrl: "../docs/static/testfilelogo.svg";
+@testFileLogo: data-uri(@testFileLogoUrl);
 
 @loaderImageUrl: "../docs/static/loader.svg";
 @loaderImage: data-uri(@loaderImageUrl);
@@ -129,6 +129,19 @@
 }
 .setDocsAvatarUrl();
 
+@blocksIconUrl: "../docs/static/icons/blocks.svg";
+@blocksIcon: data-uri(@blocksIconUrl);
+@pyIconUrl: "../docs/static/icons/py.svg";
+@pyIcon: data-uri(@pyIconUrl);
+@jsIconUrl: "../docs/static/icons/js.svg";
+@jsIcon: data-uri(@jsIconUrl);
+@immersiveReaderUrl: "../docs/static/icons/immersive-reader.svg";
+@immersiveReaderIcon: data-uri(@immersiveReaderUrl);
+@immersiveReaderLightUrl: "../docs/static/icons/immersive-reader-light.svg";
+@immersiveReaderLightIcon: data-uri(@immersiveReaderLightUrl);
+
+@logoFilter: invert(23%) sepia(91%) saturate(1957%) hue-rotate(290deg) brightness(83%) contrast(94%);
+
 /*-------------------
    Menu
 --------------------*/
@@ -136,10 +149,13 @@
 @mainMenuBackground: @white;
 @mainMenuInvertedBackground: @black;
 @mainMenuTutorialBackground: @orange;
+@mainMenuTutorialButtons: @mainMenuTutorialBackground;
 
 @mainMenuHeight: 4.0rem;
 @mobileMenuHeight: 3.5rem;
 @sandboxMobileMenuHeight: 3.0rem;
+@thinMenuHeight: 3rem;
+@tutorialEmbedMenuHeight: 2.25rem;
 
 @tutorialSelectedMenuColor: @primaryColor;
 @editorToggleColor: white;
@@ -161,8 +177,10 @@
 @simulatorBackground: #fff;
 @editorToolsBackground: @simulatorBackground;
 @blocklySvgColor: #fff;
+@sidebarTutorialColor: @lightGrey;
 
 @homeScreenBackground: #ecf0f1;
+@cloudCardBackground: #58AFBA;
 
 /*-------------------
    Full screen
@@ -208,6 +226,43 @@
 @serialConsoleBackground: @simulatorBackground;
 
 /*-------------------
+   Filelist
+--------------------*/
+@filelistBackgroundColor: @simulatorBackground;
+@filelistHeaderBackground:  rgba(0,0,0,0.05);
+
+/*-------------------
+   Github Diff editor
+--------------------*/
+@githubBackgroundColor: @serialBackgroundColor;
+@githubTextColor: @darkTextColor;
+@githubInvertedTextColor: white;
+@diffSegmentBackgroundColor: @pageBackground;
+@diffRemovedBackground:#ffeef0;
+@diffAddedBackground: #e6ffed;
+@diffMarkerBackground: #f1f8ff;
+@diffMarkerColor: rgba(27,31,35,.7);
+@diffInvertedRemovedBackground:#ff5050;
+@diffInvertedAddedBackground: #10a010;
+@diffInvertedMarkerBackground: #666;
+@diffInvertedUnchangedBackground: #1e1e1e;
+@diffInvertedMarkerColor: #ccc;
+@diffLineNumberColor: rgba(27, 31, 35, .3);
+@diffInvertedLineNumberColor: #ddd;
+@diffTokenDarkenRatio: 10%;
+@diffRemovedTokenBackground:darken(@diffRemovedBackground, @diffTokenDarkenRatio);
+@diffAddedTokenBackground: darken(@diffAddedBackground, @diffTokenDarkenRatio);
+@diffInvertedRemovedTokenBackground:darken(@diffInvertedRemovedBackground, @diffTokenDarkenRatio);
+@diffInvertedAddedTokenBackground: darken(@diffInvertedAddedBackground, @diffTokenDarkenRatio);
+@diffUpdateAddedBackground: #fcfc90;
+@diffUpdateAddedTokenBackground: darken(@diffUpdateAddedBackground, @diffTokenDarkenRatio);
+@diffUpdateInlineAddedOutline: 1px solid #ccc;
+
+@conflictBorderColor: orange;
+@conflictHeaderBackgroundColor: lighten(@conflictBorderColor, 30);
+@conflictHeaderColor: black;
+
+/*-------------------
    Blockly
 --------------------*/
 
@@ -234,8 +289,10 @@
 @flyoutLabelColor: white;
 @blocklyFlyoutColor: @grey;
 @blocklyFlyoutColorOpacity: 0.9;
-@monacoFlyoutColor: fade(@blocklyFlyoutColor, 90%);
 @blocklyFlyoutButtonColor: @primaryColor;
+@monacoFlyoutColor: fade(@blocklyFlyoutColor, 90%);
+@monacoFlyoutBorderColor: fade(@flyoutLabelColor, 40%);
+@monacoFlyoutText: fade(@flyoutLabelColor, 70%);
 
 /*-------------------
    Home
@@ -246,7 +303,7 @@
 @homeCardBorderSize: 5px;
 @homeCardBorderColor: #e9eef2;
 @homeCardHoverBorderColor: white;
-@homeCardFocusBorderColor: yellow;
+@homeCardFocusBorderColor: @primaryColor;
 @homeCardColor: @textColor;
 @homeCardMetaColor: @homeCardColor;
 @homeCardHeaderColor: @homeCardColor;
@@ -259,11 +316,15 @@
 /* Detail view */
 @homeSelectedCardBorderSize: @homeCardBorderSize*2;
 @homeSelectedCardBorderColor: white;
-@homeDetailViewBackground: darken(@homeScreenBackground, 10%);
-@homeDetailViewColor: @homeCardColor;
+@homeDetailViewBackground: darken(@grey, 20%);
+@homeDetailViewColor: white;
 @homeDetailCloseColor: white;
 @homeDetailCloseBackground: @grey;
-
+@homeDetailCardActionBackground: @homeScreenBackground;
+@homeDetailCardActionText: white;
+@homeInvertedDetailCardActionBackground: lighten(@homeScreenBackground, 10%);
+@homeHeaderBorderSize: 3px;
+@homeHeaderSelectedBorderColor: white;
 /*-------------------
    Tutorial
 --------------------*/
@@ -284,3 +345,57 @@
     Greenscreen
 -------------------*/
 @greenScreenColor: #00ff00;
+@greenScreenBlockColor: #107c10; // loops category typically uses green
+                                   // keep in sync with pxtarget blocks color changes
+@greenScreenGreen: #005d51; // a green that does not get erased by chromekey
+
+
+
+/*-------------------
+    Debugger
+-------------------*/
+// TODO: Chance this for the color we want for variables in the debugger.
+@debugNumberVariable: darkorchid;
+@debugStringVariable: coral;
+@debugBooleanVariable: darkturquoise;
+@debugArrayVariable: #663905;
+@debugSpriteVariable: blue;
+
+@debugVariableOdd: #fafafa;
+@debugVariableEven: #f0f0f0;
+@debugVariableFrozen: #eee;
+
+@DebuggerBackgroundPrimaryColor: #e67e22;
+@DebuggerBackgroundSecondaryColor: lightgreen;
+
+
+/*-------------------
+   ErrorList
+-------------------*/
+@errorListHeight: 16em;
+@errorListHeaderHeight: 3.5em;
+@errorListInnerHeight: (@errorListHeight - @errorListHeaderHeight);
+@errorListMessageHoverColor: rgba(0, 0, 0, 0.1);
+@errorListBorderColor: #e5e5e5;
+@errorListEven: rgba(0, 0, 0, 0.03);
+@errorListDebugSuggestionColor: rgb(52, 84, 209); // TODO: maybe change to display color based on editor
+@errorListInvertedEven: rgba(255, 255, 255, 0.03);
+@errorListInvertedTextColor: white;
+@errorListInvertedMessageHoverColor: rgba(255, 255, 255, 0.1);
+
+/*-------------------
+   Asset Editor
+-------------------*/
+@assetSidebarBorder: #c6c6c6;
+@assetSidebarButton: #f8f8f8;
+@assetSidebarButtonHover: #dedede;
+@assetTopbarBorder: #c6c6c6;
+@assetPreviewBackground: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10px' height='10px'%3E%3Crect x='0' y='0' width='10px' height='10px' fill='white'%3E%3C/rect%3E%3Crect x='0' y='0' width='5px' height='5px' fill='%23dedede'%3E%3C/rect%3E%3Crect x='5' y='5' width='5px' height='5px' fill='%23dedede'%3E%3C/rect%3E%3C/svg%3E");
+@assetUnselected: #e3ddd0;
+@assetTypeButton: @teal;
+
+/*---------------------------
+   Tutorial Code Validation
+----------------------------*/
+@tutorialCodeValidationCorrectBackground: @green;
+@tutorialCodeValidationCorrectTextColor: @white;

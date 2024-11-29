@@ -3,13 +3,17 @@ namespace pxsim {
     // user-defined record, another collection)
     export class RefCollection extends RefObject {
         private data: any[] = [];
-        //undefiend or null values need to be handled specially to support default values
-        //default values of boolean, string, number & object arrays are respectively, false, null, 0, null
-        //All of the default values are implemented by mapping undefined\null to zero.
 
         constructor() {
             super();
         }
+
+        scan(mark: (path: string, v: any) => void) {
+            for (let i = 0; i < this.data.length; ++i)
+                mark("[" + i + "]", this.data[i])
+        }
+        gcKey() { return "[...]" }
+        gcSize() { return this.data.length + 2 }
 
         toArray(): any[] {
             return this.data.slice(0);
@@ -24,10 +28,15 @@ namespace pxsim {
             for (let i = 0; i < this.data.length; ++i) {
                 if (i > 0)
                     s += ",";
-                s += RefObject.toDebugString(this.data[i]);
-                if (s.length > 15) {
+                let newElem = RefObject.toDebugString(this.data[i]);
+                if (s.length + newElem.length > 100) {
+                    if (i == 0) {
+                        s += newElem.substr(0, 100);
+                    }
                     s += "..."
                     break;
+                } else {
+                    s += newElem;
                 }
             }
             s += "]"
@@ -37,7 +46,6 @@ namespace pxsim {
         destroy() {
             let data = this.data
             for (let i = 0; i < data.length; ++i) {
-                decr(data[i]);
                 data[i] = 0;
             }
             this.data = [];
@@ -52,11 +60,7 @@ namespace pxsim {
         }
 
         pop() {
-            let x = this.data.pop();
-            if (x == undefined) { //treat null & undefined as the same
-                return 0;
-            }
-            return x;
+            return this.data.pop();;
         }
 
         getLength() {
@@ -68,10 +72,7 @@ namespace pxsim {
         }
 
         getAt(x: number) {
-            if (this.data[x] != undefined) {
-                return this.data[x];
-            }
-            return 0;
+            return this.data[x];
         }
 
         setAt(x: number, y: any) {
@@ -84,30 +85,11 @@ namespace pxsim {
 
         removeAt(x: number) {
             let ret = this.data.splice(x, 1)
-            if (ret[0] == undefined) {
-                return 0;
-            }
-            return ret[0]; //return the deleted element.
+            return ret[0]; // return the deleted element.
         }
 
         indexOf(x: number, start: number) {
-            if (x != 0) {
-                return this.data.indexOf(x, start);
-            }
-            //As we treat undefined same as 0 which is default value for all the arrays, will need to search both.
-            let defaultValueIndex = this.data.indexOf(x, start);
-            let undefinedIndex = -1;
-            for (let i = start; i < this.data.length; i++) {
-                if (this.data[i] == undefined) {
-                    undefinedIndex = i;
-                    break;
-                }
-            }
-
-            if (defaultValueIndex < undefinedIndex || undefinedIndex == -1) {
-                return defaultValueIndex;
-            }
-            return undefinedIndex;
+            return this.data.indexOf(x, start);
         }
 
         print() {
@@ -118,6 +100,10 @@ namespace pxsim {
     export namespace Array_ {
         export function mk() {
             return new RefCollection();
+        }
+
+        export function isArray(c: any) {
+            return c instanceof RefCollection
         }
 
         export function length(c: RefCollection) {
@@ -133,7 +119,6 @@ namespace pxsim {
 
         export function push(c: RefCollection, x: any) {
             pxtrt.nullCheck(c)
-            incr(x);
             c.push(x);
         }
 
@@ -147,7 +132,6 @@ namespace pxsim {
         export function getAt(c: RefCollection, x: number) {
             pxtrt.nullCheck(c)
             let tmp = c.getAt(x);
-            incr(tmp);
             return tmp;
         }
 
@@ -161,17 +145,11 @@ namespace pxsim {
 
         export function insertAt(c: RefCollection, x: number, y: number) {
             pxtrt.nullCheck(c)
-            incr(y);
             c.insertAt(x, y);
         }
 
         export function setAt(c: RefCollection, x: number, y: any) {
             pxtrt.nullCheck(c)
-            if (c.isValidIndex(x)) {
-                //if there is an existing element handle refcount
-                decr(c.getAt(x));
-            }
-            incr(y);
             c.setAt(x, y);
         }
 
@@ -192,12 +170,21 @@ namespace pxsim {
     }
 
     export namespace Math_ {
-        export function imul(x: number, y: number) {
-            return intMult(x, y)
-        }
+        // for explanations see:
+        // http://stackoverflow.com/questions/3428136/javascript-integer-math-incorrect-results (second answer)
+        // (but the code below doesn't come from there; I wrote it myself)
+        export const imul = Math.imul || function (a: number, b: number) {
+            const ah = (a >>> 16) & 0xffff;
+            const al = a & 0xffff;
+            const bh = (b >>> 16) & 0xffff;
+            const bl = b & 0xffff;
+            // the shift by 0 fixes the sign on the high part
+            // the final |0 converts the unsigned value into a signed value
+            return ((al * bl) + (((ah * bl + al * bh) << 16) >>> 0) | 0);
+        };
 
         export function idiv(x: number, y: number) {
-            return (x / y) >> 0
+            return ((x | 0) / (y | 0)) | 0
         }
 
         export function round(n: number) { return Math.round(n) }
@@ -253,20 +240,6 @@ namespace pxsim {
         }
     }
 
-    // for explanations see:
-    // http://stackoverflow.com/questions/3428136/javascript-integer-math-incorrect-results (second answer)
-    // (but the code below doesn't come from there; I wrote it myself)
-    // TODO use Math.imul if available
-    function intMult(a: number, b: number) {
-        const ah = (a >>> 16) & 0xffff;
-        const al = a & 0xffff;
-        const bh = (b >>> 16) & 0xffff;
-        const bl = b & 0xffff;
-        // the shift by 0 fixes the sign on the high part
-        // the final |0 converts the unsigned value into a signed value
-        return ((al * bl) + (((ah * bl + al * bh) << 16) >>> 0) | 0);
-    }
-
     export namespace Number_ {
         export function lt(x: number, y: number) { return x < y; }
         export function le(x: number, y: number) { return x <= y; }
@@ -274,7 +247,6 @@ namespace pxsim {
         export function eq(x: number, y: number) { return pxtrt.nullFix(x) == pxtrt.nullFix(y); }
         export function eqDecr(x: number, y: number) {
             if (pxtrt.nullFix(x) == pxtrt.nullFix(y)) {
-                decr(y);
                 return true;
             } else {
                 return false
@@ -285,14 +257,14 @@ namespace pxsim {
         export function div(x: number, y: number) { return Math.floor(x / y) | 0; }
         export function mod(x: number, y: number) { return x % y; }
         export function bnot(x: number) { return ~x; }
-        export function toString(x: number) { return initString(x + ""); }
+        export function toString(x: number) { return (x + ""); }
     }
 
     export namespace thumb {
         export function adds(x: number, y: number) { return (x + y) | 0; }
         export function subs(x: number, y: number) { return (x - y) | 0; }
         export function divs(x: number, y: number) { return Math.floor(x / y) | 0; }
-        export function muls(x: number, y: number) { return intMult(x, y); }
+        export function muls(x: number, y: number) { return Math_.imul(x, y); }
         export function ands(x: number, y: number) { return x & y; }
         export function orrs(x: number, y: number) { return x | y; }
         export function eors(x: number, y: number) { return x ^ y; }
@@ -311,7 +283,7 @@ namespace pxsim {
         export function adds(x: number, y: number) { return toInt(x + y); }
         export function subs(x: number, y: number) { return toInt(x - y); }
         export function divs(x: number, y: number) { return toInt(Math.floor(x / y)); }
-        export function muls(x: number, y: number) { return toInt(intMult(x, y)); }
+        export function muls(x: number, y: number) { return toInt(Math_.imul(x, y)); }
         export function ands(x: number, y: number) { return toInt(x & y); }
         export function orrs(x: number, y: number) { return toInt(x | y); }
         export function eors(x: number, y: number) { return toInt(x ^ y); }
@@ -329,7 +301,7 @@ namespace pxsim {
             if (v instanceof RefRecord) {
                 if (v.vtable.toStringMethod) {
                     runtime.runFiberAsync(v.vtable.toStringMethod as any, v)
-                        .done(() => {
+                        .then(() => {
                             cb(runtime.currFrame.retval + "")
                         })
                     return
@@ -343,7 +315,7 @@ namespace pxsim {
         }
 
         export function fromCharCode(code: number) {
-            return initString(String.fromCharCode(code));
+            return (String.fromCharCode(code));
         }
 
         export function toNumber(s: string) {
@@ -353,12 +325,12 @@ namespace pxsim {
         // TODO check edge-conditions
 
         export function concat(a: string, b: string) {
-            return initString(a + b);
+            return (a + b);
         }
 
         export function substring(s: string, i: number, j: number) {
             pxtrt.nullCheck(s)
-            return initString(s.slice(i, i + j));
+            return (s.slice(i, i + j));
         }
 
         export function equals(s1: string, s2: string) {
@@ -373,7 +345,6 @@ namespace pxsim {
 
         export function compareDecr(s1: string, s2: string) {
             if (s1 == s2) {
-                decr(s2)
                 return 0;
             }
             if (s1 < s2) return -1;
@@ -384,12 +355,8 @@ namespace pxsim {
             return s.length
         }
 
-        export function isEmpty(s: string): boolean {
-            return s == null || s.length == 0;
-        }
-
         export function substr(s: string, start: number, length?: number) {
-            return initString(s.substr(start, length));
+            return (s.substr(start, length));
         }
 
         function inRange(s: string, i: number) {
@@ -398,7 +365,7 @@ namespace pxsim {
         }
 
         export function charAt(s: string, i: number) {
-            return initString(s.charAt(i));
+            return (s.charAt(i));
         }
 
         export function charCodeAt(s: string, i: number) {
@@ -436,12 +403,25 @@ namespace pxsim {
 
 
     export class RefBuffer extends RefObject {
+        isStatic = false
         constructor(public data: Uint8Array) {
             super();
         }
 
+        scan(mark: (path: string, v: any) => void) {
+            // nothing to do
+        }
+
+        gcKey() { return "Buffer" }
+        gcSize() { return 2 + (this.data.length + 3 >> 2) }
+        gcIsStatic() { return this.isStatic }
+
         print() {
             // console.log(`RefBuffer id:${this.id} refs:${this.refcnt} len:${this.data.length} d0:${this.data[0]}`)
+        }
+
+        toDebugString(): string {
+            return BufferMethods.toHex(this);
         }
     }
 
@@ -563,7 +543,12 @@ namespace pxsim {
             let r = createBuffer(hex.length >> 1)
             for (let i = 0; i < hex.length; i += 2)
                 r.data[i >> 1] = parseInt(hex.slice(i, i + 2), 16)
+            r.isStatic = true
             return r
+        }
+
+        export function isReadOnly(buf: RefBuffer) {
+            return buf.isStatic
         }
 
         export function getBytes(buf: RefBuffer) {
@@ -572,7 +557,12 @@ namespace pxsim {
         }
 
         function inRange(buf: RefBuffer, off: number) {
+            pxtrt.nullCheck(buf)
             return 0 <= off && off < buf.data.length
+        }
+
+        export function getUint8(buf: RefBuffer, off: number) {
+            return getByte(buf, off);
         }
 
         export function getByte(buf: RefBuffer, off: number) {
@@ -580,8 +570,19 @@ namespace pxsim {
             else return 0;
         }
 
+        export function setUint8(buf: RefBuffer, off: number, v: number) {
+            setByte(buf, off, v);
+        }
+
+        function checkWrite(buf: RefBuffer) {
+            if (buf.isStatic) U.userError("Writing to read only buffer.")
+        }
+
         export function setByte(buf: RefBuffer, off: number, v: number) {
-            if (inRange(buf, off)) buf.data[off] = v
+            if (inRange(buf, off)) {
+                checkWrite(buf)
+                buf.data[off] = v
+            }
         }
 
         export function length(buf: RefBuffer) {
@@ -595,6 +596,7 @@ namespace pxsim {
                 length = buf.data.length;
             length = Math.min(length, buf.data.length - offset);
 
+            checkWrite(buf)
             buf.data.fill(value, offset, offset + length)
         }
 
@@ -614,6 +616,10 @@ namespace pxsim {
                 res += hex[buf.data[i] & 0xf];
             }
             return res;
+        }
+
+        export function toString(buf: RefBuffer): string {
+            return U.fromUTF8Array(buf.data);
         }
 
         function memmove(dst: Uint8Array, dstOff: number, src: Uint8Array, srcOff: number, len: number) {
@@ -637,6 +643,7 @@ namespace pxsim {
                 return;
             }
 
+            checkWrite(buf)
             if (offset < 0) {
                 offset = -offset;
                 memmove(buf.data, start + offset, buf.data, start, len - offset);
@@ -653,6 +660,8 @@ namespace pxsim {
 
             if (start < 0 || start + len > buf.data.length || start + len < start
                 || len == 0 || offset == 0 || offset == INT_MIN) return;
+
+            checkWrite(buf)
 
             if (offset < 0)
                 offset += len << 8; // try to make it positive
@@ -690,8 +699,14 @@ namespace pxsim {
             if (length < 0)
                 return;
 
+            checkWrite(buf)
             memmove(buf.data, dstOffset, src.data, srcOffset, length)
         }
     }
+}
 
+namespace pxsim.control {
+    export function createBufferFromUTF8(str: string) {
+        return new pxsim.RefBuffer(U.toUTF8Array(str));
+    }
 }

@@ -13,7 +13,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 {
                     name: "loops_while",
                     snippetName: "while",
-                    snippet: `while(true) {\n\n}`,
+                    snippet: `while (true) {\n    \n}`,
+                    pySnippet: `while True:\n    pass`,
                     attributes: {
                         blockId: 'device_while',
                         weight: 48,
@@ -23,7 +24,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 {
                     name: "loops_for",
                     snippetName: "for",
-                    snippet: `for(let i = 0; i < 5; i++) {\n\n}`,
+                    snippet: `for (let i = 0; i < 5; i++) {\n    \n}`,
+                    pySnippet: `for i in range(4):\n    pass`,
                     attributes: {
                         blockId: 'pxt_controls_for',
                         weight: 47,
@@ -45,7 +47,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 {
                     name: "logic_if",
                     snippetName: "if",
-                    snippet: `if (true) {\n\n}`,
+                    snippet: `if (true) {\n    \n}`,
+                    pySnippet: `if True:\n    pass`,
                     attributes: {
                         blockId: 'controls_if',
                         weight: 49,
@@ -54,8 +57,9 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 },
                 {
                     name: "logic_if_else",
-                    snippetName: "if",
-                    snippet: `if (true) {\n\n} else {\n\n}`,
+                    snippetName: "if else",
+                    snippet: `if (true) {\n    \n} else {\n    \n}`,
+                    pySnippet: `if True:\n    pass\nelse:\n    pass`,
                     attributes: {
                         blockId: 'controls_if',
                         weight: 48,
@@ -63,18 +67,25 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     }
                 },
                 {
-                    name: "logic_switch",
-
-                    snippetName: "switch",
-                    snippet:
-                        `switch(item) {
-            case 0:
-                break;
-            case 1:
-                break;
-        }`,
+                    name: "logic_and",
+                    snippetName: "and",
+                    snippet: `true && true`,
+                    pySnippet: `True and True`,
                     attributes: {
-                        jsDoc: lf("Runs different code based on a value")
+                        blockId: 'logic_compare',
+                        weight: 47,
+                        jsDoc: lf("Runs code if both specified conditions are true")
+                    }
+                },
+                {
+                    name: "logic_or",
+                    snippetName: "or",
+                    snippet: `true || false`,
+                    pySnippet: `True or False`,
+                    attributes: {
+                        blockId: 'logic_compare',
+                        weight: 46,
+                        jsDoc: lf("Runs code if either of two specified conditions is true")
                     }
                 }
             ],
@@ -93,6 +104,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "var_let",
                     snippetName: "let",
                     snippet: `let item: number`,
+                    pySnippet: `item = 0`,
+                    pySnippetName: `item = 0`,
                     snippetOnly: true,
                     attributes: {
                         blockId: 'variables_set',
@@ -103,6 +116,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "var_equals",
                     snippetName: "equals",
                     snippet: `item = 0`,
+                    pySnippet: `item = 0`,
                     snippetOnly: true,
                     attributes: {
                         blockId: 'variables_get',
@@ -113,6 +127,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "var_change",
                     snippetName: "change",
                     snippet: `item += 1`,
+                    pySnippet: `item += 1`,
                     snippetOnly: true,
                     attributes: {
                         blockId: 'variables_change',
@@ -137,6 +152,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "Math.plus",
                     snippetName: "plus",
                     snippet: `1 + 1`,
+                    pySnippet: `1 + 1`,
                     snippetOnly: true,
                     attributes: {
                         weight: 90,
@@ -149,6 +165,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "Math.minus",
                     snippetName: "minus",
                     snippet: `1 - 1`,
+                    pySnippet: `1 - 1`,
                     snippetOnly: true,
                     attributes: {
                         weight: 89,
@@ -161,6 +178,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "Math.multiply",
                     snippetName: "multiply",
                     snippet: `1 * 1`,
+                    pySnippet: `1 * 1`,
                     snippetOnly: true,
                     attributes: {
                         weight: 88,
@@ -173,6 +191,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "Math.divide",
                     snippetName: "divide",
                     snippet: `1 / 1`,
+                    pySnippet: `1 / 1`,
                     snippetOnly: true,
                     attributes: {
                         weight: 87,
@@ -185,6 +204,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "Math.remainder",
                     snippetName: "remainder",
                     snippet: `1 % 2`,
+                    pySnippet: `1 % 2`,
                     snippetOnly: true,
                     attributes: {
                         weight: 80,
@@ -197,6 +217,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "Math.max",
                     snippetName: "max",
                     snippet: `Math.max(1, 2)`,
+                    pySnippet: `max(1, 2)`,
                     attributes: {
                         weight: 75,
                         blockId: "math_op2",
@@ -208,6 +229,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "Math.min",
                     snippetName: "min",
                     snippet: `Math.min(1, 2)`,
+                    pySnippet: `min(1, 2)`,
                     attributes: {
                         weight: 74,
                         blockId: "math_op2",
@@ -219,6 +241,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "Math.abs",
                     snippetName: "abs",
                     snippet: `Math.abs(-1)`,
+                    pySnippet: `abs(-1)`,
                     attributes: {
                         weight: 70,
                         blockId: "math_op3",
@@ -227,11 +250,14 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     retType: "number"
                 },
                 {
-                    name: "Math.randomRange",
-                    snippetName: "randomRange",
-                    snippet: `Math.randomRange(0, 10)`,
+                    name: "randint",
+                    snippetName: "randint",
+                    snippet: `randint(0, 10)`,
+                    pySnippetName: `randint`,
+                    pySnippet: `randint(0, 10)`,
                     attributes: {
                         weight: 65,
+                        blockId: "device_random",
                         jsDoc: lf("Returns a random number between min and max")
                     },
                     retType: "number"
@@ -251,7 +277,9 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 {
                     name: "functionDef",
                     snippetName: "function doSomething",
-                    snippet: `function doSomething() {\n\n}`,
+                    snippet: `function doSomething() {\n    \n}`,
+                    pySnippetName: "def do_something",
+                    pySnippet: `def do_something():\n    pass`,
                     attributes: {
                         blockId: 'procedures_defnoreturn',
                         jsDoc: lf("Define a function")
@@ -261,6 +289,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "functionCall",
                     snippetName: "doSomething",
                     snippet: `doSomething()`,
+                    pySnippetName: "do_something",
+                    pySnippet: `do_something()`,
                     attributes: {
                         blockId: 'procedures_callnoreturn',
                         jsDoc: lf("Call a function")
@@ -284,6 +314,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "array_create",
                     snippetName: "create",
                     snippet: `let ${lf("{id:snippets}list")} = [1, 2, 3];`,
+                    pySnippet: `${lf("{id:snippets}list")} = [1, 2, 3]`,
                     snippetOnly: true,
                     attributes: {
                         weight: 100,
@@ -296,6 +327,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "array_length",
                     snippetName: "length",
                     snippet: `${lf("{id:snippets}list")}.length`,
+                    pySnippetName: "len",
+                    pySnippet: `len(${lf("{id:snippets}list")})`,
                     snippetOnly: true,
                     attributes: {
                         weight: 99,
@@ -308,6 +341,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "array_get",
                     snippetName: "get",
                     snippet: `${lf("{id:snippets}list")}[0]`,
+                    pySnippet: `${lf("{id:snippets}list")}[0]`,
                     snippetOnly: true,
                     attributes: {
                         weight: 98,
@@ -319,6 +353,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "array_set",
                     snippetName: "set",
                     snippet: `${lf("{id:snippets}list")}[0] = 1`,
+                    pySnippet: `${lf("{id:snippets}list")}[0] = 1`,
                     snippetOnly: true,
                     attributes: {
                         weight: 97,
@@ -330,6 +365,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "array_push",
                     snippetName: "push",
                     snippet: `${lf("{id:snippets}list")}.push(1)`,
+                    pySnippetName: "append",
+                    pySnippet: `${lf("{id:snippets}list")}.append(1)`,
                     attributes: {
                         weight: 96,
                         blockId: "array_push",
@@ -340,6 +377,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "arary_pop",
                     snippetName: "pop",
                     snippet: `${lf("{id:snippets}list")}.pop()`,
+                    pySnippetName: "pop",
+                    pySnippet: `${lf("{id:snippets}list")}.pop()`,
                     attributes: {
                         weight: 95,
                         blockId: "array_pop",
@@ -351,6 +390,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "array_insertAt",
                     snippetName: "insertAt",
                     snippet: `${lf("{id:snippets}list")}.insertAt(0, 0)`,
+                    pySnippetName: "insert",
+                    pySnippet: `${lf("{id:snippets}list")}.insert(0, 0)`,
                     attributes: {
                         weight: 50,
                         blockId: "array_insertAt",
@@ -385,6 +426,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "array_unshift",
                     snippetName: "unshift",
                     snippet: `${lf("{id:snippets}list")}.unshift(0)`,
+                    pySnippetName: "append",
+                    pySnippet: `${lf("{id:snippets}list")}.append(0)`,
                     attributes: {
                         weight: 47,
                         blockId: "array_unshift",
@@ -395,7 +438,9 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 {
                     name: "array_indexOf",
                     snippetName: "indexOf",
-                    snippet: `["A", "B", "C"].indexOf("B")`,
+                    snippet: `[0, 1, 2].indexOf(1)`,
+                    pySnippetName: "index",
+                    pySnippet: `[0, 1, 2].index(1)`,
                     attributes: {
                         weight: 46,
                         jsDoc: lf("Returns the first index in the Array that contains the given value or -1 if it does not exist in the Array"),
@@ -407,6 +452,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "array_reverse",
                     snippetName: "reverse",
                     snippet: `${lf("{id:snippets}list")}.reverse()`,
+                    pySnippet: `${lf("{id:snippets}list")}.reverse()`,
                     attributes: {
                         weight: 45,
                         jsDoc: lf("Reverses the contents of an Array"),
@@ -431,6 +477,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "text_length",
                     snippetName: "length",
                     snippet: `"".length`,
+                    pySnippetName: "len",
+                    pySnippet: `len("")`,
                     snippetOnly: true,
                     attributes: {
                         blockId: 'text_length',
@@ -442,6 +490,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "text_concat",
                     snippetName: "concat",
                     snippet: `"" + 5`,
+                    pySnippet: `"" + 5`,
                     snippetOnly: true,
                     attributes: {
                         blockId: 'text_join',
@@ -463,6 +512,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "text_parseInt",
                     snippetName: "parseInt",
                     snippet: `parseInt("5")`,
+                    pySnippetName: "int",
+                    pySnippet: `int("5")`,
                     attributes: {
                         blockId: 'string_parseint',
                         jsDoc: lf("Converts a number written as text into a number")
@@ -473,6 +524,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "text_substr",
                     snippetName: "substr",
                     snippet: `"".substr(0, 0)`,
+                    pySnippet: `""[0:1]`,
                     attributes: {
                         blockId: 'string_substr',
                         jsDoc: lf("Returns the part of a string starting at a given index with the given length")
@@ -483,6 +535,8 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "text_charAt",
                     snippetName: "charAt",
                     snippet: `"".charAt(0)`,
+                    pySnippetName: "str[0]",
+                    pySnippet: `""[0]`,
                     attributes: {
                         blockId: 'string_get',
                         jsDoc: lf("Returns the character at the given index")
@@ -542,12 +596,25 @@ export function getPauseUntil() {
                 weight: opts.weight == null ? 0 : opts.weight,
                 jsDoc: lf("Pause execution of code until the given boolean expression is true"),
                 advanced: false
-            },
-            noNamespace: true
+            }
         };
     }
 
     return pauseUntil;
+}
+
+// Map of defined snippets to blockIds, for when multiple
+// blocks (eg "for index" and "repeat") map to the same snippet
+let _blockIdMap: pxt.Map<string[]>;
+export function blockIdMap() {
+    if (!_blockIdMap) {
+        _blockIdMap = {
+            "pxt_controls_for": ["controls_repeat_ext"]
+        }
+        const targetIds = pxt.appTarget.blockIdMap;
+        if (targetIds) Object.keys(targetIds).forEach(id => _blockIdMap[id] = targetIds[id]);
+    }
+    return _blockIdMap;
 }
 
 export function getBuiltinCategory(ns: string) {
@@ -589,9 +656,9 @@ function cacheBuiltInBlocks() {
 export function allBuiltinBlocks() {
     cacheBuiltInBlocks();
     // Add pause until built in block
-    const pauseUntil = this.getPauseUntil();
+    const pauseUntil = getPauseUntil();
     if (pauseUntil) {
-        builtinBlockCacheById[pxtc.PAUSE_UNTIL_TYPE] = pauseUntil;
+        builtinBlockCacheById[pxtc.PAUSE_UNTIL_TYPE] = [pauseUntil, "pause_until"];
     }
     return builtinBlockCacheById;
 }
@@ -599,9 +666,9 @@ export function allBuiltinBlocks() {
 export function allBuiltinBlocksByName() {
     cacheBuiltInBlocks();
     // Add pause until built in block
-    const pauseUntil = this.getPauseUntil();
+    const pauseUntil = getPauseUntil();
     if (pauseUntil) {
-        builtinBlockCacheByName[pxtc.PAUSE_UNTIL_TYPE] = pauseUntil;
+        builtinBlockCacheByName[pxtc.PAUSE_UNTIL_TYPE] = [pauseUntil, "pause_until"];
     }
     return builtinBlockCacheByName;
 }
@@ -658,7 +725,9 @@ function blockFromJson(b: pxt.editor.ToolboxBlockDefinition, currentWeight?: num
     return {
         name: b.name,
         snippet: b.snippet,
+        pySnippet: b.pySnippet,
         snippetName: b.snippetName,
+        pySnippetName: b.pySnippetName,
         snippetOnly: b.snippetOnly,
         attributes: {
             blockId: b.blockId,
@@ -667,7 +736,6 @@ function blockFromJson(b: pxt.editor.ToolboxBlockDefinition, currentWeight?: num
             jsDoc: b.jsDoc,
             group: b.group,
         },
-        noNamespace: true,
         retType: b.retType,
         blockXml: b.blockXml
     }
@@ -677,7 +745,9 @@ function blockToJson(b: BlockDefinition): pxt.editor.ToolboxBlockDefinition {
     return {
         name: b.name,
         snippet: b.snippet,
+        pySnippet: b.pySnippet,
         snippetName: b.snippetName,
+        pySnippetName: b.pySnippetName,
         snippetOnly: b.snippetOnly,
         retType: b.retType,
         weight: b.attributes.weight,

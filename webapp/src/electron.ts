@@ -4,14 +4,11 @@ import * as core from "./core";
 import { ProjectView } from "./srceditor";
 
 const pxtElectron: pxt.electron.PxtElectron = (window as any).pxtElectron;
-export const isPxtElectron = () => !!pxtElectron;
-export const isIpcRenderer = () => !!(window as any).ipcRenderer;
-export const isElectron = () => isPxtElectron() || isIpcRenderer();
 
 const downloadingUpdateLoadingName = "pxtelectron-downloadingupdate";
 
 export function initElectron(projectView: ProjectView): void {
-    if (!isPxtElectron()) {
+    if (!pxt.BrowserUtils.isPxtElectron()) {
         return;
     }
 
@@ -33,12 +30,11 @@ export function initElectron(projectView: ProjectView): void {
         } else {
             pxt.tickEvent("electron.drivedeploy.failure");
             const err = new Error("electron drive deploy failed");
-            pxt.reportException(err)
             deployingDeferred.reject(err);
         }
     });
 
-    const criticalUpdateFailedPromise = new Promise((resolve) => {
+    const criticalUpdateFailedPromise = new Promise<void>((resolve) => {
         pxtElectron.onCriticalUpdateFailed(() => {
             pxt.tickEvent("electron.criticalupdate.failed");
             resolve();
@@ -55,6 +51,8 @@ export function initElectron(projectView: ProjectView): void {
         }
 
         switch (status) {
+            case pxt.electron.UpdateStatus.UpdateAvailable:
+                // Downloading update in background; nothing to do
             case pxt.electron.UpdateStatus.Ok:
                 // No update available; nothing to do
                 return;
@@ -66,7 +64,7 @@ export function initElectron(projectView: ProjectView): void {
                     hideAgree: true,
                     disagreeLbl: lf("Ok"),
                     disagreeClass: "green",
-                    size: "medium"
+                    size: "large"
                 }).then(() => {
                     core.showLoading("pxt-electron-update", lf("Installing update..."));
                 });
@@ -81,7 +79,7 @@ export function initElectron(projectView: ProjectView): void {
                             hideAgree: true,
                             disagreeLbl: lf("Quit"),
                             disagreeClass: "red",
-                            size: "medium"
+                            size: "large"
                         }).then(b => {
                             pxtElectron.sendQuit();
                         });
@@ -98,7 +96,7 @@ export function initElectron(projectView: ProjectView): void {
                     hideAgree: true,
                     disagreeLbl: lf("Quit"),
                     disagreeClass: "red",
-                    size: "medium"
+                    size: "large"
                 }).then(b => {
                     pxtElectron.sendQuit();
                 });
@@ -111,14 +109,14 @@ export function initElectron(projectView: ProjectView): void {
     pxtElectron.sendUpdateStatusCheck();
 }
 
-let deployingDeferred: Promise.Resolver<void> = null;
+let deployingDeferred: pxt.Util.DeferredPromise<void> = null;
 export function driveDeployAsync(compileResult: pxtc.CompileResult): Promise<void> {
-    if (!isPxtElectron()) {
+    if (!pxt.BrowserUtils.isPxtElectron()) {
         return cmds.browserDownloadDeployCoreAsync(compileResult);
     }
 
     if (!deployingDeferred) {
-        deployingDeferred = Promise.defer<void>();
+        deployingDeferred = pxt.Util.defer<void>();
         pxtElectron.sendDriveDeploy(compileResult);
     }
 

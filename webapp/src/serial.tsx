@@ -1,13 +1,14 @@
-/// <reference path="../../localtypings/smoothie.d.ts" />
-
 import * as React from "react"
+import * as Smoothie from "smoothie"
 import * as pkg from "./package"
 import * as core from "./core"
 import * as srceditor from "./srceditor"
 import * as sui from "./sui"
 import * as data from "./data";
+import * as auth from "./auth";
 
 import Util = pxt.Util
+import { fireClickOnEnter } from "./util"
 
 const maxEntriesPerChart: number = 4000;
 
@@ -17,9 +18,9 @@ export class Editor extends srceditor.Editor {
     charts: Chart[] = []
     chartIdx: number = 0
     sourceMap: pxt.Map<string> = {}
-    consoleBuffer: string = ""
+    serialInputDataBuffer: string = ""
+    maxSerialInputDataLength: number = 255;
     isSim: boolean = true
-    maxConsoleLineLength: number = 255;
     maxConsoleEntries: number = 500;
     active: boolean = true
     rawDataBuffer: string = ""
@@ -29,7 +30,7 @@ export class Editor extends srceditor.Editor {
     lineColors: string[];
     hcLineColors: string[];
     currentLineColors: string[];
-    highContrast: boolean = false
+    highContrast?: boolean = false;
 
     //refs
     startPauseButton: StartPauseButton
@@ -47,8 +48,11 @@ export class Editor extends srceditor.Editor {
     }
 
     setVisible(b: boolean) {
-        if (this.parent.state.highContrast !== this.highContrast) {
-            this.setHighContrast(this.parent.state.highContrast)
+        // TODO: It'd be great to re-render this component dynamically when the contrast changes,
+        // but for now the user has to toggle the serial editor to see a change.
+        const highContrast = core.getHighContrastOnce();
+        if (highContrast !== this.highContrast) {
+            this.setHighContrast(highContrast)
         }
         this.isVisible = b
         if (this.isVisible) {
@@ -84,6 +88,15 @@ export class Editor extends srceditor.Editor {
         }
     }
 
+    simStateChanged() {
+        this.charts.forEach((chart) => chart.setRealtimeData(this.wantRealtimeData()));
+    }
+
+    wantRealtimeData() {
+        // Simulator only: Use the chart's `nonRealtimeData` flag to pause scrolling when the simulator isn't running.
+        return (!this.isSim || this.parent.isSimulatorRunning());
+    }
+
     constructor(public parent: pxt.editor.IProjectView) {
         super(parent)
         window.addEventListener("message", this.processEvent.bind(this), false)
@@ -96,14 +109,6 @@ export class Editor extends srceditor.Editor {
         this.toggleRecording = this.toggleRecording.bind(this);
         this.downloadRaw = this.downloadRaw.bind(this);
         this.downloadCSV = this.downloadCSV.bind(this);
-    }
-
-    private loadSmoothieChartsPromise: Promise<void>
-    private loadSmoothieChartsAsync(): Promise<void> {
-        if (!this.loadSmoothieChartsPromise) {
-            this.loadSmoothieChartsPromise = pxt.BrowserUtils.loadScriptAsync("smoothie/smoothie_compressed.js");
-        }
-        return this.loadSmoothieChartsPromise;
     }
 
     saveMessageForLater(m: pxsim.SimulatorSerialMessage) {
@@ -157,6 +162,7 @@ export class Editor extends srceditor.Editor {
         const sim = !!smsg.sim
         if (sim != this.isSim) return;
 
+        // clean up input
         const data = smsg.data || ""
         const source = smsg.id || "?"
         const receivedTime = smsg.receivedTime || Util.now()
@@ -164,10 +170,21 @@ export class Editor extends srceditor.Editor {
         this.appendRawData(data);
         const niceSource = this.mapSource(source);
 
+
+        // chunk into lines
+        const lines = this.chunkDataIntoLines(data)
+
+        // process each line
+        for (const line of lines) {
+            this.processMessageLine(line, niceSource, receivedTime);
+        }
+    }
+
+    processMessageLine(line: string, niceSource: string, receivedTime: number) {
         // packet payload as json
-        if (/^\s*\{[^}]+\}\s*$/.test(data)) {
+        if (/^\s*\{[^}]+\}\s*$/.test(line)) {
             try {
-                const json = JSON.parse(data);
+                const json = JSON.parse(line);
                 const t = parseInt(json["t"]);
                 const s = this.mapSource(json["s"]);
                 const n = json["n"] || "";
@@ -178,20 +195,20 @@ export class Editor extends srceditor.Editor {
             catch (e) { } // invalid js
         }
         // is this a CSV data entry
-        else if (/^\s*(-?\d+(\.\d*)?(e[\+\-]\d+)?)(\s*,\s*(-?\d+(\.\d*)?(e[\+\-]\d+)?))+\s*,?\s*$/.test(data)) {
-            data.split(/\s*,\s*/).map(s => parseFloat(s))
+        else if (/^\s*(-?\d+(\.\d*)?(e[\+\-]\d+)?)(\s*,\s*(-?\d+(\.\d*)?(e[\+\-]\d+)?))+\s*,?\s*$/.test(line)) {
+            line.split(/\s*,\s*/).map(s => parseFloat(s))
                 .filter(d => !isNaN(d))
                 .forEach((d, i) => {
                     const variable = "data." + (this.csvHeaders[i] || i);
                     this.appendGraphEntry(niceSource, variable, d, receivedTime);
                 })
             // is this a CSV header entry
-        } else if (/^\s*[\s\w]+(\s*,\s*[\w\s]+)+\s*,?\s*$/.test(data)) {
-            this.csvHeaders = data.split(/\s*,\s*/).map(h => h.trim());
+        } else if (/^\s*[\s\w]+(\s*,\s*[\w\s]+)+\s*,?\s*$/.test(line)) {
+            this.csvHeaders = line.split(/\s*,\s*/).map(h => h.trim());
         }
         else {
             // is this a key-value pair, or just a number?
-            const m = /^\s*(([^:]+):)?\s*(-?\d+(\.\d*)?(e[\+\-]\d+)?)/i.exec(data);
+            const m = /^\s*(([^:]+):)?\s*(-?\d+(\.\d*)?(e[\+\-]\d+)?)/i.exec(line);
             if (m) {
                 const variable = m[2] || '';
                 const nvalue = parseFloat(m[3]);
@@ -201,7 +218,7 @@ export class Editor extends srceditor.Editor {
             }
         }
 
-        this.appendConsoleEntry(data)
+        this.appendConsoleEntry(line)
     }
 
     appendRawData(data: string) {
@@ -212,75 +229,88 @@ export class Editor extends srceditor.Editor {
     }
 
     appendGraphEntry(source: string, variable: string, nvalue: number, receivedTime: number) {
-        this.loadSmoothieChartsAsync()
-            .then(() => {
-                //See if there is a "home chart" that this point belongs to -
-                //if not, create a new chart
-                let homeChart: Chart = undefined
-                for (let i = 0; i < this.charts.length; ++i) {
-                    let chart = this.charts[i]
-                    if (chart.shouldContain(source, variable)) {
-                        homeChart = chart
-                        break
-                    }
-                }
-                if (!homeChart) {
-                    homeChart = new Chart(source, variable, this.chartIdx, this.currentLineColors)
-                    this.chartIdx++;
-                    this.charts.push(homeChart)
-                    this.chartRoot.appendChild(homeChart.getElement());
-                }
-                homeChart.addPoint(variable, nvalue, receivedTime)
-            })
+        //See if there is a "home chart" that this point belongs to -
+        //if not, create a new chart
+        let homeChart = this.charts.find((chart) => chart.shouldContain(source, variable));
+        if (!homeChart) {
+            homeChart = new Chart(source, variable, this.chartIdx, this.currentLineColors)
+            homeChart.setRealtimeData(this.wantRealtimeData());
+            this.chartIdx++;
+            this.charts.push(homeChart)
+            this.chartRoot.appendChild(homeChart.getElement());
+            pxt.BrowserUtils.removeClass(this.chartRoot, "nochart");
+            if (this.consoleRoot) {
+                pxt.BrowserUtils.removeClass(this.consoleRoot, "nochart");
+            }
+
+            // Force rerender to hide placeholder chart
+            if (this.charts.length == 1) this.parent.forceUpdate();
+        }
+        homeChart.addPoint(variable, nvalue, receivedTime)
     }
 
-    appendConsoleEntry(data: string) {
+    chunkDataIntoLines(data: string): string[] {
+        let lines: string[] = []
         for (let i = 0; i < data.length; ++i) {
-            let ch = data[i]
-            this.consoleBuffer += ch
-            if (ch !== "\n" && this.consoleBuffer.length < this.maxConsoleLineLength) {
+            const ch = data[i]
+            this.serialInputDataBuffer += ch
+            if (ch !== "\n" && this.serialInputDataBuffer.length < this.maxSerialInputDataLength) {
                 continue
             }
             if (ch === "\n") {
                 // remove trailing white space
-                this.consoleBuffer = this.consoleBuffer.replace(/\s+$/, '');
+                this.serialInputDataBuffer = this.serialInputDataBuffer.replace(/\s+$/, '');
                 // if anything remaining...
-                if (this.consoleBuffer.length) {
-                    let lastEntry = this.consoleRoot.lastChild
-                    let newEntry = document.createElement("div")
-                    if (lastEntry && lastEntry.lastChild.textContent == this.consoleBuffer) {
-                        if (lastEntry.childNodes.length == 2) {
-                            //Matches already-collapsed entry
-                            let count = parseInt(lastEntry.firstChild.textContent)
-                            lastEntry.firstChild.textContent = (count + 1).toString()
-                        } else {
-                            //Make a new collapsed entry with count = 2
-                            let newLabel = document.createElement("a")
-                            newLabel.className = "ui horizontal label"
-                            newLabel.textContent = "2"
-                            lastEntry.insertBefore(newLabel, lastEntry.lastChild)
-                        }
-                    } else {
-                        //Make a new non-collapsed entry
-                        newEntry.appendChild(document.createTextNode(this.consoleBuffer))
-                        this.consoleRoot.appendChild(newEntry)
-                    }
+                if (this.serialInputDataBuffer.length) {
+                    lines.push(this.serialInputDataBuffer)
                 }
             } else {
-                //Buffer is full
-                //Make a new entry with <span>, not <div>
-                let newEntry = document.createElement("span")
-                newEntry.appendChild(document.createTextNode(this.consoleBuffer))
+                lines.push(this.serialInputDataBuffer)
+            }
+            this.serialInputDataBuffer = ""
+        }
+        return lines
+    }
+
+    appendConsoleEntry(line: string) {
+        if (line.length >= this.maxSerialInputDataLength) {
+            //Buffer was full, this is a big chunk of data
+            //Make a new entry with <span>, not <div>
+            let newEntry = document.createElement("span")
+            newEntry.appendChild(document.createTextNode(line))
+            this.consoleRoot.appendChild(newEntry)
+        }
+        else {
+            let lastEntry = this.consoleRoot.lastChild
+            let newEntry = document.createElement("div")
+            if (lastEntry && lastEntry.lastChild.textContent == line) {
+                if (lastEntry.childNodes.length == 2) {
+                    //Matches already-collapsed entry
+                    let count = parseInt(lastEntry.firstChild.textContent)
+                    lastEntry.firstChild.textContent = (count + 1).toString()
+                } else {
+                    //Make a new collapsed entry with count = 2
+                    let newLabel = document.createElement("a")
+                    newLabel.className = "ui horizontal label"
+                    newLabel.textContent = "2"
+                    lastEntry.insertBefore(newLabel, lastEntry.lastChild)
+                }
+            } else {
+                //Make a new non-collapsed entry
+                newEntry.appendChild(document.createTextNode(line))
                 this.consoleRoot.appendChild(newEntry)
             }
-            this.consoleBuffer = ""
-            this.consoleRoot.scrollTop = this.consoleRoot.scrollHeight
-            while (this.consoleRoot.childElementCount > this.maxConsoleEntries) {
-                this.consoleRoot.removeChild(this.consoleRoot.firstChild)
+        }
+        this.consoleRoot.scrollTop = this.consoleRoot.scrollHeight
+        while (this.consoleRoot.childElementCount > this.maxConsoleEntries) {
+            this.consoleRoot.removeChild(this.consoleRoot.firstChild)
+        }
+        if (this.consoleRoot && this.consoleRoot.childElementCount > 0) {
+            if (this.chartRoot) {
+                pxt.BrowserUtils.removeClass(this.chartRoot, "noconsole");
             }
-            if (this.consoleRoot && this.consoleRoot.childElementCount > 0) {
-                if (this.chartRoot) this.chartRoot.classList.remove("noconsole");
-                if (this.consoleRoot) this.consoleRoot.classList.remove("noconsole");
+            if (this.consoleRoot) {
+                pxt.BrowserUtils.removeClass(this.consoleRoot, "noconsole");
             }
         }
     }
@@ -312,14 +342,16 @@ export class Editor extends srceditor.Editor {
     clear() {
         if (this.chartRoot) {
             this.clearNode(this.chartRoot);
-            this.chartRoot.classList.add("noconsole")
+            pxt.BrowserUtils.addClass(this.chartRoot, "noconsole");
+            pxt.BrowserUtils.addClass(this.chartRoot, "nochart");
         }
         if (this.consoleRoot) {
             this.clearNode(this.consoleRoot);
-            this.consoleRoot.classList.add("noconsole")
+            pxt.BrowserUtils.addClass(this.consoleRoot, "noconsole");
+            pxt.BrowserUtils.addClass(this.consoleRoot, "nochart");
         }
         this.charts = []
-        this.consoleBuffer = ""
+        this.serialInputDataBuffer = ""
         this.rawDataBuffer = ""
         this.savedMessageQueue = []
         this.sourceMap = {}
@@ -396,7 +428,11 @@ export class Editor extends srceditor.Editor {
     downloadRaw() {
         core.infoNotification(lf("Exporting text...."));
         const time = new Date(Date.now()).toString().replace(/[^\d]+/g, '-').replace(/(^-|-$)/g, '');
-        pxt.commands.browserDownloadAsync(Util.toUTF8(this.rawDataBuffer), pxt.appTarget.id + '-' + lf("{id:csvfilename}console") + '-' + time + ".txt", "text/plain")
+        let buf = this.rawDataBuffer;
+        // ensure \r\n newlines for windows <10
+        if (pxt.BrowserUtils.isWindows())
+            buf = buf.replace(/[^\r]\n/g, '\r\n');
+        pxt.commands.browserDownloadAsync(Util.toUTF8(buf), pxt.appTarget.id + '-' + lf("{id:csvfilename}console") + '-' + time + ".txt", "text/plain")
     }
 
     goBack() {
@@ -422,13 +458,16 @@ export class Editor extends srceditor.Editor {
                 <div id="serialHeader" className="ui serialHeader">
                     <div className="leftHeaderWrapper">
                         <div className="leftHeader">
-                            <sui.Button className="back-button" title={lf("Go back")} tabIndex={0} onClick={this.goBack} onKeyDown={sui.fireClickOnEnter}>
+                            <sui.Button title={lf("Go back")} tabIndex={0} onClick={this.goBack} onKeyDown={fireClickOnEnter}>
                                 <sui.Icon icon="arrow left" />
                                 <span className="ui text landscape only">{lf("Go back")}</span>
                             </sui.Button>
                         </div>
                     </div>
                     <div className="rightHeader">
+                        <sui.Button title={lf("Copy text")} className="ui icon button editorExport" ariaLabel={lf("Copy text")} onClick={this.downloadRaw}>
+                            <sui.Icon icon="copy" />
+                        </sui.Button>
                         <sui.Button title={lf("Export data")} className="ui icon blue button editorExport" ariaLabel={lf("Export data")} onClick={this.downloadCSV}>
                             <sui.Icon icon="download" />
                         </sui.Button>
@@ -436,14 +475,10 @@ export class Editor extends srceditor.Editor {
                         <span className="ui small header">{this.isSim ? lf("Simulator") : lf("Device")}</span>
                     </div>
                 </div>
+                {this.charts?.length == 0 && <div id="serialPlaceholder" className="ui segment">
+                    <div className="ui bottom left attached no-select label seriallabel">{lf("Values will be logged when the {0} sends data", this.isSim ? lf("simulator") : lf("device"))}</div>
+                </div>}
                 <div id="serialCharts" ref={this.handleChartRootRef}></div>
-                <div id="consoleHeader" className="ui serialHeader">
-                    <div className="rightHeader">
-                        <sui.Button title={lf("Copy text")} className="ui icon button editorExport" ariaLabel={lf("Copy text")} onClick={this.downloadRaw}>
-                            <sui.Icon icon="copy" />
-                        </sui.Button>
-                    </div>
-                </div>
                 <div id="serialConsole" ref={this.handleConsoleRootRef}></div>
             </div>
         )
@@ -486,16 +521,16 @@ class Chart {
     chartIdx: number;
     canvas: HTMLCanvasElement;
     label: HTMLDivElement;
-    lines: pxt.Map<TimeSeries> = {};
+    lines: pxt.Map<Smoothie.TimeSeries> = {};
     datas: pxt.Map<number[][]> = {};
     source: string;
     variable: string;
-    chart: SmoothieChart;
+    chart: Smoothie.SmoothieChart;
 
     constructor(source: string, variable: string, chartIdx: number, lineColors: string[]) {
         // Initialize chart
         const serialTheme = pxt.appTarget.serial && pxt.appTarget.serial.editorTheme;
-        const chartConfig: IChartOptions = {
+        const chartConfig: Smoothie.IChartOptions = {
             interpolation: 'bezier',
             labels: {
                 disabled: false,
@@ -516,7 +551,7 @@ class Chart {
         }
         this.lineColors = lineColors;
         this.chartIdx = chartIdx;
-        this.chart = new SmoothieChart(chartConfig);
+        this.chart = new Smoothie.SmoothieChart(chartConfig);
         this.rootElement.className = "ui segment";
         this.source = source;
         this.variable = variable.replace(/\..*$/, ''); // keep prefix only
@@ -525,18 +560,18 @@ class Chart {
         this.rootElement.appendChild(this.makeCanvas())
     }
 
-    tooltip(timestamp: number, data: { series: TimeSeries, index: number, value: number }[]): string {
+    tooltip(timestamp: number, data: { series: Smoothie.TimeSeries, index: number, value: number }[]): string {
         return data.map(n => {
             const name = (n.series as any).timeSeries.__name;
             return `<span>${name ? name + ': ' : ''}${n.value}</span>`;
         }).join('<br/>');
     }
 
-    getLine(name: string): TimeSeries {
+    getLine(name: string): Smoothie.TimeSeries {
         let line = this.lines[name];
         if (!line) {
             const lineColor = this.lineColors[this.chartIdx++ % this.lineColors.length]
-            this.lines[name] = line = new TimeSeries();
+            this.lines[name] = line = new Smoothie.TimeSeries();
             (line as any).__name = Util.htmlEscape(name.substring(this.variable.length + 1));
             this.chart.addTimeSeries(line, {
                 strokeStyle: lineColor,
@@ -598,6 +633,10 @@ class Chart {
 
     stop() {
         this.chart.stop()
+    }
+
+    setRealtimeData(realtime: boolean) {
+        this.chart.options.nonRealtimeData = !realtime;
     }
 }
 

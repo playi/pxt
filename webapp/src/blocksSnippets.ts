@@ -31,7 +31,9 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     },
                     blockXml: `<block type="device_while">
                     <value name="COND">
-                        <shadow type="logic_boolean"></shadow>
+                        <shadow type="logic_boolean">
+                            <field name="BOOL">FALSE</field>
+                        </shadow>
                     </value>
                 </block>`
                 },
@@ -81,6 +83,26 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 paramDefl: {}
             }
         };
+        if (pxt.appTarget.runtime && pxt.appTarget.runtime.breakBlock) {
+            _cachedBuiltinCategories[CategoryNameID.Loops].blocks.push({
+                name: "pxt_break",
+                attributes: {
+                    blockId: "break_keyword",
+                    weight: 30
+                },
+                blockXml: `<block type="break_keyword"></block>`
+            });
+        }
+        if (pxt.appTarget.runtime && pxt.appTarget.runtime.continueBlock) {
+            _cachedBuiltinCategories[CategoryNameID.Loops].blocks.push({
+                name: "pxt_continue",
+                attributes: {
+                    blockId: "continue_keyword",
+                    weight: 29
+                },
+                blockXml: `<block type="continue_keyword"></block>`
+            });
+        }
         _cachedBuiltinCategories[CategoryNameID.Logic] = {
             name: lf("{id:category}Logic"),
             nameid: CategoryNameID.Logic,
@@ -155,11 +177,30 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     </value>
                 </block>`
                 }, {
+                    name: "logic_compare_strings",
+                    attributes: {
+                        blockId: "logic_compare",
+                        group: lf("Comparison"),
+                        weight: 45
+                    },
+                    blockXml: `<block type="logic_compare" gap="8">
+                    <value name="A">
+                        <shadow type="text">
+                            <field name="TEXT"></field>
+                        </shadow>
+                    </value>
+                    <value name="B">
+                        <shadow type="text">
+                            <field name="TEXT"></field>
+                        </shadow>
+                    </value>
+                </block>`
+                }, {
                     name: "logic_operation_and",
                     attributes: {
                         blockId: "logic_operation",
                         group: lf("Boolean"),
-                        weight: 45
+                        weight: 44
                     },
                     blockXml: `<block type="logic_operation" gap="8">
                     <field name="OP">AND</field>
@@ -169,7 +210,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     attributes: {
                         blockId: "logic_operation",
                         group: lf("Boolean"),
-                        weight: 44
+                        weight: 43
                     },
                     blockXml: `<block type="logic_operation" gap="8">
                     <field name="OP">OR</field>
@@ -179,7 +220,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     attributes: {
                         blockId: "logic_negate",
                         group: lf("Boolean"),
-                        weight: 43
+                        weight: 42
                     },
                     blockXml: `<block type="logic_negate"></block>`
                 }, {
@@ -187,7 +228,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     attributes: {
                         blockId: "logic_boolean",
                         group: lf("Boolean"),
-                        weight: 42
+                        weight: 41
                     },
                     blockXml: `<block type="logic_boolean" gap="8">
                     <field name="BOOL">TRUE</field>
@@ -197,7 +238,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     attributes: {
                         blockId: "logic_boolean",
                         group: lf("Boolean"),
-                        weight: 41
+                        weight: 40
                     },
                     blockXml: `<block type="logic_boolean">
                     <field name="BOOL">FALSE</field>
@@ -446,6 +487,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "lists_create_with",
                     attributes: {
                         blockId: "lists_create_with",
+                        group: "Create",
                         weight: 90
                     },
                     blockXml: `<block type="variables_set" gap="8">
@@ -455,12 +497,12 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                                 <mutation items="2"></mutation>
                                 <value name="ADD0">
                                     <shadow type="math_number">
-                                        <field name="NUM">1</field>
+                                        <field name="NUM">0</field>
                                     </shadow>
                                 </value>
                                 <value name="ADD1">
                                     <shadow type="math_number">
-                                        <field name="NUM">2</field>
+                                        <field name="NUM">1</field>
                                     </shadow>
                                 </value>
                             </block>
@@ -470,6 +512,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "lists_create_with",
                     attributes: {
                         blockId: "lists_create_with",
+                        group: "Create",
                         weight: 89
                     },
                     blockXml: `<block type="variables_set">
@@ -496,9 +539,21 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                         </value>
                     </block>`
                 }, {
+                    name: "lists_create_with",
+                    attributes: {
+                        blockId: "lists_create_with",
+                        group: "Create",
+                        weight: 5
+                    },
+                    blockXml: `<block type="lists_create_with">
+                        <mutation items="0"></mutation>
+                    </block>`
+                },
+                {
                     name: "lists_index_get",
                     attributes: {
                         blockId: "lists_index_get",
+                        group: "Read",
                         weight: 87
                     },
                     blockXml: `<block type="lists_index_get">
@@ -518,6 +573,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "lists_index_set",
                     attributes: {
                         blockId: "lists_index_set",
+                        group: "Modify",
                         weight: 86
                     },
                     blockXml: `<block type="lists_index_set">
@@ -537,6 +593,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                     name: "lists_length",
                     attributes: {
                         blockId: "lists_length",
+                        group: "Read",
                         weight: 88
                     },
                     blockXml: `<block type="lists_length">
@@ -552,6 +609,7 @@ function cachedBuiltinCategories(): pxt.Map<BuiltinCategoryDefinition> {
                 advanced: true,
                 weight: 50.07,
                 icon: "arrays",
+                groups: ["Create", "Read", "Modify", "Operations"],
                 callingConvention: ts.pxtc.ir.CallingConvention.Plain,
                 paramDefl: {}
             }
@@ -646,8 +704,7 @@ export function getPauseUntil() {
                 blockNamespace: opts.category || "loops",
                 weight: opts.weight == null ? 0 : opts.weight
             },
-            blockXml: Blockly.Xml.domToText(pxt.blocks.mkPredicateBlock(pxtc.PAUSE_UNTIL_TYPE)),
-            noNamespace: true
+            blockXml: Blockly.Xml.domToText(pxt.blocks.mkPredicateBlock(pxtc.PAUSE_UNTIL_TYPE))
         };
     }
 
@@ -687,11 +744,10 @@ export function allBuiltinBlocks() {
             blockId: ts.pxtc.ON_START_TYPE,
             weight: pxt.appTarget.runtime.onStartWeight || 10
         },
-        blockXml: `<block type="pxt-on-start"></block>`,
-        noNamespace: true
+        blockXml: `<block type="pxt-on-start"></block>`
     };
     // Add pause until built in block
-    const pauseUntil = this.getPauseUntil();
+    const pauseUntil = getPauseUntil();
     if (pauseUntil) {
         builtinBlockCache[pxtc.PAUSE_UNTIL_TYPE] = pauseUntil;
     }
@@ -751,6 +807,8 @@ function blockFromJson(b: pxt.editor.ToolboxBlockDefinition, currentWeight?: num
         snippet: b.snippet,
         snippetName: b.snippetName,
         snippetOnly: b.snippetOnly,
+        pySnippet: b.pySnippet,
+        pySnippetName: b.pySnippetName,
         attributes: {
             blockId: b.blockId,
             weight: currentWeight || b.weight,
@@ -758,7 +816,6 @@ function blockFromJson(b: pxt.editor.ToolboxBlockDefinition, currentWeight?: num
             jsDoc: b.jsDoc,
             group: b.group,
         },
-        noNamespace: true,
         retType: b.retType,
         blockXml: b.blockXml
     }
@@ -769,6 +826,8 @@ function blockToJson(b: BlockDefinition): pxt.editor.ToolboxBlockDefinition {
         name: b.name,
         snippet: b.snippet,
         snippetName: b.snippetName,
+        pySnippet: b.pySnippet,
+        pySnippetName: b.pySnippetName,
         snippetOnly: b.snippetOnly,
         retType: b.retType,
         weight: b.attributes.weight,

@@ -12,6 +12,10 @@ namespace pxt.BrowserUtils {
         return typeof navigator !== "undefined";
     }
 
+    export function hasWindow(): boolean {
+        return typeof window !== "undefined";
+    }
+
     export function isWindows(): boolean {
         return hasNavigator() && /(Win32|Win64|WOW64)/i.test(navigator.platform);
     }
@@ -25,7 +29,13 @@ namespace pxt.BrowserUtils {
     }
 
     export function isIOS(): boolean {
-        return hasNavigator() && /iPad|iPhone|iPod/.test(navigator.userAgent);
+        return hasNavigator() &&
+            (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+    }
+
+    export function isAndroid(): boolean {
+        return hasNavigator() && /android/i.test(navigator.userAgent);
     }
 
     //MacIntel on modern Macs
@@ -53,20 +63,26 @@ namespace pxt.BrowserUtils {
     Notes on browser detection
 
     Actually:             Claims to be:
-                          IE  MicrosoftEdge    Chrome  Safari  Firefox
+                          IE  MicrosoftEdge   Chrome  Safari  Firefox  NewEdge
               IE          X                           X?
     Microsoft Edge                    X       X       X
               Chrome                          X       X
               Safari                                  X       X
               Firefox                                         X
+              New Edge                        X       X                X
 
-    I allow Opera to go about claiming to be Chrome because it might as well be
+    I allow Opera to go about claiming to be Chrome because it might as well be. Same for Chromium-based Edge.
     */
 
     //Microsoft Edge lies about its user agent and claims to be Chrome, but Microsoft Edge/Version
     //is always at the end
     export function isEdge(): boolean {
         return hasNavigator() && /Edge/i.test(navigator.userAgent);
+    }
+
+    //Chromium-based Edge. Note that `isChrome()` also detects this browser, and that's ok. In most cases Chromium-Edge can be treated like Chrome. Use this method if you need to differentiate them.
+    export function isChromiumEdge(): boolean {
+        return hasNavigator() && /Edg\//i.test(navigator.userAgent);
     }
 
     //IE11 also lies about its user agent, but has Trident appear somewhere in
@@ -76,7 +92,7 @@ namespace pxt.BrowserUtils {
         return hasNavigator() && /Trident/i.test(navigator.userAgent);
     }
 
-    //Microsoft Edge and IE11 lie about being Chrome
+    //Microsoft Edge and IE11 lie about being Chrome. Chromium-based Edge ("Edgeium") will be detected as Chrome, that is ok. If you're looking for Edgeium, use `isChromiumEdge()`.
     export function isChrome(): boolean {
         return !isEdge() && !isIE() && !!navigator && (/Chrome/i.test(navigator.userAgent) || /Chromium/i.test(navigator.userAgent));
     }
@@ -111,8 +127,61 @@ namespace pxt.BrowserUtils {
 
     export function isTouchEnabled(): boolean {
         return typeof window !== "undefined" &&
-            ('ontouchstart' in window               // works on most browsers
-                || navigator.maxTouchPoints > 0);       // works on IE10/11 and Surface);
+            ('ontouchstart' in window                              // works on most browsers
+                || (navigator && navigator.maxTouchPoints > 0));       // works on IE10/11 and Surface);
+    }
+
+    export function isPxtElectron(): boolean {
+        return typeof window != "undefined" && !!(window as any).pxtElectron;
+    }
+
+    export function isIpcRenderer(): boolean {
+        return typeof window != "undefined" && !!(window as any).ipcRenderer;
+    }
+    export function isElectron() {
+        return isPxtElectron() || isIpcRenderer();
+    }
+
+    // this function gets overriden when loading pxtwinrt.js
+    export let isWinRT = () => false;
+
+    export function isLocalHost(ignoreFlags?: boolean): boolean {
+        try {
+            return typeof window !== "undefined"
+                && /^http:\/\/(localhost|127\.0\.0\.1):\d+\//.test(window.location.href)
+                && (ignoreFlags || !/nolocalhost=1/.test(window.location.href))
+                && !(pxt?.webConfig?.isStatic);
+        } catch (e) { return false; }
+    }
+
+    export function isLocalHostDev(): boolean {
+        return isLocalHost() && !isElectron();
+    }
+
+    export function isSkillmapEditor(): boolean {
+        try {
+            return /skill(?:s?)Map=1/.test(window.location.href);
+        } catch (e) { return false; }
+    }
+
+    export function isTabletSize(): boolean {
+        return window?.innerWidth < pxt.BREAKPOINT_TABLET;
+    }
+
+    export function isComputerSize(): boolean {
+        return window?.innerWidth >= pxt.BREAKPOINT_TABLET;
+    }
+
+    export function noSharedLocalStorage(): boolean {
+        try {
+            return /nosharedlocalstorage/i.test(window.location.href);
+        } catch (e) { return false; }
+    }
+
+    export function useOldTutorialLayout(): boolean {
+        try {
+            return (/tutorialview=old/.test(window.location.href));
+        } catch (e) { return false; }
     }
 
     export function hasPointerEvents(): boolean {
@@ -161,9 +230,11 @@ namespace pxt.BrowserUtils {
             // pinned web sites and WKWebview for embedded browsers have a different user agent
             // Mozilla/5.0 (iPhone; CPU iPhone OS 10_2_1 like Mac OS X) AppleWebKit/602.4.6 (KHTML, like Gecko) Mobile/14D27
             // Mozilla/5.0 (iPad; CPU OS 10_3_3 like Mac OS X) AppleWebKit/603.3.8 (KHTML, like Gecko) Mobile/14G60
+            // Mozilla/5.0 (iPod; CPU OS 10_3_3 like Mac OS X) AppleWebKit/603.3.8 (KHTML, like Gecko) Mobile/14G60
+            // Mozilla/5.0 (iPod touch; CPU iPhone OS 14_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148;
             // Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_5) AppleWebKit/605.1.15 (KHTML, like Gecko)
             if (!matches)
-                matches = /(Macintosh|iPod|iPhone|iPad); (CPU|Intel).*?OS (X )?(\d+)/i.exec(navigator.userAgent);
+                matches = /(Macintosh|iPod( touch)?|iPhone|iPad); (CPU|Intel).*?OS (X )?(\d+)/i.exec(navigator.userAgent);
         }
         else if (isChrome()) {
             matches = /(Chrome|Chromium)\/([0-9\.]+)/i.exec(navigator.userAgent);
@@ -185,6 +256,7 @@ namespace pxt.BrowserUtils {
 
     let hasLoggedBrowser = false
 
+    // Note that IE11 is no longer supported in any target. Redirect handled in docfiles/pxtweb/browserRedirect.ts
     export function isBrowserSupported(): boolean {
         if (!navigator) {
             return true; //All browsers define this, but we can't make any predictions if it isn't defined, so assume the best
@@ -193,6 +265,13 @@ namespace pxt.BrowserUtils {
         // allow bots in general
         if (/bot|crawler|spider|crawling/i.test(navigator.userAgent))
             return true;
+
+        // Check target theme to see if this browser is supported
+        const unsupportedBrowsers = pxt.appTarget?.unsupportedBrowsers
+            || (window as any).pxtTargetBundle?.unsupportedBrowsers as BrowserOptions[];
+        if (unsupportedBrowsers?.some(b => b.id == browser())) {
+            return false
+        }
 
         // testing browser versions
         const versionString = browserVersion();
@@ -203,8 +282,7 @@ namespace pxt.BrowserUtils {
         const isRecentEdge = isEdge();
         const isRecentSafari = isSafari() && v >= 9;
         const isRecentOpera = (isOpera() && isChrome()) && v >= 21;
-        const isRecentIE = isIE() && v >= 11;
-        const isModernBrowser = isRecentChrome || isRecentFirefox || isRecentEdge || isRecentSafari || isRecentOpera || isRecentIE
+        const isModernBrowser = isRecentChrome || isRecentFirefox || isRecentEdge || isRecentSafari || isRecentOpera
 
         //In the future this should check for the availability of features, such
         //as web workers
@@ -221,7 +299,7 @@ namespace pxt.BrowserUtils {
         if (!hasLoggedBrowser) {
             pxt.log(`Browser: ${browser()} ${versionString} on ${os()}`)
             if (!isSupported) {
-                pxt.tickEvent(`browser.unsupported.${navigator.userAgent}`)
+                pxt.tickEvent("browser.unsupported", { useragent: navigator.userAgent })
             }
             hasLoggedBrowser = true
         }
@@ -231,10 +309,13 @@ namespace pxt.BrowserUtils {
     export function devicePixelRatio(): number {
         if (typeof window === "undefined" || !window.screen) return 1;
 
-        if (window.screen.systemXDPI !== undefined
-            && window.screen.logicalXDPI !== undefined
-            && window.screen.systemXDPI > window.screen.logicalXDPI) {
-            return window.screen.systemXDPI / window.screen.logicalXDPI;
+        // these are IE specific
+        const sysXDPI = (window.screen as any).systemXDPI
+        const logicalXDPI = (window.screen as any).logicalXDPI
+        if (sysXDPI !== undefined
+            && logicalXDPI !== undefined
+            && sysXDPI > logicalXDPI) {
+            return sysXDPI / logicalXDPI;
         }
         else if (window && window.devicePixelRatio !== undefined) {
             return window.devicePixelRatio;
@@ -242,12 +323,12 @@ namespace pxt.BrowserUtils {
         return 1;
     }
 
-    export function browserDownloadBinText(text: string, name: string, contentType: string = "application/octet-stream", userContextWindow?: Window, onError?: (err: any) => void): string {
-        return browserDownloadBase64(ts.pxtc.encodeBase64(text), name, contentType, userContextWindow, onError)
+    export function browserDownloadBinText(text: string, name: string, opt?: BrowserDownloadOptions): string {
+        return browserDownloadBase64(ts.pxtc.encodeBase64(text), name, opt)
     }
 
-    export function browserDownloadText(text: string, name: string, contentType: string = "application/octet-stream", userContextWindow?: Window, onError?: (err: any) => void): string {
-        return browserDownloadBase64(ts.pxtc.encodeBase64(Util.toUTF8(text)), name, contentType, userContextWindow, onError)
+    export function browserDownloadText(text: string, name: string, opt?: BrowserDownloadOptions): string {
+        return browserDownloadBase64(ts.pxtc.encodeBase64(Util.toUTF8(text)), name, opt);
     }
 
     export function isBrowserDownloadInSameWindow(): boolean {
@@ -289,7 +370,7 @@ namespace pxt.BrowserUtils {
                 document.body.appendChild(iframe);
             }
             iframe.src = uri;
-        } else if (pxt.BrowserUtils.isEdge() || pxt.BrowserUtils.isIE()) {
+        } else if (/^data:/i.test(uri) && (pxt.BrowserUtils.isEdge() || pxt.BrowserUtils.isIE())) {
             //Fix for edge
             let byteString = atob(uri.split(',')[1]);
             let ia = Util.stringToUint8Array(byteString);
@@ -309,8 +390,8 @@ namespace pxt.BrowserUtils {
         }
     }
 
-    export function browserDownloadUInt8Array(buf: Uint8Array, name: string, contentType: string = "application/octet-stream", userContextWindow?: Window, onError?: (err: any) => void): string {
-        return browserDownloadBase64(ts.pxtc.encodeBase64(Util.uint8ArrayToString(buf)), name, contentType, userContextWindow, onError)
+    export function browserDownloadUInt8Array(buf: Uint8Array, name: string, opt?: BrowserDownloadOptions): string {
+        return browserDownloadBase64(ts.pxtc.encodeBase64(Util.uint8ArrayToString(buf)), name, opt);
     }
 
     export function toDownloadDataUri(b64: string, contentType: string): string {
@@ -323,25 +404,49 @@ namespace pxt.BrowserUtils {
         return dataurl;
     }
 
-    export function browserDownloadBase64(b64: string, name: string, contentType: string = "application/octet-stream", userContextWindow?: Window, onError?: (err: any) => void): string {
-        pxt.debug('trigger download')
+    export interface BrowserDownloadOptions {
+        contentType?: string; // defl: application/octet-stream
+        userContextWindow?: Window;
+        onError?: (err: any) => void;
+        maintainObjectURL?: boolean;
+    }
 
-        const saveBlob = (<any>window).navigator.msSaveOrOpenBlob && !pxt.BrowserUtils.isMobile();
-        const dataurl = toDownloadDataUri(b64, name);
+    export function browserDownloadBase64(b64: string, name: string, opt: BrowserDownloadOptions = {}): string {
+        pxt.debug('trigger download');
+
+        const {
+            contentType = "application/octet-stream",
+            userContextWindow,
+            onError,
+            maintainObjectURL
+        } = opt;
+
+        const createObjectURL = window.URL?.createObjectURL;
+        const asDataUri = pxt.appTarget.appTheme.disableBlobObjectDownload;
+        let downloadurl: string;
         try {
-            if (saveBlob) {
-                const b = new Blob([Util.stringToUint8Array(atob(b64))], { type: contentType })
-                const result = (<any>window).navigator.msSaveOrOpenBlob(b, name);
-            } else browserDownloadDataUri(dataurl, name, userContextWindow);
+            if (!!createObjectURL && !asDataUri) {
+                const b = new Blob([Util.stringToUint8Array(atob(b64))], { type: contentType });
+                const objUrl = createObjectURL(b);
+                browserDownloadDataUri(objUrl, name, userContextWindow);
+                if (maintainObjectURL) {
+                    downloadurl = objUrl;
+                } else {
+                    window.setTimeout(() => window.URL.revokeObjectURL(downloadurl), 0);
+                }
+            } else {
+                downloadurl = toDownloadDataUri(b64, name);
+                browserDownloadDataUri(downloadurl, name, userContextWindow);
+            }
         } catch (e) {
             if (onError) onError(e);
-            pxt.debug("saving failed")
+            pxt.debug("saving failed");
         }
-        return dataurl;
+        return downloadurl;
     }
 
     export function loadImageAsync(data: string): Promise<HTMLImageElement> {
-        const img = document.createElement("img") as HTMLImageElement;
+        const img = document.createElement("img")
         return new Promise<HTMLImageElement>((resolve, reject) => {
             img.onload = () => resolve(img);
             img.onerror = () => resolve(undefined);
@@ -350,7 +455,96 @@ namespace pxt.BrowserUtils {
         });
     }
 
-    function resolveCdnUrl(path: string): string {
+    export function loadCanvasAsync(url: string): Promise<HTMLCanvasElement> {
+        return loadImageAsync(url)
+            .then(img => {
+                const canvas = document.createElement("canvas")
+                canvas.width = img.width
+                canvas.height = img.height
+                const ctx = canvas.getContext("2d")
+                ctx.drawImage(img, 0, 0);
+                return canvas;
+            })
+    }
+
+    export function scaleImageData(img: ImageData, scale: number): ImageData {
+        const cvs = document.createElement("canvas");
+        cvs.width = img.width * scale;
+        cvs.height = img.height * scale;
+        const ctx = cvs.getContext("2d")
+        ctx.putImageData(img, 0, 0);
+        ctx.imageSmoothingEnabled = false;
+        ctx.scale(scale, scale);
+        ctx.drawImage(cvs, 0, 0);
+        return ctx.getImageData(0, 0, img.width * scale, img.height * scale);
+    }
+
+    export function imageDataToPNG(img: ImageData, scale = 1): string {
+        if (!img) return undefined;
+
+        const canvas = document.createElement("canvas")
+        canvas.width = img.width * scale
+        canvas.height = img.height * scale
+        const ctx = canvas.getContext("2d")
+        ctx.putImageData(img, 0, 0);
+        ctx.imageSmoothingEnabled = false;
+        ctx.scale(scale, scale);
+        ctx.drawImage(canvas, 0, 0);
+        return canvas.toDataURL("image/png");
+    }
+
+    const MAX_SCREENSHOT_SIZE = 1e6; // max 1Mb
+    export function encodeToPngAsync(dataUri: string,
+        options?: {
+            width?: number,
+            height?: number,
+            pixelDensity?: number,
+            maxSize?: number,
+            text?: string
+        }): Promise<string> {
+        const { width, height, pixelDensity = 4, maxSize = MAX_SCREENSHOT_SIZE, text } = options || {};
+
+        return new Promise<string>((resolve, reject) => {
+            const img = new Image;
+
+            img.onload = function () {
+                const cvs = document.createElement("canvas") as HTMLCanvasElement;
+                const ctx = cvs.getContext("2d");
+                cvs.width = (width || img.width) * pixelDensity;
+                cvs.height = (height || img.height) * pixelDensity;
+
+                if (text) {
+                    ctx.fillStyle = "#fff";
+                    ctx.fillRect(0, 0, cvs.width, cvs.height);
+                }
+                ctx.drawImage(img, 0, 0, width, height, 0, 0, cvs.width, cvs.height);
+                let canvasdata = cvs.toDataURL("image/png");
+                // if the generated image is too big, shrink image
+                while (canvasdata.length > maxSize) {
+                    cvs.width = (cvs.width / 2) >> 0;
+                    cvs.height = (cvs.height / 2) >> 0;
+                    pxt.debug(`screenshot size ${canvasdata.length}b, shrinking to ${cvs.width}x${cvs.height}`)
+                    ctx.drawImage(img, 0, 0, width, height, 0, 0, cvs.width, cvs.height);
+                    canvasdata = cvs.toDataURL("image/png");
+                }
+                if (text) {
+                    let p = pxt.lzmaCompressAsync(text).then(blob => {
+                        const datacvs = pxt.Util.encodeBlobAsync(cvs, blob);
+                        resolve(datacvs.toDataURL("image/png"));
+                    });
+                } else {
+                    resolve(canvasdata);
+                }
+            };
+            img.onerror = ev => {
+                pxt.reportError("png", "png rendering failed");
+                resolve(undefined)
+            }
+            img.src = dataUri;
+        })
+    }
+
+    export function resolveCdnUrl(path: string): string {
         // don't expand full urls
         if (/^https?:\/\//i.test(path))
             return path;
@@ -391,18 +585,27 @@ namespace pxt.BrowserUtils {
         });
     }
 
+    let loadScriptPromises: pxt.Map<Promise<void>> = {};
     export function loadScriptAsync(path: string): Promise<void> {
         const url = resolveCdnUrl(path);
-        pxt.debug(`script: loading ${url}`);
-        return new Promise<void>((resolve, reject) => {
-            const script = document.createElement('script');
-            script.type = 'text/javascript';
-            script.src = url;
-            script.async = true;
-            script.addEventListener('load', () => resolve());
-            script.addEventListener('error', (e) => reject(e));
-            document.body.appendChild(script);
-        });
+        let p = loadScriptPromises[url];
+        if (!p) {
+            p = loadScriptPromises[url] = new Promise<void>((resolve, reject) => {
+                pxt.debug(`script: loading ${url}`);
+                const script = document.createElement('script');
+                script.type = 'text/javascript';
+                script.addEventListener('load', () => resolve());
+                script.addEventListener('error', (e) => {
+                    // might have had connection issue, allow to try later
+                    delete loadScriptPromises[url];
+                    reject(e);
+                });
+                script.src = url;
+                script.async = true;
+                document.body.appendChild(script);
+            });
+        }
+        return p;
     }
 
     export function loadAjaxAsync(url: string): Promise<string> {
@@ -463,7 +666,7 @@ namespace pxt.BrowserUtils {
         // RTL languages
         if (Util.isUserLanguageRtl()) {
             pxt.debug("rtl layout");
-            document.body.classList.add("rtl");
+            pxt.BrowserUtils.addClass(document.body, "rtl");
             document.body.style.direction = "rtl";
 
             // replace semantic.css with rtlsemantic.css
@@ -538,18 +741,16 @@ namespace pxt.BrowserUtils {
     export const scheduleStorageCleanup = hasNavigator() && (<any>navigator).storage && (<any>navigator).storage.estimate // some browser don't support this
         ? ts.pxtc.Util.throttle(function () {
             const MIN_QUOTA = 1000000; // 1Mb
-            const MAX_USAGE_BYTES = 100000000; // 100Mb
-            const MAX_USAGE_RATIO = 0.5; // max 50% 
+            const MAX_USAGE_RATIO = 0.9; // max 90%
 
             storageEstimateAsync()
                 .then(estimate => {
                     // quota > 50%
-                    pxt.log(`storage estimate: ${(estimate.usage / estimate.quota * 100) >> 0}%, ${(estimate.usage / 1000000) >> 0}/${(estimate.quota / 1000000) >> 0}Mb`)
+                    pxt.debug(`storage estimate: ${(estimate.usage / estimate.quota * 100) >> 0}%, ${(estimate.usage / 1000000) >> 0}/${(estimate.quota / 1000000) >> 0}Mb`)
                     if (estimate.quota
                         && estimate.usage
                         && estimate.quota > MIN_QUOTA
-                        && (estimate.usage > MAX_USAGE_BYTES ||
-                            (estimate.usage / estimate.quota) > MAX_USAGE_RATIO)) {
+                        && (estimate.usage / estimate.quota) > MAX_USAGE_RATIO) {
                         pxt.log(`quota usage exceeded, clearing translations`);
                         pxt.tickEvent('storage.cleanup');
                         return clearTranslationDbAsync();
@@ -567,7 +768,7 @@ namespace pxt.BrowserUtils {
         for (let i = 0; i < 16; ++i)
             md += md + Math.random();
         console.log(`adding entry ${md.length * 2} bytes`);
-        return Promise.delay(1)
+        return U.delay(1)
             .then(() => translationDbAsync())
             .then(db => db.setAsync("foobar", Math.random().toString(), "", null, undefined, md))
             .then(() => pxt.BrowserUtils.storageEstimateAsync())
@@ -600,16 +801,16 @@ namespace pxt.BrowserUtils {
         getAsync(lang: string, filename: string, branch: string): Promise<ITranslationDbEntry> {
             return Promise.resolve(this.get(lang, filename, branch));
         }
-        set(lang: string, filename: string, branch: string, etag: string, strings?: pxt.Map<string>, md?: string) {
+        set(lang: string, filename: string, branch: string, etag: string, time: number, strings?: pxt.Map<string>, md?: string) {
             this.translations[this.key(lang, filename, branch)] = {
                 etag,
-                time: Date.now() + 24 * 60 * 60 * 1000, // in-memory expiration is 24h
+                time,
                 strings,
                 md
             }
         }
         setAsync(lang: string, filename: string, branch: string, etag: string, strings?: pxt.Map<string>, md?: string): Promise<void> {
-            this.set(lang, filename, branch, etag, strings);
+            this.set(lang, filename, branch, etag, Util.now(), strings);
             return Promise.resolve();
         }
         clearAsync() {
@@ -754,7 +955,7 @@ namespace pxt.BrowserUtils {
                     const db = r.result as IDBDatabase;
                     db.createObjectStore(IndexedDbTranslationDb.TABLE, { keyPath: IndexedDbTranslationDb.KEYPATH });
                 }, () => {
-                    // quota exceeeded, nuke db
+                    // quota exceeeded, delete db
                     clearTranslationDbAsync().catch(e => { });
                 });
                 return idbWrapper.openAsync()
@@ -784,7 +985,7 @@ namespace pxt.BrowserUtils {
                 .then((res) => {
                     if (res) {
                         // store in-memory so that we don't try to download again
-                        this.mem.set(lang, filename, branch, res.etag, res.strings);
+                        this.mem.set(lang, filename, branch, res.etag, res.time, res.strings);
                         return Promise.resolve(res);
                     }
                     return Promise.resolve(undefined);
@@ -796,14 +997,17 @@ namespace pxt.BrowserUtils {
         setAsync(lang: string, filename: string, branch: string, etag: string, strings?: pxt.Map<string>, md?: string): Promise<void> {
             lang = (lang || "en-US").toLowerCase(); // normalize locale
             const id = this.mem.key(lang, filename, branch);
-            this.mem.set(lang, filename, branch, etag, strings, md);
+            let time = Util.now();
+            this.mem.set(lang, filename, branch, etag, time, strings, md);
 
-            if (strings)
+            if (strings) {
                 Object.keys(strings).filter(k => !strings[k]).forEach(k => delete strings[k]);
+            }
+
             const entry: ITranslationDbEntry = {
                 id,
                 etag,
-                time: Date.now(),
+                time,
                 strings,
                 md
             }
@@ -827,6 +1031,8 @@ namespace pxt.BrowserUtils {
     // wired up in the app to store translations in pouchdb. MAY BE UNDEFINED!
     let _translationDbPromise: Promise<ITranslationDb>;
     export function translationDbAsync(): Promise<ITranslationDb> {
+        if (pxt.Util.isNodeJS)
+            return Promise.resolve(new MemTranslationDb());
         // try indexed db
         if (!_translationDbPromise)
             _translationDbPromise = IndexedDbTranslationDb.createAsync()
@@ -851,6 +1057,312 @@ namespace pxt.BrowserUtils {
             return deleteDbAsync();
         return _translationDbPromise
             .then(db => db.clearAsync())
-            .catch(e => deleteDbAsync().done());
+            .catch(e => deleteDbAsync().then());
+    }
+
+    export function getTutorialCodeHash(code: string[]) {
+        // the code strings are parsed from markdown, so when the
+        // markdown changes the blocks will also be invalidated
+        const input = JSON.stringify(code) + pxt.appTarget.versions.pxt + "_" + pxt.appTarget.versions.target;
+        return pxtc.U.sha256(input);
+    }
+
+    function getTutorialInfoKey(filename: string, branch?: string) {
+        return `${filename}|${branch || "master"}`;
+    }
+
+    interface TutorialInfoIndexedDbEntry {
+        id: string;
+        time: number;
+        hash: string;
+        blocks: Map<number>;
+        snippets: Map<Map<number>>;
+    }
+
+    export interface ITutorialInfoDb {
+        getAsync(filename: string, code: string[], branch?: string): Promise<TutorialInfoIndexedDbEntry>;
+        setAsync(filename: string, snippets: Map<Map<number>>, code: string[], branch?: string): Promise<void>;
+        clearAsync(): Promise<void>;
+    }
+
+    class TutorialInfoIndexedDb implements ITutorialInfoDb {
+        static TABLE = "info";
+        static KEYPATH = "id";
+
+        static dbName() {
+            return `__pxt_tutorialinfo_${pxt.appTarget.id || ""}`;
+        }
+
+        static createAsync(): Promise<TutorialInfoIndexedDb> {
+            function openAsync() {
+                const idbWrapper = new pxt.BrowserUtils.IDBWrapper(TutorialInfoIndexedDb.dbName(), 2, (ev, r) => {
+                    const db = r.result as IDBDatabase;
+                    db.createObjectStore(TutorialInfoIndexedDb.TABLE, { keyPath: TutorialInfoIndexedDb.KEYPATH });
+                }, () => {
+                    // quota exceeeded, clear db
+                    pxt.BrowserUtils.IDBWrapper.deleteDatabaseAsync(TutorialInfoIndexedDb.dbName())
+                });
+                return idbWrapper.openAsync()
+                    .then(() => new TutorialInfoIndexedDb(idbWrapper));
+            }
+            return openAsync()
+                .catch(e => {
+                    console.log(`db: failed to open tutorial info database, try delete entire store...`)
+                    return pxt.BrowserUtils.IDBWrapper.deleteDatabaseAsync(TutorialInfoIndexedDb.dbName())
+                        .then(() => openAsync());
+                })
+        }
+
+        private constructor(protected readonly db: pxt.BrowserUtils.IDBWrapper) {
+        }
+
+        getAsync(filename: string, code: string[], branch?: string): Promise<TutorialInfoIndexedDbEntry> {
+            const key = getTutorialInfoKey(filename, branch);
+            const hash = getTutorialCodeHash(code);
+
+            return this.db.getAsync<TutorialInfoIndexedDbEntry>(TutorialInfoIndexedDb.TABLE, key)
+                .then((res) => {
+                    if (res && res.hash == hash && (Util.now() - (res.time || 0)) < 86400000) {
+                        return res;
+                    }
+
+                    // delete stale db entry
+                    this.db.deleteAsync(TutorialInfoIndexedDb.TABLE, key);
+                    return undefined;
+                });
+        }
+
+        setAsync(filename: string, snippets: Map<Map<number>>, code: string[], branch?: string): Promise<void> {
+            pxt.perf.measureStart("tutorial info db setAsync")
+            const key = getTutorialInfoKey(filename, branch);
+            const hash = getTutorialCodeHash(code);
+            return this.setWithHashAsync(filename, snippets, hash);
+        }
+
+        setWithHashAsync(filename: string, snippets: Map<Map<number>>, hash: string, branch?: string): Promise<void> {
+            pxt.perf.measureStart("tutorial info db setAsync")
+            const key = getTutorialInfoKey(filename, branch);
+            const blocks: Map<number> = {};
+            Object.keys(snippets).forEach(hash => {
+                Object.keys(snippets[hash]).forEach(blockId => {
+                    blocks[blockId] = snippets[hash][blockId]
+                })
+            })
+
+            const entry: TutorialInfoIndexedDbEntry = {
+                id: key,
+                time: Util.now(),
+                hash,
+                snippets,
+                blocks
+            };
+
+            return this.db.setAsync(TutorialInfoIndexedDb.TABLE, entry)
+                .then(() => {
+                    pxt.perf.measureEnd("tutorial info db setAsync")
+                })
+        }
+
+        clearAsync(): Promise<void> {
+            return this.db.deleteAllAsync(TutorialInfoIndexedDb.TABLE)
+                .then(() => console.debug(`db: all clean`))
+                .catch(e => {
+                    console.error('db: failed to delete all');
+                })
+        }
+    }
+
+    let _tutorialInfoDbPromise: Promise<TutorialInfoIndexedDb>;
+    export function tutorialInfoDbAsync(): Promise<TutorialInfoIndexedDb> {
+        if (!_tutorialInfoDbPromise)
+            _tutorialInfoDbPromise = TutorialInfoIndexedDb.createAsync()
+        return _tutorialInfoDbPromise;
+    }
+
+    export function clearTutorialInfoDbAsync(): Promise<void> {
+        function deleteDbAsync() {
+            const n = TutorialInfoIndexedDb.dbName();
+            return IDBWrapper.deleteDatabaseAsync(n)
+                .then(() => {
+                    _tutorialInfoDbPromise = undefined;
+                })
+                .catch(e => {
+                    pxt.log(`db: failed to delete ${n}`);
+                    _tutorialInfoDbPromise = undefined;
+                });
+        }
+
+        if (!_tutorialInfoDbPromise)
+            return deleteDbAsync();
+        return _tutorialInfoDbPromise
+            .then(db => db.clearAsync())
+            .catch(e => deleteDbAsync().then());
+    }
+
+    export interface IPointerEvents {
+        up: string,
+        down: string[],
+        move: string,
+        enter: string,
+        leave: string
+    }
+
+    export const pointerEvents: IPointerEvents = (() => {
+        if (hasPointerEvents()) {
+            return {
+                up: "pointerup",
+                down: ["pointerdown"],
+                move: "pointermove",
+                enter: "pointerenter",
+                leave: "pointerleave"
+            }
+        } else if (isTouchEnabled()) {
+            return {
+                up: "mouseup",
+                down: ["mousedown", "touchstart"],
+                move: "touchmove",
+                enter: "touchenter",
+                leave: "touchend"
+            }
+        } else {
+            return {
+                up: "mouseup",
+                down: ["mousedown"],
+                move: "mousemove",
+                enter: "mouseenter",
+                leave: "mouseleave"
+            }
+        }
+    })();
+
+    export function getPageX(event: any) {
+        if ("pageX" in event) {
+            return (event as MouseEvent).pageX;
+        }
+        else {
+            return (event as TouchEvent).changedTouches[0].pageX;
+        }
+    }
+
+    export function getPageY(event: any) {
+        if ("pageY" in event) {
+            return (event as MouseEvent).pageY;
+        }
+        else {
+            return (event as TouchEvent).changedTouches[0].pageY;
+        }
+    }
+
+    export function getClientX(event: any) {
+        if ("clientX" in event) {
+            return (event as MouseEvent).clientX;
+        }
+        else {
+            return (event as TouchEvent).changedTouches[0].clientX;
+        }
+    }
+
+    export function getClientY(event: any) {
+        if ("clientY" in event) {
+            return (event as MouseEvent).clientY;
+        }
+        else {
+            return (event as TouchEvent).changedTouches[0].clientY;
+        }
+    }
+
+    export function popupWindow(url: string, title: string, popUpWidth: number, popUpHeight: number) {
+        try {
+            const winLeft = window.screenLeft ? window.screenLeft : window.screenX;
+            const winTop = window.screenTop ? window.screenTop : window.screenY;
+            const width = window.innerWidth || document.documentElement.clientWidth || document.body.clientWidth;
+            const height = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight;
+            const left = ((width / 2) - (popUpWidth / 2)) + winLeft;
+            const top = ((height / 2) - (popUpHeight / 2)) + winTop;
+
+            const popupWindow = window.open(url, title, "width=" + popUpWidth + ", height=" + popUpHeight + ", top=" + top + ", left=" + left);
+            if (popupWindow.focus) {
+                popupWindow.focus();
+            }
+
+            return popupWindow;
+        } catch (e) {
+            // Error opening popup
+            pxt.tickEvent('pxt.popupError', { url: url, msg: e.message });
+            return null;
+        }
+    }
+
+    // Keep these helpers unified with pxtsim/runtime.ts
+    export function containsClass(el: SVGElement | HTMLElement, classes: string) {
+        return splitClasses(classes).every(cls => containsSingleClass(el, cls));
+
+        function containsSingleClass(el: SVGElement | HTMLElement, cls: string) {
+            if (el.classList) {
+                return el.classList.contains(cls);
+            } else {
+                const classes = (el.className + "").split(/\s+/);
+                return !(classes.indexOf(cls) < 0);
+            }
+        }
+    }
+
+    export function addClass(el: SVGElement | HTMLElement, classes: string) {
+        splitClasses(classes).forEach(cls => addSingleClass(el, cls));
+
+        function addSingleClass(el: SVGElement | HTMLElement, cls: string) {
+            if (el.classList) {
+                el.classList.add(cls);
+            } else {
+                const classes = (el.className + "").split(/\s+/);
+                if (classes.indexOf(cls) < 0) {
+                    el.className.baseVal += " " + cls;
+                }
+            }
+        }
+    }
+
+    export function removeClass(el: SVGElement | HTMLElement, classes: string) {
+        splitClasses(classes).forEach(cls => removeSingleClass(el, cls));
+
+        function removeSingleClass(el: SVGElement | HTMLElement, cls: string) {
+            if (el.classList) {
+                el.classList.remove(cls);
+            } else {
+                el.className.baseVal = (el.className + "")
+                    .split(/\s+/)
+                    .filter(c => c != cls)
+                    .join(" ");
+            }
+        }
+    }
+
+    function splitClasses(classes: string) {
+        return classes.split(/\s+/).filter(s => !!s);
+    }
+
+    export function getCookieLang() {
+        const cookiePropRegex = new RegExp(`${pxt.Util.escapeForRegex(pxt.Util.pxtLangCookieId)}=(.*?)(?:;|$)`)
+        const cookieValue = cookiePropRegex.exec(document.cookie);
+        return cookieValue && cookieValue[1] || null;
+    }
+
+    export function setCookieLang(langId: string, docs = false) {
+        if (!pxt.Util.allLanguages[langId]) {
+            return;
+        }
+
+        if (langId !== getCookieLang()) {
+            pxt.tickEvent(`menu.lang.setcookielang`, { lang: langId, docs: `${docs}` });
+            const expiration = new Date();
+            expiration.setTime(expiration.getTime() + (pxt.Util.langCookieExpirationDays * 24 * 60 * 60 * 1000));
+            document.cookie = `${pxt.Util.pxtLangCookieId}=${langId}; expires=${expiration.toUTCString()}; path=/`;
+        }
+    }
+
+    export function cacheBustingUrl(url: string): string {
+        if (!url) return url;
+        if (/[?&]rnd=/.test(url)) return url; // already busted
+        return `${url}${url.indexOf('?') > 0 ? "&" : "?"}rnd=${Math.random()}`
     }
 }

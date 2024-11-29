@@ -1,7 +1,106 @@
 /// <reference path="../../localtypings/pxtarget.d.ts"/>
 /// <reference path="../../localtypings/pxtpackage.d.ts"/>
 
+namespace ts {
+    export interface Node {
+        pxt: pxtc.PxtNode;
+    }
+}
 namespace ts.pxtc {
+    export const enum PxtNodeFlags {
+        None = 0,
+        IsRootFunction = 0x0001,
+        IsBogusFunction = 0x0002,
+        IsGlobalIdentifier = 0x0004,
+        IsUsed = 0x0008,
+        InPxtModules = 0x0010,
+        FromPreviousCompile = 0x0020,
+        IsOverridden = 0x0040,
+    }
+    export type EmitAction = (bin: Binary) => void;
+    export class PxtNode {
+        flags: PxtNodeFlags;
+
+        // TSC interface cache
+        typeCache: Type;
+        symbolCache: Symbol;
+        declCache: Declaration;
+        commentAttrs: CommentAttrs;
+        fullName: string;
+        constantFolded: { val: any };
+
+        // compiler state
+        functionInfo: FunctionAddInfo;
+        variableInfo: VariableAddInfo;
+        classInfo: ClassInfo;
+        proc: ir.Procedure;
+        cell: ir.Cell;
+
+        // set of nodes pulled in by the current node
+        usedNodes: pxt.Map<Declaration>;
+        // when the current node is pulled in, the actions listed will be run
+        usedActions: EmitAction[];
+
+        // exported to clients
+        callInfo: CallInfo;
+        exprInfo: BinaryExpressionInfo;
+
+        // for wrapping ir.Expr inside of TS Expression
+        valueOverride: ir.Expr;
+
+        refresh() {
+            // clear IsUsed flag
+            this.flags &= ~PxtNodeFlags.IsUsed
+            // this happens for top-level function expression - we just re-emit them
+            if (this.proc && !this.usedActions && !getEnclosingFunction(this.proc.action))
+                this.resetEmit()
+            else if (this.proc && !this.proc.cachedJS)
+                this.resetEmit()
+            else if (this.usedNodes)
+                this.flags |= PxtNodeFlags.FromPreviousCompile
+            if (this.classInfo)
+                this.classInfo.reset()
+        }
+
+        resetEmit() {
+            // clear IsUsed flag
+            this.flags &= ~(PxtNodeFlags.IsUsed | PxtNodeFlags.FromPreviousCompile)
+            if (this.proc && this.proc.classInfo && this.proc.classInfo.ctor == this.proc)
+                this.proc.classInfo.ctor = null
+            this.functionInfo = null;
+            this.variableInfo = null;
+            this.classInfo = null;
+            this.callInfo = null;
+            this.proc = null;
+            this.cell = null;
+            this.exprInfo = null;
+            this.usedNodes = null;
+            this.usedActions = null;
+        }
+
+        resetTSC() {
+            // clear all flags except for InPxtModules
+            this.flags &= PxtNodeFlags.InPxtModules;
+            this.typeCache = null;
+            this.symbolCache = null;
+            this.commentAttrs = null;
+            this.valueOverride = null;
+            this.declCache = undefined;
+            this.fullName = null;
+            this.constantFolded = undefined;
+        }
+
+        resetAll() {
+            this.resetTSC()
+            this.resetEmit()
+        }
+
+        constructor(public wave: number, public id: number) {
+            this.flags = PxtNodeFlags.None;
+            this.resetAll()
+        }
+    }
+
     enum HasLiteralType {
         Enum,
         Number,
@@ -18,9 +117,10 @@ namespace ts.pxtc {
     export const taggedUndefined = 0
     export const taggedNull = taggedSpecialValue(1)
     export const taggedFalse = taggedSpecialValue(2)
+    export const taggedNaN = taggedSpecialValue(3)
     export const taggedTrue = taggedSpecialValue(16)
     function fitsTaggedInt(vn: number) {
-        if (target.boxDebug) return false
+        if (target.switches.boxDebug) return false
         return (vn | 0) == vn && -1073741824 <= vn && vn <= 1073741823
     }
 
@@ -47,33 +147,90 @@ namespace ts.pxtc {
         "neq": true,
     }
 
+    const thumbFuns: pxt.Map<FuncInfo> = {
+        "Array_::getAt": {
+            name: "_pxt_array_get",
+            argsFmt: ["T", "T", "T"],
+            value: 0
+        },
+        "Array_::setAt": {
+            name: "_pxt_array_set",
+            argsFmt: ["T", "T", "T", "T"],
+            value: 0
+        },
+        "BufferMethods::getByte": {
+            name: "_pxt_buffer_get",
+            argsFmt: ["T", "T", "T"],
+            value: 0
+        },
+        "BufferMethods::setByte": {
+            name: "_pxt_buffer_set",
+            argsFmt: ["T", "T", "T", "I"],
+            value: 0
+        },
+        "pxtrt::mapGetGeneric": {
+            name: "_pxt_map_get",
+            argsFmt: ["T", "T", "S"],
+            value: 0
+        },
+        "pxtrt::mapSetGeneric": {
+            name: "_pxt_map_set",
+            argsFmt: ["T", "T", "S", "T"],
+            value: 0
+        },
+    }
+
     let EK = ir.EK;
     export const SK = SyntaxKind;
 
     export const numReservedGlobals = 1;
 
-    interface NodeWithId extends Node {
-        pxtNodeId: number;
-        pxtNodeWave: number;
-    }
-
-    export interface FieldWithAddInfo extends PropertyDeclaration {
-        irGetter?: MethodDeclaration;
-        irSetter?: MethodDeclaration;
+    export interface FieldWithAddInfo extends NamedDeclaration {
     }
 
     type TemplateLiteralFragment = TemplateHead | TemplateMiddle | TemplateTail;
-    export type EmittableAsCall = FunctionLikeDeclaration | SignatureDeclaration | ObjectLiteralElementLike | PropertySignature | ModuleDeclaration;
+    export type EmittableAsCall = FunctionLikeDeclaration | SignatureDeclaration | ObjectLiteralElementLike | PropertySignature | ModuleDeclaration
+        | ParameterDeclaration | PropertyDeclaration;
 
     let lastNodeId = 0
     let currNodeWave = 1
-    export function getNodeId(n: Node) {
-        let nn = n as NodeWithId
-        if (nn.pxtNodeWave !== currNodeWave) {
-            nn.pxtNodeId = ++lastNodeId
-            nn.pxtNodeWave = currNodeWave
+
+    export function isInPxtModules(node: Node) {
+        if (node.pxt)
+            return !!(node.pxt.flags & PxtNodeFlags.InPxtModules)
+        const src = getSourceFileOfNode(node)
+        return src ? isPxtModulesFilename(src.fileName) : false
+    }
+
+    export function pxtInfo(n: Node) {
+        if (!n.pxt) {
+            const info = new PxtNode(currNodeWave, ++lastNodeId)
+            if (isInPxtModules(n))
+                info.flags |= PxtNodeFlags.InPxtModules
+            n.pxt = info
+            return info
+        } else {
+            const info = n.pxt
+            if (info.wave != currNodeWave) {
+                info.wave = currNodeWave
+                if (!compileOptions || !compileOptions.skipPxtModulesTSC)
+                    info.resetAll()
+                else {
+                    if (info.flags & PxtNodeFlags.InPxtModules) {
+                        if (compileOptions.skipPxtModulesEmit)
+                            info.refresh()
+                        else
+                            info.resetEmit()
+                    } else
+                        info.resetAll()
+                }
+            }
+            return info
         }
-        return nn.pxtNodeId
+    }
+
+    export function getNodeId(n: Node) {
+        return pxtInfo(n).id
     }
 
     export function stringKind(n: Node) {
@@ -90,7 +247,7 @@ namespace ts.pxtc {
         console.log(stringKind(n))
     }
 
-    // next free error 9275
+    // next free error 9283
     function userError(code: number, msg: string, secondary = false): Error {
         let e = new Error(msg);
         (<any>e).ksEmitterUserError = true;
@@ -105,8 +262,12 @@ namespace ts.pxtc {
         throw e;
     }
 
-    function noRefCounting() {
-        return !target.jsRefCounting && !target.isNative
+    export function isStackMachine() {
+        return target.isNative && target.nativeType == NATIVE_TYPE_VM
+    }
+
+    export function needsNumberConversions() {
+        return target.isNative && target.nativeType != NATIVE_TYPE_VM
     }
 
     export function isThumb() {
@@ -129,22 +290,22 @@ namespace ts.pxtc {
     // everything else (except as indicated with CommentAttrs), operates and returns regular ints
 
     function fromInt(e: ir.Expr): ir.Expr {
-        if (!target.isNative) return e
+        if (!needsNumberConversions()) return e
         return ir.rtcall("pxt::fromInt", [e])
     }
 
     function fromBool(e: ir.Expr): ir.Expr {
-        if (!target.isNative) return e
+        if (!needsNumberConversions()) return e
         return ir.rtcall("pxt::fromBool", [e])
     }
 
     function fromFloat(e: ir.Expr): ir.Expr {
-        if (!target.isNative) return e
+        if (!needsNumberConversions()) return e
         return ir.rtcall("pxt::fromFloat", [e])
     }
 
     function fromDouble(e: ir.Expr): ir.Expr {
-        if (!target.isNative) return e
+        if (!needsNumberConversions()) return e
         return ir.rtcall("pxt::fromDouble", [e])
     }
 
@@ -229,8 +390,20 @@ namespace ts.pxtc {
         return isStringLiteral(e) && (e as LiteralExpression).text == ""
     }
 
-    function isStatic(node: Declaration) {
-        return node.modifiers && node.modifiers.some(m => m.kind == SK.StaticKeyword)
+    export function isStatic(node: Declaration) {
+        return node && node.modifiers && node.modifiers.some(m => m.kind == SK.StaticKeyword)
+    }
+
+    export function isReadOnly(node: Declaration) {
+        return node.modifiers && node.modifiers.some(m => m.kind == SK.ReadonlyKeyword)
+    }
+
+    export function getExplicitDefault(attrs: CommentAttrs, name: string) {
+        if (!attrs.explicitDefaults)
+            return null
+        if (attrs.explicitDefaults.indexOf(name) < 0)
+            return null
+        return attrs.paramDefl[name]
     }
 
     function classFunctionPref(node: Node) {
@@ -262,6 +435,7 @@ namespace ts.pxtc {
 
     function getEnclosingFunction(node0: Node) {
         let node = node0
+        let hadLoop = false
         while (true) {
             node = node.parent
             if (!node)
@@ -275,7 +449,17 @@ namespace ts.pxtc {
                 case SK.ArrowFunction:
                 case SK.FunctionExpression:
                     return <FunctionLikeDeclaration>node
+                case SK.WhileStatement:
+                case SK.DoStatement:
+                case SK.ForInStatement:
+                case SK.ForOfStatement:
+                case SK.ForStatement:
+                    hadLoop = true
+                    break
                 case SK.SourceFile:
+                    // don't treat variables declared inside of top-level loops as global
+                    if (hadLoop)
+                        return _rootFunction
                     return null
             }
         }
@@ -285,18 +469,34 @@ namespace ts.pxtc {
         return "objectFlags" in t;
     }
 
+    function isVar(d: Declaration): boolean {
+        if (!d)
+            return false
+        if (d.kind == SK.VariableDeclaration)
+            return true
+        if (d.kind == SK.BindingElement)
+            return isVar(d.parent.parent as any)
+        return false
+    }
+
     function isGlobalVar(d: Declaration) {
         if (!d) return false
-        return (d.kind == SK.VariableDeclaration && !getEnclosingFunction(d)) ||
+        return (isVar(d) && !getEnclosingFunction(d)) ||
             (d.kind == SK.PropertyDeclaration && isStatic(d))
     }
 
     function isLocalVar(d: Declaration) {
-        return d.kind == SK.VariableDeclaration && !isGlobalVar(d);
+        return isVar(d) && !isGlobalVar(d);
     }
 
-    function isParameter(d: Declaration) {
-        return d.kind == SK.Parameter
+    function isParameter(d: Declaration): boolean {
+        if (!d)
+            return false
+        if (d.kind == SK.Parameter)
+            return true
+        if (d.kind == SK.BindingElement)
+            return isParameter(d.parent.parent as any)
+        return false
     }
 
     function isTopLevelFunctionDecl(decl: Declaration) {
@@ -304,27 +504,80 @@ namespace ts.pxtc {
             isClassFunction(decl)
     }
 
+    function getRefTagToValidate(tp: string): number {
+        switch (tp) {
+            case "_Buffer": return pxt.BuiltInType.BoxedBuffer
+            case "_Image": return target.imageRefTag || pxt.BuiltInType.RefImage
+            case "_Action": return pxt.BuiltInType.RefAction
+            case "_RefCollection": return pxt.BuiltInType.RefCollection
+            default:
+                return null
+        }
+    }
+
     export interface CallInfo {
-        decl: Declaration;
+        decl: TypedDecl;
         qName: string;
         args: Expression[];
         isExpression: boolean;
         isAutoCreate?: boolean;
     }
 
-    export interface ClassInfo {
-        id: string;
-        baseClassInfo: ClassInfo;
-        decl: ClassDeclaration;
-        allfields: FieldWithAddInfo[];
-        methods: FunctionLikeDeclaration[];
+    export interface ITableEntry {
+        name: string;
+        idx: number;
+        info: number;
+        proc: ir.Procedure; // null, when name is a simple field
+        setProc?: ir.Procedure;
+    }
+
+    export class ClassInfo {
+        derivedClasses?: ClassInfo[];
+        classNo?: number;
+        lastSubtypeNo?: number;
+        baseClassInfo: ClassInfo = null;
+        allfields: FieldWithAddInfo[] = [];
+        // indexed by getName(node)
+        methods: pxt.Map<FunctionLikeDeclaration[]> = {};
         attrs: CommentAttrs;
-        isUsed?: boolean;
         vtable?: ir.Procedure[];
-        itable?: ir.Procedure[];
-        itableInfo?: string[];
+        itable?: ITableEntry[];
         ctor?: ir.Procedure;
         toStringMethod?: ir.Procedure;
+
+        constructor(public id: string, public decl: ClassDeclaration) {
+            this.attrs = parseComments(decl)
+            this.reset()
+        }
+
+        reset() {
+            this.vtable = null
+            this.itable = null
+        }
+
+        get isUsed() {
+            return !!(pxtInfo(this.decl).flags & PxtNodeFlags.IsUsed)
+        }
+
+        allMethods() {
+            const r: FunctionLikeDeclaration[] = []
+            for (let k of Object.keys(this.methods))
+                for (let m of this.methods[k]) {
+                    r.push(m)
+                }
+            return r
+        }
+
+        usedMethods() {
+            const r: FunctionLikeDeclaration[] = []
+            for (let k of Object.keys(this.methods))
+                for (let m of this.methods[k]) {
+                    const info = pxtInfo(m)
+                    if (info.flags & PxtNodeFlags.IsUsed)
+                        r.push(m)
+                }
+            return r
+        }
     }
 
     export interface BinaryExpressionInfo {
@@ -334,24 +587,34 @@ namespace ts.pxtc {
 
     let lf = assembler.lf;
     let checker: TypeChecker;
+    let _rootFunction: FunctionDeclaration
     export let target: CompileTarget;
+    export let compileOptions: CompileOptions;
     let lastSecondaryError: string
     let lastSecondaryErrorCode = 0
     let inCatchErrors = 0
+
+    export function getNodeFullName(checker: TypeChecker, node: Node) {
+        const pinfo = pxtInfo(node)
+        if (pinfo.fullName == null)
+            pinfo.fullName = getFullName(checker, node.symbol)
+        return pinfo.fullName
+    }
 
     export function getComments(node: Node) {
         if (node.kind == SK.VariableDeclaration)
             node = node.parent.parent // we need variable stmt
 
         let cmtCore = (node: Node) => {
-            let src = getSourceFileOfNode(node)
-            let doc = getLeadingCommentRangesOfNode(node, src)
+            const src = getSourceFileOfNode(node)
+            if (!src) return "";
+            const doc = getLeadingCommentRangesOfNode(node, src)
             if (!doc) return "";
-            let cmt = doc.map(r => src.text.slice(r.pos, r.end)).join("\n")
+            const cmt = doc.map(r => src.text.slice(r.pos, r.end)).join("\n")
             return cmt;
         }
 
-        if (node.symbol && node.symbol.declarations.length > 1) {
+        if (node.symbol && node.symbol.declarations && node.symbol.declarations.length > 1) {
             return node.symbol.declarations.map(cmtCore).join("\n")
         } else {
             return cmtCore(node)
@@ -366,19 +629,15 @@ namespace ts.pxtc {
         return parseCommentString(cmts)
     }
 
-    interface NodeWithAttrs extends Node {
-        pxtCommentAttrs: CommentAttrs;
-    }
-
-    export function parseComments(node0: Node): CommentAttrs {
-        if (!node0 || (node0 as any).isBogusFunction) return parseCommentString("")
-        let node = node0 as NodeWithAttrs
-        let cached = node.pxtCommentAttrs
-        if (cached)
-            return cached
+    export function parseComments(node: Node): CommentAttrs {
+        const pinfo = node ? pxtInfo(node) : null
+        if (!pinfo || pinfo.flags & PxtNodeFlags.IsBogusFunction)
+            return parseCommentString("")
+        if (pinfo.commentAttrs)
+            return pinfo.commentAttrs
         let res = parseCommentString(getComments(node))
         res._name = getName(node)
-        node.pxtCommentAttrs = res
+        pinfo.commentAttrs = res
         return res
     }
 
@@ -401,7 +660,7 @@ namespace ts.pxtc {
         if (!isObjectType(t)) {
             return false;
         }
-        return (t.objectFlags & ObjectFlags.Reference) && t.symbol.name == "Array"
+        return (t.objectFlags & ObjectFlags.Reference) && t.symbol && t.symbol.name == "Array"
     }
 
     function isInterfaceType(t: Type) {
@@ -419,7 +678,7 @@ namespace ts.pxtc {
             return false;
         }
         // check if we like the class?
-        return !!((t.objectFlags & ObjectFlags.Class) || (t.symbol.flags & SymbolFlags.Class))
+        return !!((t.objectFlags & ObjectFlags.Class) || (t.symbol && (t.symbol.flags & SymbolFlags.Class)))
     }
 
     function isObjectLiteral(t: Type) {
@@ -431,7 +690,7 @@ namespace ts.pxtc {
     }
 
     function castableToStructureType(t: Type) {
-        return isStructureType(t) || (t.flags & (TypeFlags.Null | TypeFlags.Undefined))
+        return isStructureType(t) || (t.flags & (TypeFlags.Null | TypeFlags.Undefined | TypeFlags.Any))
     }
 
     function isPossiblyGenericClassType(t: Type) {
@@ -440,10 +699,10 @@ namespace ts.pxtc {
         return isClassType(t)
     }
 
-    function arrayElementType(t: Type): Type {
+    function arrayElementType(t: Type, idx = -1): Type {
         if (isArrayType(t))
             return checkType((<TypeReference>t).typeArguments[0])
-        return null;
+        return checker.getIndexTypeOfType(t, IndexKind.Number);
     }
 
     function isFunctionType(t: Type) {
@@ -463,35 +722,25 @@ namespace ts.pxtc {
         return !!(g && g.typeParameters && g.typeParameters.length);
     }
 
-    function checkType(t: Type): Type {
-        let ok = TypeFlags.String | TypeFlags.Number | TypeFlags.Boolean |
-            TypeFlags.StringLiteral | TypeFlags.NumberLiteral | TypeFlags.BooleanLiteral |
-            TypeFlags.Void | TypeFlags.Enum | TypeFlags.EnumLiteral | TypeFlags.Null | TypeFlags.Undefined |
-            TypeFlags.Never | TypeFlags.TypeParameter
-        if ((t.flags & ok) == 0) {
-            if (isArrayType(t)) return t;
-            if (isClassType(t)) return t;
-            if (isInterfaceType(t)) return t;
-            if (isFunctionType(t)) return t;
-            if (t.flags & TypeFlags.TypeParameter) return t;
-            if (isUnionOfLiterals(t)) return t;
-
-            let g = genericRoot(t)
-            if (g) {
-                checkType(g);
-                (t as TypeReference).typeArguments.forEach(checkType)
-                return t
-            }
-
-            userError(9201, lf("unsupported type: {0} 0x{1}", checker.typeToString(t), t.flags.toString(16)), true)
-        }
+    export function checkType(t: Type): Type {
+        // we currently don't enforce any restrictions on type system
         return t
+    }
+
+    export function taggedSpecial(v: any) {
+        if (v === null) return taggedNull
+        else if (v === undefined) return taggedUndefined
+        else if (v === false) return taggedFalse
+        else if (v === true) return taggedTrue
+        else if (isNaN(v)) return taggedNaN
+        else return null
     }
 
     function typeOf(node: Node) {
         let r: Type;
-        if ((node as any).typeOverride)
-            return (node as any).typeOverride as Type
+        const info = pxtInfo(node)
+        if (info.typeCache)
+            return info.typeCache
         if (isExpression(node))
             r = checker.getContextualType(<Expression>node)
         if (!r) {
@@ -504,8 +753,8 @@ namespace ts.pxtc {
         }
         if (!r)
             return r
-        if (isStringLiteral(node))
-            return r // skip checkType() - type is any for literal fragments
+        // save for future use; this cuts around 10% of emit() time
+        info.typeCache = r
         return checkType(r)
     }
 
@@ -560,12 +809,15 @@ namespace ts.pxtc {
         return false;
     }
 
-    function checkInterfaceDeclaration(decl: InterfaceDeclaration, classes: pxt.Map<ClassInfo>) {
-        for (let cl in classes) {
-            if (classes[cl].decl.symbol == decl.symbol) {
+    function checkInterfaceDeclaration(bin: Binary, decl: InterfaceDeclaration) {
+        const check = (d: Declaration) => {
+            if (d && d.kind == SK.ClassDeclaration)
                 userError(9261, lf("Interface with same name as a class not supported"))
-            }
         }
+        check(decl.symbol.valueDeclaration)
+        if (decl.symbol.declarations)
+            decl.symbol.declarations.forEach(check)
+
         if (decl.heritageClauses)
             for (let h of decl.heritageClauses) {
                 switch (h.token) {
@@ -579,149 +831,7 @@ namespace ts.pxtc {
     }
 
     function typeCheckSubtoSup(sub: Node | Type, sup: Node | Type) {
-        // get the direct types
-        let supTypeLoc = (sup as any).kind ? checker.getTypeAtLocation(sup as Node) : sup as Type;
-        let subTypeLoc = (sub as any).kind ? checker.getTypeAtLocation(sub as Node) : sub as Type;
-
-        // get the contextual types, if possible
-        let supType = isExpression(sup as Node) ? checker.getContextualType(<Expression>(sup as Node)) : supTypeLoc
-        if (!supType)
-            supType = supTypeLoc
-        let subType = isExpression(sub as Node) ? checker.getContextualType(<Expression>(sub as Node)) : subTypeLoc
-        if (!subType)
-            subType = subTypeLoc
-
-        if (!supType || !subType)
-            return;
-
-        // src may get its type from trg via context, in which case
-        // we want to use the direct type of src
-        if (supType == subType && subType != subTypeLoc)
-            subType = subTypeLoc
-
-        occursCheck = []
-        let [ok, message] = checkSubtype(subType, supType)
-        if (!ok) {
-            userError(9263, lf(message))
-        }
-    }
-
-    let occursCheck: string[] = []
-    let cachedSubtypeQueries: pxt.Map<[boolean, string]> = {}
-    function insertSubtype(key: string, val: [boolean, string]) {
-        cachedSubtypeQueries[key] = val
-        occursCheck.pop()
-        return val
-    }
-
-    // this function works assuming that the program has passed the
-    // TypeScript type checker. We are going to simply rule out some
-    // cases that pass the TS checker. We only compare type
-    // pairs that the TS checker compared.
-
-    // we are checking that subType is a subtype of supType, so that
-    // an assignment of the form trg <- src is safe, where supType is the
-    // type of trg and subType is the type of src
-    function checkSubtype(subType: Type, superType: Type): [boolean, string] {
-
-        function checkMembers() {
-            let superProps = checker.getPropertiesOfType(superType)
-            let subProps = checker.getPropertiesOfType(subType)
-            let [ret, msg] = [true, ""]
-            superProps.forEach(superProp => {
-                let superPropDecl = <PropertyDeclaration>superProp.valueDeclaration
-                let find = subProps.filter(sp => sp.name == superProp.name)
-                if (find.length == 1) {
-                    let subPropDecl = <PropertyDeclaration>find[0].valueDeclaration
-                    // TODO: record the property on which we have a mismatch
-                    let [retSub, msgSub] = checkSubtype(checker.getTypeAtLocation(subPropDecl), checker.getTypeAtLocation(superPropDecl))
-                    if (ret && !retSub) [ret, msg] = [retSub, msgSub]
-                } else if (find.length == 0) {
-                    if (!(superProp.flags & SymbolFlags.Optional)) {
-                        // we have a cast to an interface with more properties (unsound)
-                        [ret, msg] = [false, "Property " + superProp.name + " not present in " + subType.getSymbol().name]
-                    } else {
-                        // we will reach this case for something like
-                        // let x: Foo = { a:42 }
-                        // where x has some optional properties, in addition to "a"
-                    }
-                }
-            })
-            return insertSubtype(key, [ret, msg])
-        }
-
-        let subId = (subType as any).id
-        let superId = (superType as any).id
-        let key = subId + "," + superId
-
-        if (cachedSubtypeQueries[key])
-            return cachedSubtypeQueries[key];
-
-        // check to see if query already on the stack
-        if (occursCheck.indexOf(key) != -1)
-            return [true, ""]
-        occursCheck.push(key)
-
-        // we don't allow Any!
-        if (superType.flags & TypeFlags.Any)
-            return insertSubtype(key, [false, "Unsupported type: any."])
-
-        // outlaw all things that can't be cast to class/interface
-        if (isStructureType(superType) && !castableToStructureType(subType)) {
-            return insertSubtype(key, [false, "Cast to class/interface not supported."])
-        }
-
-        if (isClassType(superType) && !isGenericType(superType)) {
-            if (isClassType(subType) && !isGenericType(subType)) {
-                let superDecl = <ClassDeclaration>superType.symbol.valueDeclaration
-                let subDecl = <ClassDeclaration>subType.symbol.valueDeclaration
-                // only allow upcast (sub -> ... -> sup) in inheritance chain
-                if (!inheritsFrom(subDecl, superDecl)) {
-                    if (inheritsFrom(superDecl, subDecl))
-                        return insertSubtype(key, [false, "Downcasts not supported."])
-                    else
-                        return insertSubtype(key, [false, "Classes " + subDecl.name.getText() + " and " + superDecl.name.getText() + " are not related by inheritance."])
-                }
-                // need to also check subtyping on members
-                return checkMembers();
-            } else {
-                if (!(subType.flags & (TypeFlags.Undefined | TypeFlags.Null))) {
-                    return insertSubtype(key, [false, "Cast to class not supported."])
-                }
-            }
-        } else if (isFunctionType(superType)) {
-            // implement standard function subtyping (no bivariance)
-            let superFun = isFunctionType(superType)
-            if (isFunctionType(subType)) {
-                let subFun = isFunctionType(subType)
-                U.assert(superFun.parameters.length >= subFun.parameters.length, "sup should have at least params of sub")
-                let [ret, msg] = [true, ""]
-                for (let i = 0; i < subFun.parameters.length; i++) {
-                    let superParamType = checker.getTypeAtLocation(superFun.parameters[i].valueDeclaration)
-                    let subParamType = checker.getTypeAtLocation(subFun.parameters[i].valueDeclaration)
-                    // Check parameter types (contra-variant)
-                    let [retSub, msgSub] = checkSubtype(superParamType, subParamType)
-                    if (ret && !retSub) [ret, msg] = [retSub, msgSub]
-                }
-                // check return type (co-variant)
-                let superRetType = superFun.getReturnType()
-                let subRetType = superFun.getReturnType()
-                let [retSub, msgSub] = checkSubtype(subRetType, superRetType)
-                if (ret && !retSub) [ret, msg] = [retSub, msgSub]
-                return insertSubtype(key, [ret, msg])
-            }
-        } else if (isInterfaceType(superType)) {
-            if (isStructureType(subType)) {
-                return checkMembers();
-            }
-        } else if (isArrayType(superType)) {
-            if (isArrayType(subType)) {
-                let superElemType = arrayElementType(superType)
-                let subElemType = arrayElementType(subType)
-                return checkSubtype(subElemType, superElemType)
-            }
-        }
-        return insertSubtype(key, [true, ""])
+        // we leave this function for now, in case we want to enforce some checks in future
     }
 
     function isGenericFunction(fun: FunctionLikeDeclaration) {
@@ -750,14 +860,34 @@ namespace ts.pxtc {
         return !!(node && (node as NamedDeclaration).name);
     }
 
-    export function getDeclName(node: Declaration) {
+    function parentPrefix(node: Node): string {
+        if (!node)
+            return ""
+        switch (node.kind) {
+            case SK.ModuleBlock:
+                return parentPrefix(node.parent)
+            case SK.ClassDeclaration:
+            case SK.ModuleDeclaration:
+                return parentPrefix(node.parent) + (node as ModuleDeclaration).name.text + "."
+            default:
+                return ""
+        }
+    }
+
+    export function getDeclName(node: Declaration): string {
         let text = isNamedDeclaration(node) ? (<Identifier>node.name).text : null
-        if (!text && node.kind == SK.Constructor)
-            text = "constructor"
-        if (node && node.parent && node.parent.kind == SK.ClassDeclaration)
-            text = (<ClassDeclaration>node.parent).name.text + "." + text
-        text = text || "inline"
-        return text;
+        if (!text) {
+            if (node.kind == SK.Constructor) {
+                text = "constructor"
+            } else {
+                for (let parent = node.parent as Declaration; parent; parent = parent.parent as Declaration) {
+                    if (isNamedDeclaration(parent))
+                        return getDeclName(parent) + ".inline"
+                }
+                return "inline"
+            }
+        }
+        return parentPrefix(node.parent) + text;
     }
 
     function safeName(node: Declaration) {
@@ -774,6 +904,8 @@ namespace ts.pxtc {
         name: string;
         isRef: boolean;
         shimName: string;
+        classInfo: ClassInfo;
+        needsCheck: boolean;
     }
 
     export type VarOrParam = VariableDeclaration | ParameterDeclaration | PropertyDeclaration | BindingElement;
@@ -782,69 +914,57 @@ namespace ts.pxtc {
     export interface VariableAddInfo {
         captured?: boolean;
         written?: boolean;
+        functionsToDefine?: FunctionDeclaration[];
     }
 
-    export interface FunctionAddInfo {
-        capturedVars: VarOrParam[];
-        decl: EmittableAsCall;
+    export class FunctionAddInfo {
+        capturedVars: VarOrParam[] = [];
         location?: ir.Cell;
         thisParameter?: ParameterDeclaration; // a bit bogus
         virtualParent?: FunctionAddInfo;
-        virtualInstances?: FunctionAddInfo[];
         virtualIndex?: number;
-        isUsed?: boolean;
         parentClassInfo?: ClassInfo;
-    }
+        usedBeforeDecl?: boolean;
+        // these two are only used in native backend
+        usedAsValue?: boolean;
+        usedAsIface?: boolean;
+        alreadyEmitted?: boolean;
 
-    function mkBogusMethod(info: ClassInfo, name: string, parameter?: any) {
-        let rootFunction = <any>{
-            kind: SK.MethodDeclaration,
-            parameters: parameter ? [parameter] : [],
-            name: {
-                kind: SK.Identifier,
-                text: name,
-                pos: 0,
-                end: 0
-            },
-            body: {
-                kind: SK.Block,
-                statements: []
-            },
-            parent: info.decl,
-            pos: 0,
-            end: 0,
-            isBogusFunction: true,
+        constructor(public decl: EmittableAsCall) { }
+
+        get isUsed() {
+            return !!(pxtInfo(this.decl).flags & PxtNodeFlags.IsUsed)
         }
-        return rootFunction as MethodDeclaration
     }
 
     export function compileBinary(
         program: Program,
-        host: CompilerHost,
         opts: CompileOptions,
         res: CompileResult,
         entryPoint: string): EmitResult {
+
+        if (compilerHooks.preBinary)
+            compilerHooks.preBinary(program, opts, res)
+
         target = opts.target
+        compileOptions = opts
+        target.debugMode = !!opts.breakpoints
         const diagnostics = createDiagnosticCollection();
         checker = program.getTypeChecker();
-        let classInfos: pxt.Map<ClassInfo> = {}
-        let usedDecls: pxt.Map<Node> = {}
+        let startTime = U.cpuUs();
         let usedWorkList: Declaration[] = []
-        let variableStatus: pxt.Map<VariableAddInfo> = {};
-        let functionInfo: pxt.Map<FunctionAddInfo> = {};
         let irCachesToClear: NodeWithCache[] = []
-        let ifaceMembers: pxt.Map<number> = {}
-        let nextIfaceMemberId = 0;
-        let autoCreateFunctions: pxt.Map<boolean> = {}
+        let autoCreateFunctions: pxt.Map<boolean> = {} // INCTODO
         let configEntries: pxt.Map<ConfigEntry> = {}
         let currJres: pxt.JRes = null
+        let currUsingContext: PxtNode = null
+        let needsUsingInfo = false
+        let pendingFunctionDefinitions: FunctionDeclaration[] = []
 
-        cachedSubtypeQueries = {}
-        lastNodeId = 0
         currNodeWave++
 
         if (opts.target.isNative) {
-            if (!opts.hexinfo) {
+            if (!opts.extinfo || !opts.extinfo.hexinfo) {
                 // we may have not been able to compile or download the hex file
                 return {
                     diagnostics: [{
@@ -860,8 +980,20 @@ namespace ts.pxtc {
                 };
             }
 
-            hex.setupFor(opts.target, opts.extinfo || emptyExtInfo(), opts.hexinfo);
-            hex.setupInlineAssembly(opts);
+            let extinfo = opts.extinfo
+            let optstarget = opts.target
+            // if current (main) extinfo is disabled use another one
+            if (extinfo && extinfo.disabledDeps) {
+                const enabled = (opts.otherMultiVariants || []).find(e => e.extinfo && !e.extinfo.disabledDeps)
+                if (enabled) {
+                    pxt.debug(`using alternative extinfo (due to ${extinfo.disabledDeps})`)
+                    extinfo = enabled.extinfo
+                    optstarget = enabled.target
+                }
+            }
+
+            hexfile.setupFor(optstarget, extinfo || emptyExtInfo());
+            hexfile.setupInlineAssembly(opts);
         }
 
         let bin = new Binary()
@@ -882,6 +1014,7 @@ namespace ts.pxtc {
                 line: 0,
                 column: 0,
             }]
+            res.procCallLocations = [];
         }
 
         if (opts.computeUsedSymbols) {
@@ -891,7 +1024,21 @@ namespace ts.pxtc {
 
         let allStmts: Statement[] = [];
         if (!opts.forceEmit || res.diagnostics.length == 0) {
-            const files = program.getSourceFiles();
+            let files = program.getSourceFiles().slice();
+
+            const main = files.find(sf => sf.fileName === pxt.MAIN_TS);
+            if (main) {
+                files = files.filter(sf => sf.fileName !== pxt.MAIN_TS);
+                files.push(main);
+            }
+
+            // run post-processing code last, if present
+            const postProcessing = files.find(sf => sf.fileName === pxt.TUTORIAL_CODE_STOP);
+            if (postProcessing) {
+                files = files.filter(sf => sf.fileName !== pxt.TUTORIAL_CODE_STOP);
+                files.push(postProcessing);
+            }
+
             files.forEach(f => {
                 f.statements.forEach(s => {
                     allStmts.push(s)
@@ -899,7 +1046,7 @@ namespace ts.pxtc {
             });
         }
 
-        let src = program.getSourceFiles().filter(f => Util.endsWith(f.fileName, entryPoint))[0];
+        let mainSrcFile = program.getSourceFiles().filter(f => Util.endsWith(f.fileName, entryPoint))[0];
 
         let rootFunction = <any>{
             kind: SK.FunctionDeclaration,
@@ -913,43 +1060,79 @@ namespace ts.pxtc {
                 kind: SK.Block,
                 statements: allStmts
             },
-            parent: src,
+            parent: mainSrcFile,
             pos: 0,
             end: 0,
-            isRootFunction: true,
-            isBogusFunction: true
         }
+        _rootFunction = rootFunction
+        const pinfo = pxtInfo(rootFunction)
+        pinfo.flags |= PxtNodeFlags.IsRootFunction | PxtNodeFlags.IsBogusFunction
 
         markUsed(rootFunction);
         usedWorkList = [];
 
         reset();
-        emit(rootFunction)
-        layOutGlobals()
-        pruneMethodsAndRecompute()
-        emitVTables()
+        needsUsingInfo = true
+        emitTopLevel(rootFunction)
 
-        if (diagnostics.getModificationCount() == 0) {
-            reset();
-            bin.finalPass = true
-            emit(rootFunction)
-
-            res.configData = []
-            for (let k of Object.keys(configEntries)) {
-                if (configEntries["!" + k])
-                    continue
-                res.configData.push({
-                    name: k.replace(/^\!/, ""),
-                    key: configEntries[k].key,
-                    value: configEntries[k].value
-                })
-            }
-
-            catchErrors(rootFunction, finalEmit)
+        for (; ;) {
+            flushWorkQueue()
+            if (fixpointVTables())
+                break
         }
 
+        layOutGlobals()
+        needsUsingInfo = false
+        emitVTables()
+
+        let pass0 = U.cpuUs()
+        res.times["pass0"] = pass0 - startTime
+
+        let resDiags = diagnostics.getDiagnostics()
+
+        reset();
+        needsUsingInfo = false
+        bin.finalPass = true
+        emit(rootFunction)
+
+        U.assert(usedWorkList.length == 0)
+
+        res.configData = []
+        for (let k of Object.keys(configEntries)) {
+            if (configEntries["!" + k])
+                continue
+            res.configData.push({
+                name: k.replace(/^\!/, ""),
+                key: configEntries[k].key,
+                value: configEntries[k].value
+            })
+        }
+        res.configData.sort((a, b) => a.key - b.key)
+
+        let pass1 = U.cpuUs()
+        res.times["pass1"] = pass1 - pass0
+        catchErrors(rootFunction, finalEmit)
+        res.times["passFinal"] = U.cpuUs() - pass1
+
+        if (opts.ast) {
+            let pre = U.cpuUs()
+            annotate(program, entryPoint, target);
+            res.times["passAnnotate"] = U.cpuUs() - pre
+        }
+
+        // 12k for decent arcade game
+        // res.times["numnodes"] = lastNodeId
+
+        compileOptions = null
+
+        if (resDiags.length == 0)
+            resDiags = diagnostics.getDiagnostics()
+
+        if (compilerHooks.postBinary)
+            compilerHooks.postBinary(program, opts, res)
+
         return {
-            diagnostics: diagnostics.getDiagnostics(),
+            diagnostics: resDiags,
             emittedFiles: undefined,
             emitSkipped: !!opts.noEmit
         }
@@ -1009,9 +1192,6 @@ namespace ts.pxtc {
                 case ts.SyntaxKind.TaggedTemplateExpression:
                     syntax = lf("tagged templates")
                     break
-                case ts.SyntaxKind.TypeOfExpression:
-                    syntax = lf("typeof")
-                    break
                 case ts.SyntaxKind.SpreadElement:
                     syntax = lf("spread")
                     break
@@ -1049,22 +1229,18 @@ namespace ts.pxtc {
         }
 
         function getFunctionInfo(f: EmittableAsCall) {
-            let key = nodeKey(f)
-            let info = functionInfo[key]
-            if (!info)
-                functionInfo[key] = info = {
-                    decl: f,
-                    capturedVars: []
-                }
-            return info
+            const info = pxtInfo(f)
+            if (!info.functionInfo)
+                info.functionInfo = new FunctionAddInfo(f)
+            return info.functionInfo
         }
 
         function getVarInfo(v: Declaration) {
-            let key = getNodeId(v) + ""
-            let info = variableStatus[key]
-            if (!info)
-                variableStatus[key] = info = {}
-            return info;
+            const info = pxtInfo(v)
+            if (!info.variableInfo) {
+                info.variableInfo = {}
+            }
+            return info.variableInfo
         }
 
         function recordUse(v: VarOrParam, written = false) {
@@ -1086,72 +1262,91 @@ namespace ts.pxtc {
             }
         }
 
-        function scope(f: () => void) {
-            let prevProc = proc;
-            try {
-                f();
-            } finally {
-                proc = prevProc;
-            }
+        function recordAction<T>(f: (bin: Binary) => T): T {
+            const r = f(bin)
+            if (needsUsingInfo)
+                bin.recordAction(currUsingContext, f)
+            return r
         }
 
-        function getIfaceMemberId(name: string) {
-            let v = U.lookup(ifaceMembers, name)
-            if (v != null) return v
-            for (let inf of bin.usedClassInfos) {
-                for (let m of inf.methods) {
-                    if (getName(m) == name)
-                        markFunctionUsed(m)
+        function getIfaceMemberId(name: string, markUsed = false) {
+            return recordAction(bin => {
+                if (markUsed) {
+                    if (!U.lookup(bin.explicitlyUsedIfaceMembers, name)) {
+                        U.assert(!bin.finalPass)
+                        bin.explicitlyUsedIfaceMembers[name] = true
+                    }
                 }
-            }
-            v = ifaceMembers[name] = nextIfaceMemberId++
-            return v
+
+                let v = U.lookup(bin.ifaceMemberMap, name)
+                if (v != null) return v
+                U.assert(!bin.finalPass)
+                // this gets renumbered before the final pass
+                v = bin.ifaceMemberMap[name] = -1;
+                bin.emitString(name)
+                return v
+            })
         }
 
         function finalEmit() {
-            if (diagnostics.getModificationCount() || opts.noEmit || !host)
+            if (opts.noEmit)
                 return;
 
-            bin.writeFile = (fn: string, data: string) =>
-                host.writeFile(fn, data, false, null, program.getSourceFiles());
+            bin.writeFile = (fn: string, data: string) => {
+                res.outfiles[fn] = data
+            }
+
+            for (let proc of bin.procs)
+                if (!proc.cachedJS || proc.inlineBody)
+                    proc.resolve()
+
+            if (target.isNative)
+                bin.procs = bin.procs.filter(p => p.inlineBody && !p.info.usedAsIface && !p.info.usedAsValue ? false : true)
 
             if (opts.target.isNative) {
                 if (opts.extinfo.yotta)
                     bin.writeFile("yotta.json", JSON.stringify(opts.extinfo.yotta, null, 2));
                 if (opts.extinfo.platformio)
                     bin.writeFile("platformio.json", JSON.stringify(opts.extinfo.platformio, null, 2));
-                processorEmit(bin, opts, res)
+                if (opts.target.nativeType == NATIVE_TYPE_VM)
+                    vmEmit(bin, opts)
+                else
+                    processorEmit(bin, opts, res)
             } else {
                 jsEmit(bin)
             }
         }
 
-        function typeCheckVar(decl: Declaration) {
-            if (!decl) {
-                userError(9203, lf("variable has unknown type"))
-            }
-            if (typeOf(decl).flags & TypeFlags.Void) {
+        function typeCheckVar(tp: Type) {
+            if (tp.flags & TypeFlags.Void) {
                 userError(9203, lf("void-typed variables not supported"))
             }
+        }
+
+        function emitGlobal(decl: Declaration) {
+            const pinfo = pxtInfo(decl)
+            typeCheckVar(typeOf(decl))
+            if (!pinfo.cell)
+                pinfo.cell = new ir.Cell(null, decl, getVarInfo(decl))
+            if (bin.globals.indexOf(pinfo.cell) < 0)
+                bin.globals.push(pinfo.cell)
         }
 
         function lookupCell(decl: Declaration): ir.Cell {
             if (isGlobalVar(decl)) {
                 markUsed(decl)
-                typeCheckVar(decl)
-                let ex = bin.globals.filter(l => l.def == decl)[0]
-                if (!ex) {
-                    ex = new ir.Cell(null, decl, getVarInfo(decl))
-                    bin.globals.push(ex)
-                }
-                return ex
+                const pinfo = pxtInfo(decl)
+                if (!pinfo.cell)
+                    emitGlobal(decl)
+                return pinfo.cell
             } else {
                 let res = proc.localIndex(decl)
                 if (!res) {
                     if (bin.finalPass)
                         userError(9204, lf("cannot locate identifer"))
-                    else
+                    else {
                         res = proc.mkLocal(decl, getVarInfo(decl))
+                    }
                 }
                 return res
             }
@@ -1165,7 +1360,7 @@ namespace ts.pxtc {
                             if (!h.types || h.types.length != 1)
                                 throw userError(9228, lf("invalid extends clause"))
                             let superType = typeOf(h.types[0])
-                            if (superType && isClassType(superType) && !isGenericType(superType)) {
+                            if (superType && isClassType(superType)) {
                                 // check if user defined
                                 // let filename = getSourceFileOfNode(tp.symbol.valueDeclaration).fileName
                                 // if (program.getRootFileNames().indexOf(filename) == -1) {
@@ -1196,113 +1391,119 @@ namespace ts.pxtc {
                 getName(m) == "toString"
         }
 
+        function fixpointVTables() {
+            needsUsingInfo = false
+            const prevLen = bin.usedClassInfos.length
+            for (let ci of bin.usedClassInfos) {
+                for (let m of ci.allMethods()) {
+                    const pinfo = pxtInfo(m)
+                    const info = getFunctionInfo(m)
+                    if (pinfo.flags & PxtNodeFlags.IsUsed) {
+                        // we need to mark the parent as used, otherwise vtable layout fails, see #3740
+                        if (info.virtualParent)
+                            markFunctionUsed(info.virtualParent.decl)
+                    } else if (info.virtualParent && info.virtualParent.isUsed) {
+                        // if our parent method is used, and our vtable is used,
+                        // we are also used
+                        markFunctionUsed(m)
+                    } else if (isToString(m) || isIfaceMemberUsed(getName(m))) {
+                        // if the name is used in interface context, also mark as used
+                        markFunctionUsed(m)
+                    }
+                }
+
+                const ctor = getCtor(ci.decl)
+                if (ctor) {
+                    markFunctionUsed(ctor)
+                }
+            }
+            needsUsingInfo = true
+            if (usedWorkList.length == 0 && prevLen == bin.usedClassInfos.length)
+                return true
+            return false
+        }
+
         function getVTable(inf: ClassInfo) {
             assert(inf.isUsed, "inf.isUsed")
             if (inf.vtable)
                 return inf.vtable
             let tbl = inf.baseClassInfo ? getVTable(inf.baseClassInfo).slice(0) : []
+            inf.derivedClasses = []
+            if (inf.baseClassInfo)
+                inf.baseClassInfo.derivedClasses.push(inf)
 
-            scope(() => {
-                for (let m of inf.methods) {
-                    let minf = getFunctionInfo(m)
-                    if (isToString(m)) {
-                        inf.toStringMethod = lookupProc(m)
+            for (let m of inf.usedMethods()) {
+                bin.numMethods++
+                let minf = getFunctionInfo(m)
+                const attrs = parseComments(m)
+                if (isToString(m) && !attrs.shim) {
+                    inf.toStringMethod = lookupProc(m)
+                    inf.toStringMethod.info.usedAsIface = true
+                }
+                if (minf.virtualParent) {
+                    bin.numVirtMethods++
+                    let key = classFunctionKey(m)
+                    let done = false
+                    let proc = lookupProc(m)
+                    U.assert(!!proc)
+                    for (let i = 0; i < tbl.length; ++i) {
+                        if (classFunctionKey(tbl[i].action) == key) {
+                            tbl[i] = proc
+                            minf.virtualIndex = i
+                            done = true
+                        }
                     }
-                    if (minf.virtualParent) {
-                        let key = classFunctionKey(m)
-                        let done = false
-                        let proc = lookupProc(m)
-                        U.assert(!!proc)
-                        for (let i = 0; i < tbl.length; ++i) {
-                            if (classFunctionKey(tbl[i].action) == key) {
-                                tbl[i] = proc
-                                minf.virtualIndex = i
-                                done = true
-                            }
-                        }
-                        if (!done) {
-                            minf.virtualIndex = tbl.length
-                            tbl.push(proc)
-                        }
+                    if (!done) {
+                        minf.virtualIndex = tbl.length
+                        tbl.push(proc)
                     }
                 }
-                inf.vtable = tbl
-                inf.itable = []
-                inf.itableInfo = []
+            }
+            inf.vtable = tbl
+            inf.itable = []
 
-                let storeIface = (name: string, proc: ir.Procedure) => {
-                    let id = getIfaceMemberId(name)
-                    inf.itable[id] = proc
-                    inf.itableInfo[id] = name
-                    assert(!!proc, "!!proc")
-                }
+            const fieldNames: pxt.Map<boolean> = {}
 
-                let emitSynthetic = (fn: MethodDeclaration, fill: (p: ir.Procedure) => void) => {
-                    let proc = lookupProc(fn)
-                    if (!proc) {
-                        scope(() => {
-                            emitFuncCore(fn)
-                            proc = lookupProc(fn)
-                            proc.body = []
-                            fill(proc)
+            for (let fld of inf.allfields) {
+                let fname = getName(fld)
+                let finfo = fieldIndexCore(inf, fld, false)
+                fieldNames[fname] = true
+                inf.itable.push({
+                    name: fname,
+                    info: (finfo.idx + 1) * (isStackMachine() ? 1 : 4),
+                    idx: getIfaceMemberId(fname),
+                    proc: null
+                })
+            }
+
+            for (let curr = inf; curr; curr = curr.baseClassInfo) {
+                for (let m of curr.usedMethods()) {
+                    const n = getName(m)
+                    const attrs = parseComments(m);
+                    if (attrs.shim) continue;
+
+                    const proc = lookupProc(m)
+                    const ex = inf.itable.find(e => e.name == n)
+                    const isSet = m.kind == SK.SetAccessor
+                    const isGet = m.kind == SK.GetAccessor
+                    if (ex) {
+                        if (isSet && !ex.setProc)
+                            ex.setProc = proc
+                        else if (isGet && !ex.proc)
+                            ex.proc = proc
+                        ex.info = 0
+                    } else {
+                        inf.itable.push({
+                            name: n,
+                            info: 0,
+                            idx: getIfaceMemberId(n),
+                            proc: !isSet ? proc : null,
+                            setProc: isSet ? proc : null
                         })
                     }
-                    assert(!!proc, "!!proc")
-                    storeIface(getName(fn), proc)
+                    proc.info.usedAsIface = true
                 }
-
-                for (let fld0 of inf.allfields) {
-                    let fld = fld0 as FieldWithAddInfo
-                    let fname = getName(fld)
-                    let setname = "set/" + fname
-
-                    if (isIfaceMemberUsed(fname)) {
-                        if (!fld.irGetter)
-                            fld.irGetter = mkBogusMethod(inf, fname)
-                        let idx = fieldIndexCore(inf, fld, typeOf(fld))
-                        emitSynthetic(fld.irGetter, (proc) => {
-                            // we skip final decr, but the ldfld call will do its own decr
-                            let access = ir.op(EK.FieldAccess, [proc.args[0].load()], idx)
-                            emitInJmpValue(access)
-                        })
-                    }
-
-                    if (isIfaceMemberUsed(setname)) {
-                        if (!fld.irSetter) {
-                            fld.irSetter = mkBogusMethod(inf, setname, {
-                                kind: SK.Parameter,
-                                name: { text: "v" },
-                                parent: fld.irSetter,
-                                typeOverride: typeOf(fld),
-                                symbol: {}
-                            });
-                        }
-                        let idx = fieldIndexCore(inf, fld, typeOf(fld))
-                        emitSynthetic(fld.irSetter, (proc) => {
-                            // decrs work out
-                            let access = ir.op(EK.FieldAccess, [proc.args[0].load()], idx)
-                            proc.emitExpr(ir.op(EK.Store, [access, proc.args[1].load()]))
-                        })
-                    }
-                }
-                for (let curr = inf; curr; curr = curr.baseClassInfo) {
-                    for (let m of curr.methods) {
-                        let n = getName(m)
-                        if (isIfaceMemberUsed(n)) {
-                            let id = getIfaceMemberId(n)
-                            if (!inf.itable[id]) {
-                                storeIface(n, lookupProc(m))
-                            }
-                        }
-                    }
-                }
-                for (let i = 0; i < inf.itable.length; ++i)
-                    if (!inf.itable[i])
-                        inf.itable[i] = null // avoid undefined
-                for (let k of Object.keys(ifaceMembers)) {
-                    inf.itableInfo[ifaceMembers[k]] = k
-                }
-            })
+            }
 
             return inf.vtable
         }
@@ -1310,93 +1511,107 @@ namespace ts.pxtc {
         // this code determines if we will need a vtable entry
         // by checking if we are overriding a method in a super class
         function computeVtableInfo(info: ClassInfo) {
-            // walk up the inheritance chain to collect any methods
-            // we may be overriding in this class
-            let nameMap: pxt.Map<FunctionLikeDeclaration> = {}
-            for (let curr = info.baseClassInfo; !!curr; curr = curr.baseClassInfo) {
-                for (let m of curr.methods) {
-                    nameMap[classFunctionKey(m)] = m
+            for (let currMethod of info.allMethods()) {
+                let baseMethod: FunctionLikeDeclaration = null
+                const key = classFunctionKey(currMethod)
+                const k = getName(currMethod)
+                for (let base = info.baseClassInfo; !!base; base = base.baseClassInfo) {
+                    if (base.methods.hasOwnProperty(k))
+                        for (let m2 of base.methods[k])
+                            if (classFunctionKey(m2) == key) {
+                                baseMethod = m2
+                                // note thare's no 'break' here - we'll go to uppermost
+                                // matching method
+                            }
                 }
-            }
-            for (let m of info.methods) {
-                let prev = U.lookup(nameMap, classFunctionKey(m))
-                if (prev) {
-                    let minf = getFunctionInfo(m)
-                    let pinf = getFunctionInfo(prev)
-                    if (prev.parameters.length != m.parameters.length)
-                        error(m, 9255, lf("the overriding method is currently required to have the same number of arguments as the base one"))
-                    // pinf is just the parent (why not transitive?)
+                if (baseMethod) {
+                    let minf = getFunctionInfo(currMethod)
+                    let pinf = getFunctionInfo(baseMethod)
+                    // TODO we can probably drop this check
+                    if (baseMethod.parameters.length != currMethod.parameters.length)
+                        error(currMethod, 9255, lf("the overriding method is currently required to have the same number of arguments as the base one"))
+                    // pinf is the transitive parent
                     minf.virtualParent = pinf
-                    if (!pinf.virtualParent)
+                    if (!pinf.virtualParent) {
+                        needsFullRecompileIfCached(pxtInfo(baseMethod))
                         pinf.virtualParent = pinf
+                    }
                     assert(pinf.virtualParent == pinf, "pinf.virtualParent == pinf")
-                    if (!pinf.virtualInstances)
-                        pinf.virtualInstances = []
-                    pinf.virtualInstances.push(minf)
                 }
             }
         }
 
-        function pruneMethodsAndRecompute() {
-            // reset the virtual info
-            for (let fi in functionInfo) {
-                functionInfo[fi].virtualParent = undefined
-                functionInfo[fi].virtualIndex = undefined
-                functionInfo[fi].virtualInstances = undefined
-            }
-            // remove methods that are not used
-            for (let ci in classInfos) {
-                classInfos[ci].methods = classInfos[ci].methods.filter((m) => getFunctionInfo(m).isUsed)
-            }
-            // recompute vtable info
-            for (let ci in classInfos) {
-                if (classInfos[ci].baseClassInfo)
-                    computeVtableInfo(classInfos[ci])
+        function needsFullRecompileIfCached(pxtinfo: PxtNode) {
+            if ((pxtinfo.flags & PxtNodeFlags.FromPreviousCompile) ||
+                (pxtinfo.flags & PxtNodeFlags.InPxtModules &&
+                    compileOptions.skipPxtModulesEmit)) {
+                res.needsFullRecompile = true;
+                throw userError(9200, lf("full recompile required"));
             }
         }
 
         function getClassInfo(t: Type, decl: ClassDeclaration = null) {
             if (!decl)
                 decl = <ClassDeclaration>t.symbol.valueDeclaration
-            let id = safeName(decl) + "__C" + getNodeId(decl)
-            let info: ClassInfo = classInfos[id]
-            if (!info) {
-                let reffields: PropertyDeclaration[] = []
-                info = {
-                    id: id,
-                    allfields: [],
-                    attrs: parseComments(decl),
-                    decl: decl,
-                    baseClassInfo: null,
-                    methods: [],
-                }
+            const pinfo = pxtInfo(decl)
+            if (!pinfo.classInfo) {
+                const id = safeName(decl) + "__C" + getNodeId(decl)
+                const info = new ClassInfo(id, decl)
+                pinfo.classInfo = info
                 if (info.attrs.autoCreate)
                     autoCreateFunctions[info.attrs.autoCreate] = true
-                classInfos[id] = info;
-                // only do it after storing our in case we run into cycles (which should be errors)
+                // only do it after storing ours in case we run into cycles (which should be errors)
                 info.baseClassInfo = getBaseClassInfo(decl)
-                scope(() => {
-                    for (let mem of decl.members) {
-                        if (mem.kind == SK.PropertyDeclaration) {
-                            let pdecl = <PropertyDeclaration>mem
-                            reffields.push(pdecl)
+                const prevFields = info.baseClassInfo
+                    ? U.toDictionary(info.baseClassInfo.allfields, f => getName(f)) : {}
+                const prevMethod =
+                    (n: string, c = info.baseClassInfo): FunctionLikeDeclaration[] => {
+                        if (!c) return null
+                        return c.methods[n] || prevMethod(n, c.baseClassInfo)
+                    }
+
+                for (let mem of decl.members) {
+                    if (mem.kind == SK.PropertyDeclaration) {
+                        let pdecl = <PropertyDeclaration>mem
+                        if (!isStatic(pdecl))
                             info.allfields.push(pdecl)
-                        } else if (isClassFunction(mem) && mem.kind != SK.Constructor) {
-                            let minf = getFunctionInfo(mem as any)
-                            minf.parentClassInfo = info
-                            info.methods.push(mem as any)
+                        const key = getName(pdecl)
+                        if (prevMethod(key) || U.lookup(prevFields, key))
+                            error(pdecl, 9279, lf("redefinition of '{0}' as field", key))
+                    } else if (mem.kind == SK.Constructor) {
+                        for (let p of (mem as FunctionLikeDeclaration).parameters) {
+                            if (isCtorField(p))
+                                info.allfields.push(p)
+                        }
+                    } else if (isClassFunction(mem)) {
+                        let minf = getFunctionInfo(mem as any)
+                        minf.parentClassInfo = info
+                        if (minf.isUsed)
+                            markVTableUsed(info)
+                        const key = getName(mem)
+                        if (!info.methods.hasOwnProperty(key))
+                            info.methods[key] = []
+                        info.methods[key].push(mem as FunctionLikeDeclaration)
+                        const pfield = U.lookup(prevFields, key)
+                        if (pfield) {
+                            const pxtinfo = pxtInfo(pfield)
+                            if (!(pxtinfo.flags & PxtNodeFlags.IsOverridden)) {
+                                pxtinfo.flags |= PxtNodeFlags.IsOverridden
+                                if (pxtinfo.flags & PxtNodeFlags.IsUsed)
+                                    getIfaceMemberId(key, true)
+                                needsFullRecompileIfCached(pxtinfo)
+                            }
+                            // error(mem, 9279, lf("redefinition of '{0}' (previously a field)", key))
                         }
                     }
-                    if (info.baseClassInfo) {
-                        info.allfields = info.baseClassInfo.allfields.concat(info.allfields)
-                        computeVtableInfo(info)
-                    } else {
-                        info.allfields = reffields.slice(0)
-                    }
-                })
+                }
+                if (info.baseClassInfo) {
+                    info.allfields = info.baseClassInfo.allfields.concat(info.allfields)
+                    computeVtableInfo(info)
+                }
 
             }
-            return info;
+            return pinfo.classInfo;
         }
 
         function emitImageLiteral(s: string): LiteralExpression {
@@ -1440,6 +1655,7 @@ namespace ts.pxtc {
             if (c % 2 != 0)
                 lit += "0"
 
+            // this is codal's format!
             bin.otherLiterals.push(`
 .balign 4
 ${lbl}: .short 0xffff
@@ -1455,15 +1671,9 @@ ${lbl}: .short 0xffff
             }
         }
 
-        function isConstLiteral(decl: Declaration) {
-            if (isGlobalVar(decl)) {
-                if (decl.parent.flags & NodeFlags.Const) {
-                    let init = (decl as VariableDeclaration).initializer
-                    if (!init) return false
-                    if (init.kind == SK.ArrayLiteralExpression) return false
-                    return !isSideEffectfulInitializer(init)
-                }
-            }
+        function isGlobalConst(decl: Declaration) {
+            if (isGlobalVar(decl) && (decl.parent.flags & NodeFlags.Const))
+                return true
             return false
         }
 
@@ -1471,31 +1681,21 @@ ${lbl}: .short 0xffff
             if (!init) return false;
             if (isStringLiteral(init)) return false;
             switch (init.kind) {
-                case SK.NullKeyword:
-                case SK.NumericLiteral:
-                case SK.TrueKeyword:
-                case SK.FalseKeyword:
-                case SK.UndefinedKeyword:
-                    return false;
-                case SK.Identifier:
-                    return !isConstLiteral(getDecl(init))
-                case SK.PropertyAccessExpression:
-                    let d = getDecl(init)
-                    return !d || d.kind != SK.EnumMember
                 case SK.ArrayLiteralExpression:
                     return (init as ArrayLiteralExpression).elements.some(isSideEffectfulInitializer)
                 default:
-                    return true;
+                    return constantFold(init) == null;
             }
         }
 
         function emitLocalLoad(decl: VarOrParam) {
+            const folded = constantFoldDecl(decl)
+            if (folded)
+                return emitLit(folded.val)
             if (isGlobalVar(decl)) {
-                let attrs = parseComments(decl)
+                const attrs = parseComments(decl)
                 if (attrs.shim)
                     return emitShim(decl, decl, [])
-                if (isConstLiteral(decl))
-                    return emitExpr(decl.initializer)
             }
             let l = lookupCell(decl)
             recordUse(decl)
@@ -1508,20 +1708,35 @@ ${lbl}: .short 0xffff
             let attrs = parseComments(f);
             if (attrs.shim)
                 userError(9207, lf("built-in functions cannot be yet used as values; did you forget ()?"))
-            if (isGenericFunction(f))
-                userError(9232, lf("generic functions cannot be yet used as values; did you forget ()?"))
             let info = getFunctionInfo(f)
+            markUsageOrder(info);
             if (info.location) {
                 return info.location.load()
             } else {
                 assert(!bin.finalPass || info.capturedVars.length == 0, "!bin.finalPass || info.capturedVars.length == 0")
+                info.usedAsValue = true
+                markFunctionUsed(f)
                 return emitFunLitCore(f)
             }
         }
 
+        function markUsageOrder(info: FunctionAddInfo) {
+            if (info.usedBeforeDecl === undefined)
+                info.usedBeforeDecl = true;
+            else if (bin.finalPass && info.usedBeforeDecl && info.capturedVars.length) {
+                if (getEnclosingFunction(info.decl) && !info.alreadyEmitted)
+                    userError(9278, lf("function referenced before all variables it uses are defined"))
+            }
+        }
+
         function emitIdentifier(node: Identifier): ir.Expr {
-            let decl = getDecl(node)
-            if (decl && (decl.kind == SK.VariableDeclaration || decl.kind == SK.Parameter || decl.kind === SK.BindingElement)) {
+            const decl = getDecl(node)
+
+            const fold = constantFoldDecl(decl)
+            if (fold)
+                return emitLit(fold.val)
+
+            if (decl && (isVar(decl) || isParameter(decl))) {
                 return emitLocalLoad(<VarOrParam>decl)
             } else if (decl && decl.kind == SK.FunctionDeclaration) {
                 return emitFunLiteral(decl as FunctionDeclaration)
@@ -1555,8 +1770,8 @@ ${lbl}: .short 0xffff
             if (str == "") {
                 r = ir.rtcall("String_::mkEmpty", [])
             } else {
-                let lbl = bin.emitString(str)
-                r = ir.ptrlit(lbl + "meta", JSON.stringify(str), true)
+                let lbl = emitAndMarkString(str)
+                r = ir.ptrlit(lbl, JSON.stringify(str))
             }
             r.isStringLiteral = true
             return r
@@ -1581,7 +1796,6 @@ ${lbl}: .short 0xffff
             let expr = emitExpr(e)
             if (target.isNative || isStringLiteral(e))
                 return irToNode(expr, isRef)
-
             expr = ir.rtcallMask("String_::stringConv", 1, ir.CallingConvention.Async, [expr])
             return irToNode(expr, true)
         }
@@ -1594,7 +1808,7 @@ ${lbl}: .short 0xffff
                 numconcat++
                 return rtcallMask("String_::concat", [irToNode(a, true), asString(b)], null)
             }
-            let expr = (asString(node.head) as any).valueOverride
+            let expr = pxtInfo(asString(node.head)).valueOverride
             for (let span of node.templateSpans) {
                 expr = concat(expr, span.expression)
                 expr = concat(expr, span.literal)
@@ -1618,7 +1832,7 @@ ${lbl}: .short 0xffff
         function emitArrayBindingPattern(node: BindingPattern) { }
         function emitArrayLiteral(node: ArrayLiteralExpression) {
             let eltT = arrayElementType(typeOf(node))
-            let coll = ir.sharedNoIncr(ir.rtcall("Array_::mk", []))
+            let coll = ir.shared(ir.rtcall("Array_::mk", []))
             for (let elt of node.elements) {
                 let mask = isRefCountedExpr(elt) ? 2 : 0
                 proc.emitExpr(ir.rtcall("Array_::push", [coll, emitExpr(elt)], mask))
@@ -1628,20 +1842,43 @@ ${lbl}: .short 0xffff
         function emitObjectLiteral(node: ObjectLiteralExpression) {
             let expr = ir.shared(ir.rtcall("pxtrt::mkMap", []))
             node.properties.forEach((p: PropertyAssignment | ShorthandPropertyAssignment) => {
+                assert(!p.questionToken) // should be disallowed by TS grammar checker
+
+                let keyName: string
+                let init: ir.Expr
                 if (p.kind == SK.ShorthandPropertyAssignment) {
-                    userError(9264, "Shorthand properties not supported.")
-                    return;
+                    const sp = p as ShorthandPropertyAssignment
+                    assert(!sp.equalsToken && !sp.objectAssignmentInitializer) // disallowed by TS grammar checker
+                    keyName = p.name.text;
+                    const vsym = checker.getShorthandAssignmentValueSymbol(p)
+                    const vname: Identifier = vsym && vsym.valueDeclaration && (vsym.valueDeclaration as any).name
+                    if (vname && vname.kind == SK.Identifier)
+                        init = emitIdentifier(vname)
+                    else
+                        throw unhandled(p) // not sure what happened
+                } else if (p.name.kind == SK.ComputedPropertyName) {
+                    const keyExpr = (p.name as ComputedPropertyName).expression
+                    // need to use rtcallMask, so keyExpr gets converted to string
+                    proc.emitExpr(rtcallMask("pxtrt::mapSetByString", [
+                        irToNode(expr, true),
+                        keyExpr,
+                        p.initializer
+                    ], null))
+                    return
+                } else {
+                    keyName = p.name.kind == SK.StringLiteral ?
+                        (p.name as StringLiteral).text : p.name.getText();
+                    init = emitExpr(p.initializer)
                 }
-                const keyName = p.name.getText();
+                const fieldId = target.isNative
+                    ? ir.numlit(getIfaceMemberId(keyName))
+                    : ir.ptrlit(null, JSON.stringify(keyName))
                 const args = [
                     expr,
-                    ir.numlit(getIfaceMemberId(keyName)),
-                    emitExpr(p.initializer)
+                    fieldId,
+                    init
                 ];
-                if (!opts.target.isNative)
-                    args.push(emitStringLiteral(keyName));
-                // internal decr on all args
-                proc.emitExpr(ir.rtcall("pxtrt::mapSetRef", args))
+                proc.emitExpr(ir.rtcall(target.isNative ? "pxtrt::mapSet" : "pxtrt::mapSetByString", args))
             })
             return expr
         }
@@ -1650,75 +1887,70 @@ ${lbl}: .short 0xffff
                 emitVariableDeclaration(node)
                 return
             }
-            if (node.initializer)
-                userError(9209, lf("class field initializers not supported"))
+            if (node.initializer) {
+                let info = getClassInfo(typeOf(node.parent))
+                if (bin.finalPass && info.isUsed && !info.ctor)
+                    userError(9209, lf("class field initializers currently require an explicit constructor"))
+            }
             // do nothing
         }
         function emitShorthandPropertyAssignment(node: ShorthandPropertyAssignment) { }
         function emitComputedPropertyName(node: ComputedPropertyName) { }
         function emitPropertyAccess(node: PropertyAccessExpression): ir.Expr {
             let decl = getDecl(node);
-            // we need to type check node.expression before committing code gen
-            if (!decl || (decl.kind == SK.PropertyDeclaration && !isStatic(decl))
-                || decl.kind == SK.PropertySignature || decl.kind == SK.PropertyAssignment) {
-                emitExpr(node.expression, false)
-                if (!decl)
-                    return ir.numlit(0)
-            }
-            if (decl.kind == SK.GetAccessor) {
-                return emitCallCore(node, node, [], null)
-            }
-            let attrs = parseComments(decl);
-            let callInfo: CallInfo = {
-                decl,
-                qName: getFullName(checker, decl.symbol),
-                args: [],
-                isExpression: true
-            };
-            (node as any).callInfo = callInfo;
+
+            const fold = constantFoldDecl(decl)
+            if (fold)
+                return emitLit(fold.val)
+
+            if (decl.kind == SK.SetAccessor)
+                decl = checkGetter(decl)
+
+            if (decl.kind == SK.GetAccessor)
+                return emitCallCore(node, node, [], null, decl as GetAccessorDeclaration)
+
             if (decl.kind == SK.EnumMember) {
-                let ev = attrs.enumval
-                if (!ev) {
-                    let val = checker.getConstantValue(decl as EnumMember)
-                    if (val == null) {
-                        if ((decl as EnumMember).initializer)
-                            return emitExpr((decl as EnumMember).initializer)
-                        userError(9210, lf("Cannot compute enum value"))
-                    }
-                    ev = val + ""
-                }
-                if (/^[+-]?\d+$/.test(ev))
-                    return emitLit(parseInt(ev));
-                if (/^0x[A-Fa-f\d]{2,8}$/.test(ev))
-                    return emitLit(parseInt(ev, 16));
-                U.userError("enumval only support number literals")
-                // TODO needs dealing with int conversions
-                return ir.rtcall(ev, [])
+                throw userError(9210, lf("Cannot compute enum value"))
             } else if (decl.kind == SK.PropertySignature || decl.kind == SK.PropertyAssignment) {
                 return emitCallCore(node, node, [], null, decl as any, node.expression)
-                /*
-                if (attrs.shim) {
-                    callInfo.args.push(node.expression)
-                    return emitShim(decl, node, [node.expression])
-                } else {
-                    throw unhandled(node, lf("no {shim:...}"), 9236);
-                }*/
-            } else if (decl.kind == SK.PropertyDeclaration) {
+            } else if (decl.kind == SK.PropertyDeclaration || decl.kind == SK.Parameter) {
                 if (isStatic(decl)) {
                     return emitLocalLoad(decl as PropertyDeclaration)
                 }
-                let idx = fieldIndex(node)
-                callInfo.args.push(node.expression)
-                return ir.op(EK.FieldAccess, [emitExpr(node.expression)], idx)
+                if (isSlowField(decl)) {
+                    // treat as interface call
+                    return emitCallCore(node, node, [], null, decl as any, node.expression)
+                } else {
+                    let idx = fieldIndex(node)
+                    return ir.op(EK.FieldAccess, [emitExpr(node.expression)], idx)
+                }
             } else if (isClassFunction(decl) || decl.kind == SK.MethodSignature) {
+                // TODO this is now supported in runtime; can be probably relaxed (by using GetAccessor code path above)
                 throw userError(9211, lf("cannot use method as lambda; did you forget '()' ?"))
             } else if (decl.kind == SK.FunctionDeclaration) {
                 return emitFunLiteral(decl as FunctionDeclaration)
-            } else if (decl.kind == SK.VariableDeclaration) {
+            } else if (isVar(decl)) {
                 return emitLocalLoad(decl as VariableDeclaration)
             } else {
                 throw unhandled(node, lf("Unknown property access for {0}", stringKind(decl)), 9237);
             }
+        }
+
+        function checkGetter(decl: Declaration) {
+            const getter = getDeclarationOfKind(decl.symbol, SK.GetAccessor)
+            if (getter == null) {
+                throw userError(9281, lf("setter currently requires a corresponding getter"))
+            } else {
+                return getter as GetAccessorDeclaration
+            }
+        }
+
+        function isSlowField(decl: Declaration) {
+            if (decl.kind == SK.Parameter || decl.kind == SK.PropertyDeclaration) {
+                const pinfo = pxtInfo(decl)
+                return !!target.switches.slowFields || !!(pinfo.flags & PxtNodeFlags.IsOverridden)
+            }
+            return false
         }
 
         function emitIndexedAccess(node: ElementAccessExpression, assign: Expression = null): ir.Expr {
@@ -1730,17 +1962,23 @@ ${lbl}: .short 0xffff
             }
 
             let indexer: string = null
+            let stringOk = false
             if (!assign && isStringType(t)) {
                 indexer = "String_::charAt"
-            } else if (isArrayType(t))
+            } else if (isArrayType(t)) {
                 indexer = assign ? "Array_::setAt" : "Array_::getAt"
-            else if (isInterfaceType(t)) {
+            } else if (isInterfaceType(t)) {
                 attrs = parseCommentsOnSymbol(t.symbol)
                 indexer = assign ? attrs.indexerSet : attrs.indexerGet
             }
 
+            if (!indexer && (t.flags & (TypeFlags.Any | TypeFlags.StructuredOrTypeVariable))) {
+                indexer = assign ? "pxtrt::mapSetGeneric" : "pxtrt::mapGetGeneric"
+                stringOk = true
+            }
+
             if (indexer) {
-                if (isNumberLike(node.argumentExpression)) {
+                if (stringOk || isNumberLike(node.argumentExpression)) {
                     let args = [node.expression, node.argumentExpression]
                     return rtcallMask(indexer, args, attrs, assign ? [assign] : [])
                 } else {
@@ -1764,35 +2002,76 @@ ${lbl}: .short 0xffff
         }
 
         function isOnDemandDecl(decl: Declaration) {
-            let res = isOnDemandGlobal(decl) || isTopLevelFunctionDecl(decl)
+            let res = isOnDemandGlobal(decl) || isTopLevelFunctionDecl(decl) || isClassDeclaration(decl)
+            if (target.switches.noTreeShake)
+                return false
             if (opts.testMode && res) {
-                if (!U.startsWith(getSourceFileOfNode(decl).fileName, "pxt_modules"))
+                if (!isInPxtModules(decl))
                     return false
             }
             return res
         }
 
-        function isUsed(decl: Declaration) {
-            return !isOnDemandDecl(decl) || usedDecls.hasOwnProperty(nodeKey(decl))
-        }
-
-        function markFunctionUsed(decl: EmittableAsCall) {
-            getFunctionInfo(decl).isUsed = true
-            markUsed(decl)
+        function shouldEmitNow(node: Declaration) {
+            if (!isOnDemandDecl(node))
+                return true
+            const info = pxtInfo(node)
+            if (bin.finalPass)
+                return !!(info.flags & PxtNodeFlags.IsUsed)
+            else
+                return info == currUsingContext
         }
 
         function markUsed(decl: Declaration) {
-            if (opts.computeUsedSymbols && decl && decl.symbol)
-                res.usedSymbols[getFullName(checker, decl.symbol)] = null
+            if (!decl)
+                return
 
-            if (decl && !isUsed(decl)) {
-                usedDecls[nodeKey(decl)] = decl
-                usedWorkList.push(decl)
+            const pinfo = pxtInfo(decl)
+            if (pinfo.classInfo) {
+                markVTableUsed(pinfo.classInfo)
+                return
+            }
+
+            if (opts.computeUsedSymbols && decl.symbol)
+                res.usedSymbols[getNodeFullName(checker, decl)] = null
+
+            if (isStackMachine() && isClassFunction(decl))
+                getIfaceMemberId(getName(decl), true)
+
+            recordUsage(decl)
+
+            if (!(pinfo.flags & PxtNodeFlags.IsUsed)) {
+                pinfo.flags |= PxtNodeFlags.IsUsed
+                if (isOnDemandDecl(decl))
+                    usedWorkList.push(decl)
             }
         }
 
-        function getDecl(node: Node): Declaration {
+        function markFunctionUsed(decl: EmittableAsCall) {
+            markUsed(decl)
+        }
+
+        function emitAndMarkString(str: string) {
+            return recordAction(bin => {
+                return bin.emitString(str)
+            })
+        }
+
+        function recordUsage(decl: Declaration) {
+            if (!needsUsingInfo)
+                return
+            if (!currUsingContext) {
+                U.oops("no using ctx for: " + getName(decl))
+            } else {
+                currUsingContext.usedNodes[nodeKey(decl)] = decl
+            }
+        }
+
+        function getDeclCore(node: Node): Declaration {
             if (!node) return null
+            const pinfo = pxtInfo(node)
+            if (pinfo.declCache !== undefined)
+                return pinfo.declCache
             let sym = checker.getSymbolAtLocation(node)
             let decl: Declaration
             if (sym) {
@@ -1806,7 +2085,24 @@ ${lbl}: .short 0xffff
                     }
                 }
             }
+            return decl
+        }
+
+        function getDecl(node: Node): Declaration {
+            let decl = getDeclCore(node)
             markUsed(decl)
+
+            if (!decl && node && node.kind == SK.PropertyAccessExpression) {
+                const namedNode = node as PropertyAccessExpression
+                decl = {
+                    kind: SK.PropertySignature,
+                    symbol: { isBogusSymbol: true, name: namedNode.name.getText() },
+                    name: namedNode.name,
+                } as any
+                pxtInfo(decl).flags |= PxtNodeFlags.IsBogusFunction
+            }
+
+            pinfo.declCache = decl || null
             return decl
         }
         function isRefCountedExpr(e: Expression) {
@@ -1834,13 +2130,6 @@ ${lbl}: .short 0xffff
             let hasRet = !(typeOf(node).flags & TypeFlags.Void)
             let nm = attrs.shim
 
-            switch (nm) {
-                case "Number_::toString":
-                case "Boolean_::toString":
-                    nm = "numops::toString"
-                    break;
-            }
-
             if (nm.indexOf('(') >= 0) {
                 let parse = /(.*)\((.*)\)$/.exec(nm)
                 if (parse) {
@@ -1865,7 +2154,7 @@ ${lbl}: .short 0xffff
                     }
                     nm = parse[1]
                     if (opts.target.isNative) {
-                        hex.validateShim(getDeclName(decl), nm, attrs, true, litargs.map(v => true))
+                        hexfile.validateShim(getDeclName(decl), nm, attrs, true, litargs.map(v => true))
                     }
                     return ir.rtcallMask(nm, 0, attrs.callingConvention, litargs)
                 }
@@ -1873,6 +2162,12 @@ ${lbl}: .short 0xffff
 
             if (nm == "TD_NOOP") {
                 assert(!hasRet, "!hasRet")
+                if (target.switches.profile && attrs.shimArgument == "perfCounter") {
+                    if (args[0] && args[0].kind == SK.StringLiteral)
+                        proc.perfCounterName = (args[0] as StringLiteral).text
+                    if (!proc.perfCounterName)
+                        proc.perfCounterName = proc.getFullName()
+                }
                 return emitLit(undefined)
             }
 
@@ -1881,8 +2176,11 @@ ${lbl}: .short 0xffff
                 return emitExpr(args[0])
             }
 
+            if (opts.target.shimRenames && U.lookup(opts.target.shimRenames, nm))
+                nm = opts.target.shimRenames[nm]
+
             if (opts.target.isNative) {
-                hex.validateShim(getDeclName(decl), nm, attrs, hasRet, args.map(isNumberLike))
+                hexfile.validateShim(getDeclName(decl), nm, attrs, hasRet, args.map(isNumberLike))
             }
 
             return rtcallMask(nm, args, attrs)
@@ -1890,6 +2188,7 @@ ${lbl}: .short 0xffff
 
         function isNumericLiteral(node: Expression) {
             switch (node.kind) {
+                case SK.UndefinedKeyword:
                 case SK.NullKeyword:
                 case SK.TrueKeyword:
                 case SK.FalseKeyword:
@@ -1914,13 +2213,10 @@ ${lbl}: .short 0xffff
                         p.valueDeclaration.kind == SK.Parameter) {
                         let prm = <ParameterDeclaration>p.valueDeclaration
                         if (!prm.initializer) {
-                            let defl = attrs.paramDefl[getName(prm)]
+                            let defl = getExplicitDefault(attrs, getName(prm))
                             let expr = defl ? emitLit(parseInt(defl)) : null
                             if (expr == null) {
-                                if (typeOf(prm).flags & TypeFlags.NumberLike)
-                                    expr = emitLit(0)
-                                else
-                                    expr = emitLit(undefined)
+                                expr = emitLit(undefined)
                             }
                             args.push(irToNode(expr))
                         } else {
@@ -1955,8 +2251,8 @@ ${lbl}: .short 0xffff
         }
 
         function emitCallExpression(node: CallExpression): ir.Expr {
-            let sig = checker.getResolvedSignature(node)
-            return emitCallCore(node, node.expression, node.arguments, sig)
+            const sig = checker.getResolvedSignature(node);
+            return emitCallCore(node, node.expression, node.arguments, sig);
         }
 
         function emitCallCore(
@@ -1969,58 +2265,70 @@ ${lbl}: .short 0xffff
         ): ir.Expr {
             if (!decl)
                 decl = getDecl(funcExpr) as EmittableAsCall;
-            let isMethod = false
+            let hasRecv = false
+            let forceMethod = false
+            let isStaticLike = false
+            const noArgs = node === funcExpr
+
             if (decl) {
                 switch (decl.kind) {
-                    // we treat properties via calls
-                    // so we say they are "methods"
+                    // these can be implemented by fields
                     case SK.PropertySignature:
                     case SK.PropertyAssignment:
-                    // TOTO case: case SK.ShorthandPropertyAssignment
-                    // these are the real methods
-                    case SK.MethodDeclaration:
+                    case SK.PropertyDeclaration:
                     case SK.MethodSignature:
+                        hasRecv = true
+                        break
+                    case SK.Parameter:
+                        if (isCtorField(decl))
+                            hasRecv = true
+                        break
+                    // these are all class members, so cannot be implemented by fields
                     case SK.GetAccessor:
                     case SK.SetAccessor:
-                        isMethod = true
-                        break;
-                    case SK.ModuleDeclaration:
+                    case SK.MethodDeclaration:
+                        hasRecv = true
+                        forceMethod = true
+                        isStaticLike = isStatic(decl)
+                        break
                     case SK.FunctionDeclaration:
+                        isStaticLike = true
+                        break
+                    case SK.ModuleDeclaration:
                         // has special handling
                         break;
                     default:
                         decl = null; // no special handling
                         break;
                 }
+            } else {
+                if (funcExpr.kind == SK.PropertyAccessExpression)
+                    hasRecv = true // any-access
             }
-            let attrs = parseComments(decl)
-            let hasRet = !(typeOf(node).flags & TypeFlags.Void)
+
+            if (target.switches.slowMethods)
+                forceMethod = false
+
+            const attrs = parseComments(decl)
             let args = callArgs.slice(0)
-            let callInfo: CallInfo = {
-                decl,
-                qName: decl ? getFullName(checker, decl.symbol) : "?",
-                args: args.slice(0),
-                isExpression: hasRet
-            };
-            (node as any).callInfo = callInfo
 
-            if (isMethod && !recv && !isStatic(decl) && funcExpr.kind == SK.PropertyAccessExpression)
+            if (hasRecv && isStatic(decl))
+                hasRecv = false
+
+            if (hasRecv && !recv && funcExpr.kind == SK.PropertyAccessExpression)
                 recv = (<PropertyAccessExpression>funcExpr).expression
-
-            if (callInfo.args.length == 0 && U.lookup(autoCreateFunctions, callInfo.qName))
-                callInfo.isAutoCreate = true
 
             if (res.usedArguments && attrs.trackArgs) {
                 let targs = recv ? [recv].concat(args) : args
                 let tracked = attrs.trackArgs.map(n => targs[n]).map(e => {
                     let d = getDecl(e)
                     if (d && (d.kind == SK.EnumMember || d.kind == SK.VariableDeclaration))
-                        return getFullName(checker, d.symbol)
+                        return getNodeFullName(checker, d)
                     else if (e && e.kind == SK.StringLiteral)
                         return (e as StringLiteral).text
                     else return "*"
                 }).join(",")
-                let fn = getFullName(checker, decl.symbol)
+                let fn = getNodeFullName(checker, decl)
                 let lst = res.usedArguments[fn]
                 if (!lst) {
                     lst = res.usedArguments[fn] = []
@@ -2030,17 +2338,19 @@ ${lbl}: .short 0xffff
             }
 
             function emitPlain() {
-                return mkProcCall(decl, args.map((x) => emitExpr(x)))
+                let r = mkProcCall(decl, node, args.map((x) => emitExpr(x)))
+                let pp = r.data as ir.ProcId
+                if (args[0] && pp.proc && pp.proc.classInfo)
+                    pp.isThis = args[0].kind == SK.ThisKeyword
+                return r
             }
 
-            scope(() => {
-                addDefaultParametersAndTypeCheck(sig, args, attrs);
-            })
+            addDefaultParametersAndTypeCheck(sig, args, attrs);
 
             // first we handle a set of direct cases, note that
             // we are not recursing on funcExpr here, but looking
             // at the associated decl
-            if (decl && decl.kind == SK.FunctionDeclaration) {
+            if (isStaticLike) {
                 let info = getFunctionInfo(<FunctionDeclaration>decl)
 
                 if (!info.location) {
@@ -2055,42 +2365,62 @@ ${lbl}: .short 0xffff
             // special case call to super
             if (funcExpr.kind == SK.SuperKeyword) {
                 let baseCtor = proc.classInfo.baseClassInfo.ctor
-                assert(!bin.finalPass || !!baseCtor, "!bin.finalPass || !!baseCtor")
+                for (let p = proc.classInfo.baseClassInfo; p && !baseCtor; p = p.baseClassInfo)
+                    baseCtor = p.ctor
+                if (!baseCtor && bin.finalPass)
+                    throw userError(9280, lf("super() call requires an explicit constructor in base class"))
                 let ctorArgs = args.map((x) => emitExpr(x))
                 ctorArgs.unshift(emitThis(funcExpr))
-                return mkProcCallCore(baseCtor, null, ctorArgs)
+                return mkProcCallCore(baseCtor, node, ctorArgs)
             }
-            if (isMethod) {
-                let isSuper = false
-                if (isStatic(decl)) {
-                    // no additional arguments
-                } else if (recv) {
-                    if (recv.kind == SK.SuperKeyword) {
-                        isSuper = true
-                    }
+
+            if (hasRecv) {
+                U.assert(!isStatic(decl))
+                if (recv) {
                     args.unshift(recv)
-                    callInfo.args.unshift(recv)
-                } else
+                } else {
                     unhandled(node, lf("strange method call"), 9241)
+                }
+                if (!decl) {
+                    // TODO in VT accessor/field/method -> different
+                    U.assert(funcExpr.kind == SK.PropertyAccessExpression);
+                    const fieldName = (funcExpr as PropertyAccessExpression).name.text
+                    // completely dynamic dispatch
+                    return mkMethodCall(args.map((x) => emitExpr(x)), {
+                        ifaceIndex: getIfaceMemberId(fieldName, true),
+                        callLocationIndex: markCallLocation(node),
+                        noArgs
+                    })
+                }
                 let info = getFunctionInfo(decl)
-                // if we call a method and it overrides then
-                // mark the virtual root class and all its overrides as used,
-                // if their classes are used
-                if (info.virtualParent) info = info.virtualParent
-                if (!info.isUsed) {
-                    info.isUsed = true
-                    for (let vinst of info.virtualInstances || []) {
-                        if (vinst.parentClassInfo.isUsed)
-                            markFunctionUsed(vinst.decl)
+                if (info.parentClassInfo)
+                    markVTableUsed(info.parentClassInfo)
+                markFunctionUsed(decl)
+
+                if (recv.kind == SK.SuperKeyword)
+                    return emitPlain()
+
+                const needsVCall = !!info.virtualParent
+                const forceIfaceCall = !!isStackMachine() || !!target.switches.slowMethods
+
+                if (needsVCall && !forceIfaceCall) {
+                    if (decl.kind == SK.MethodDeclaration) {
+                        U.assert(!noArgs)
+                    } else if (decl.kind == SK.GetAccessor || decl.kind == SK.SetAccessor) {
+                        U.assert(noArgs)
+                    } else {
+                        U.assert(false)
                     }
-                    // we need to mark the parent as used, otherwise vtable layout faile, see #3740
-                    if (info.decl.kind == SK.MethodDeclaration)
-                        markFunctionUsed(info.decl)
-                }
-                if (info.virtualParent && !isSuper) {
+
                     U.assert(!bin.finalPass || info.virtualIndex != null, "!bin.finalPass || info.virtualIndex != null")
-                    return mkProcCallCore(null, info.virtualIndex, args.map((x) => emitExpr(x)))
+                    return mkMethodCall(args.map((x) => emitExpr(x)), {
+                        classInfo: info.parentClassInfo,
+                        virtualIndex: info.virtualIndex,
+                        noArgs,
+                        isThis: args[0].kind == SK.ThisKeyword
+                    })
                 }
+
                 if (attrs.shim && !hasShimDummy(decl)) {
                     return emitShim(decl, node, args);
                 } else if (attrs.helper) {
@@ -2101,7 +2431,7 @@ ${lbl}: .short 0xffff
                             for (let d of sym.declarations || [sym.valueDeclaration]) {
                                 if (d.kind == SK.ModuleDeclaration) {
                                     for (let stmt of ((d as ModuleDeclaration).body as ModuleBlock).statements) {
-                                        if (stmt.symbol.name == attrs.helper) {
+                                        if (stmt.symbol?.name == attrs.helper) {
                                             helperStmt = stmt
                                         }
                                     }
@@ -2114,39 +2444,17 @@ ${lbl}: .short 0xffff
                     if (helperStmt.kind != SK.FunctionDeclaration)
                         userError(9216, lf("helpers.{0} isn't a function", attrs.helper))
                     decl = <FunctionDeclaration>helperStmt;
-                    let sig = checker.getSignatureFromDeclaration(decl)
-                    let tp = sig.getTypeParameters() || []
                     markFunctionUsed(decl)
                     return emitPlain();
-                } else if (decl.kind == SK.MethodSignature) {
-                    let name = getName(decl)
-                    return mkProcCallCore(null, null, args.map((x) => emitExpr(x)), getIfaceMemberId(name))
-                } else if (decl.kind == SK.PropertySignature || decl.kind == SK.PropertyAssignment) {
-                    if (node == funcExpr) {
-                        // in this special base case, we have property access recv.foo
-                        // where recv is a map obejct
-                        let name = getName(decl)
-                        let res = mkProcCallCore(null, null, args.map((x) => emitExpr(x)), getIfaceMemberId(name))
-                        if (decl.kind == SK.PropertySignature || decl.kind == SK.PropertyAssignment) {
-                            let pid = res.data as ir.ProcId
-                            pid.mapIdx = pid.ifaceIndex
-                            if (args.length == 2) {
-                                pid.ifaceIndex = getIfaceMemberId("set/" + name)
-                                pid.mapMethod = "pxtrt::mapSetRef"
-                            } else {
-                                pid.mapMethod = "pxtrt::mapGetRef"
-                            }
-                        }
-                        return res
-                    } else {
-                        // in this case, recv.foo represents a function/lambda
-                        // so the receiver is not needed, as we have already done
-                        // the property lookup to get the lambda
-                        args.shift()
-                        callInfo.args.shift()
-                    }
+                } else if (needsVCall || target.switches.slowMethods || !forceMethod) {
+                    return mkMethodCall(args.map((x) => emitExpr(x)), {
+                        ifaceIndex: getIfaceMemberId(getName(decl), true),
+                        isSet: noArgs && args.length == 2,
+                        callLocationIndex: markCallLocation(node),
+                        noArgs
+                    })
                 } else {
-                    markFunctionUsed(decl)
+                    U.assert(decl.kind != SK.MethodSignature)
                     return emitPlain();
                 }
             }
@@ -2158,63 +2466,114 @@ ${lbl}: .short 0xffff
                     userError(9220, lf("namespaces cannot be called directly"))
             }
 
-            // otherwise we assume a lambda
-            if (args.length > 3)
-                userError(9217, lf("lambda functions with more than 3 arguments not supported"))
-
-            let suff = args.length + ""
-
             // here's where we will recurse to generate funcExpr
             args.unshift(funcExpr)
-            callInfo.args.unshift(funcExpr)
 
-            // lambdas do not decr() arguments themselves; do it normally with getMask()
-            return ir.rtcallMask("pxt::runAction" + suff, getMask(args), ir.CallingConvention.Async,
-                args.map((x) => emitExpr(x)))
+            U.assert(!noArgs)
+            return mkMethodCall(args.map(x => emitExpr(x)), {
+                virtualIndex: -1,
+                callLocationIndex: markCallLocation(node),
+                noArgs
+            });
         }
 
-        function mkProcCallCore(proc: ir.Procedure, vidx: number, args: ir.Expr[], ifaceIdx: number = null) {
+        function mkProcCallCore(proc: ir.Procedure, callLocation: ts.Node, args: ir.Expr[]) {
+            U.assert(!bin.finalPass || !!proc)
             let data: ir.ProcId = {
                 proc: proc,
-                virtualIndex: vidx,
-                ifaceIndex: ifaceIdx
+                callLocationIndex: markCallLocation(callLocation),
+                virtualIndex: null,
+                ifaceIndex: null
             }
             return ir.op(EK.ProcCall, args, data)
         }
 
-        function lookupProc(decl: ts.Declaration) {
-            let id: ir.ProcQuery = { action: decl as ts.FunctionLikeDeclaration }
-            return bin.procs.filter(p => p.matches(id))[0]
+        function mkMethodCall(args: ir.Expr[], info: ir.ProcId) {
+            return ir.op(EK.ProcCall, args, info)
         }
 
-        function mkProcCall(decl: ts.Declaration, args: ir.Expr[]) {
-            let proc = lookupProc(decl)
+        function lookupProc(decl: ts.Declaration) {
+            return pxtInfo(decl).proc
+        }
+
+        function mkProcCall(decl: ts.Declaration, callLocation: ts.Node, args: ir.Expr[]) {
+            const proc = lookupProc(decl)
+            if (decl.kind == SK.FunctionDeclaration) {
+                const info = getFunctionInfo(decl as FunctionDeclaration)
+                markUsageOrder(info)
+            }
             assert(!!proc || !bin.finalPass, "!!proc || !bin.finalPass")
-            return mkProcCallCore(proc, null, args)
+            return mkProcCallCore(proc, callLocation, args)
         }
 
         function layOutGlobals() {
             let globals = bin.globals.slice(0)
             // stable-sort globals, with smallest first, because "strh/b" have
             // smaller immediate range than plain "str" (and same for "ldr")
+            // All the pointers go at the end, for GC
             globals.forEach((g, i) => g.index = i)
+            const sz = (b: BitSize) => b == BitSize.None ? 10 : sizeOfBitSize(b)
             globals.sort((a, b) =>
-                sizeOfBitSize(a.bitSize) - sizeOfBitSize(b.bitSize) ||
+                sz(a.bitSize) - sz(b.bitSize) ||
                 a.index - b.index)
             let currOff = numReservedGlobals * 4
+            let firstPointer = 0
             for (let g of globals) {
-                let sz = sizeOfBitSize(g.bitSize)
+                const bitSize = isStackMachine() ? BitSize.None : g.bitSize
+                let sz = sizeOfBitSize(bitSize)
                 while (currOff & (sz - 1))
                     currOff++ // align
+                if (!firstPointer && bitSize == BitSize.None)
+                    firstPointer = currOff
                 g.index = currOff
                 currOff += sz
             }
             bin.globalsWords = (currOff + 3) >> 2
+            bin.nonPtrGlobals = firstPointer ? (firstPointer >> 2) : bin.globalsWords
         }
 
         function emitVTables() {
             for (let info of bin.usedClassInfos) {
                 getVTable(info) // gets cached
+            }
+
+            let keys = Object.keys(bin.ifaceMemberMap)
+            keys.sort(U.strcmp)
+            keys.unshift("") // make sure idx=0 is invalid
+            bin.emitString("")
+            bin.ifaceMembers = keys
+            bin.ifaceMemberMap = {}
+            let idx = 0
+            for (let k of keys) {
+                bin.ifaceMemberMap[k] = idx++
+            }
+
+            for (let info of bin.usedClassInfos) {
+                for (let e of info.itable) {
+                    e.idx = getIfaceMemberId(e.name)
+                }
+            }
+
+            for (let info of bin.usedClassInfos) {
+                info.lastSubtypeNo = undefined
+                info.classNo = undefined
+            }
+
+            let classNo = pxt.BuiltInType.User0
+            const numberClasses = (i: ClassInfo) => {
+                U.assert(!i.classNo)
+                i.classNo = classNo++
+                for (let subt of i.derivedClasses)
+                    if (subt.isUsed)
+                        numberClasses(subt)
+                i.lastSubtypeNo = classNo - 1
+            }
+            for (let info of bin.usedClassInfos) {
+                let par = info
+                while (par.baseClassInfo)
+                    par = par.baseClassInfo
+                if (!par.classNo)
+                    numberClasses(par)
             }
         }
 
@@ -2223,26 +2582,17 @@ ${lbl}: .short 0xffff
         }
 
         function isIfaceMemberUsed(name: string) {
-            return U.lookup(ifaceMembers, name) != null
+            return U.lookup(bin.explicitlyUsedIfaceMembers, name) != null
         }
 
-        function markClassUsed(info: ClassInfo) {
+        function markVTableUsed(info: ClassInfo) {
+            recordUsage(info.decl)
             if (info.isUsed) return
-            info.isUsed = true
-            if (info.baseClassInfo) markClassUsed(info.baseClassInfo)
+            // U.assert(!bin.finalPass)
+            const pinfo = pxtInfo(info.decl)
+            pinfo.flags |= PxtNodeFlags.IsUsed
+            if (info.baseClassInfo) markVTableUsed(info.baseClassInfo)
             bin.usedClassInfos.push(info)
-            for (let m of info.methods) {
-                let minf = getFunctionInfo(m)
-                if (isToString(m) ||
-                    isIfaceMemberUsed(getName(m)) ||
-                    (minf.virtualParent && minf.virtualParent.isUsed))
-                    markFunctionUsed(m)
-            }
-
-            let ctor = getCtor(info.decl)
-            if (ctor) {
-                markFunctionUsed(ctor)
-            }
         }
 
         function emitNewExpression(node: NewExpression) {
@@ -2263,7 +2613,7 @@ ${lbl}: .short 0xffff
                     if (ctor) break
                 }
 
-                markClassUsed(info)
+                markVTableUsed(info)
 
                 let lbl = info.id + "_VT"
                 let obj = ir.rtcall("pxt::mkClassInstance", [ir.ptrlit(lbl, lbl)])
@@ -2271,22 +2621,22 @@ ${lbl}: .short 0xffff
                 if (ctor) {
                     obj = sharedDef(obj)
                     markUsed(ctor)
-                    let args = node.arguments.slice(0)
+                    // arguments undefined on .ctor with optional args
+                    let args = (node.arguments || []).slice(0)
                     let ctorAttrs = parseComments(ctor)
 
-                    let sig = checker.getResolvedSignature(node)
+                    // unused?
+                    // let sig = checker.getResolvedSignature(node)
                     // TODO: can we have overloeads?
                     addDefaultParametersAndTypeCheck(checker.getResolvedSignature(node), args, ctorAttrs)
                     let compiled = args.map((x) => emitExpr(x))
                     if (ctorAttrs.shim) {
-                        if (!noRefCounting())
-                            U.userError("shim=... on constructor not supported right now")
                         // TODO need to deal with refMask and tagged ints here
                         // we drop 'obj' variable
                         return ir.rtcall(ctorAttrs.shim, compiled)
                     }
                     compiled.unshift(obj)
-                    proc.emitExpr(mkProcCall(ctor, compiled))
+                    proc.emitExpr(mkProcCall(ctor, node, compiled))
                     return obj
                 } else {
                     if (node.arguments && node.arguments.length)
@@ -2351,14 +2701,33 @@ ${lbl}: .short 0xffff
                 return f4EncodeImg(maxLen, matrix.length, bpp, (x, y) => matrix[y][x] || 0)
             }
 
-            function parseHexLiteral(s: string) {
+            function parseHexLiteral(node: Node, s: string) {
                 let thisJres = currJres
                 if (s[0] == '_' && s[1] == '_' && opts.jres[s]) {
                     thisJres = opts.jres[s]
                     s = ""
                 }
                 if (s == "" && thisJres) {
-                    if (!thisJres.dataEncoding || thisJres.dataEncoding == "base64") {
+                    let fontMatch = /font\/x-mkcd-b(\d+)/.exec(thisJres.mimeType)
+                    if (fontMatch) {
+                        if (!bin.finalPass) {
+                            s = "aabbccdd"
+                        } else {
+                            let chsz = parseInt(fontMatch[1])
+                            let data = atob(thisJres.data)
+                            let mask = bin.usedChars
+                            let buf = ""
+                            let incl = ""
+                            for (let pos = 0; pos < data.length; pos += chsz) {
+                                let charcode = data.charCodeAt(pos) + (data.charCodeAt(pos + 1) << 8)
+                                if (charcode < 128 || (mask[charcode >> 5] & (1 << (charcode & 31)))) {
+                                    buf += data.slice(pos, pos + chsz)
+                                    incl += charcode + ", "
+                                }
+                            }
+                            s = U.toHex(U.stringToUint8Array(buf))
+                        }
+                    } else if (!thisJres.dataEncoding || thisJres.dataEncoding == "base64") {
                         s = U.toHex(U.stringToUint8Array(ts.pxtc.decodeBase64(thisJres.data)))
                     } else if (thisJres.dataEncoding == "hex") {
                         s = thisJres.data
@@ -2366,6 +2735,11 @@ ${lbl}: .short 0xffff
                         userError(9271, lf("invalid jres encoding '{0}' on '{1}'",
                             thisJres.dataEncoding, thisJres.id))
                     }
+                }
+                if (/^e[14]/i.test(s) && node.parent && node.parent.kind == SK.CallExpression &&
+                    (node.parent as CallExpression).expression.getText() == "image.ofBuffer") {
+                    const m = /^e([14])(..)(..)..(.*)/i.exec(s)
+                    s = `870${m[1]}${m[2]}00${m[3]}000000${m[4]}`
                 }
                 let res = ""
                 for (let i = 0; i < s.length; ++i) {
@@ -2380,8 +2754,13 @@ ${lbl}: .short 0xffff
                     else
                         throw unhandled(node, lf("invalid character in hex literal '{0}'", c), 9265)
                 }
-                let lbl = bin.emitHexLiteral(res.toLowerCase())
-                return ir.ptrlit(lbl, lbl, true)
+                if (target.isNative) {
+                    const lbl = bin.emitHexLiteral(res.toLowerCase())
+                    return ir.ptrlit(lbl, lbl)
+                } else {
+                    const lbl = "_hex" + nodeKey(node)
+                    return ir.ptrlit(lbl, { hexlit: res.toLowerCase() } as any)
+                }
             }
             let decl = getDecl(node.tag) as FunctionLikeDeclaration
             if (!decl)
@@ -2391,17 +2770,18 @@ ${lbl}: .short 0xffff
 
             let callInfo: CallInfo = {
                 decl,
-                qName: decl ? getFullName(checker, decl.symbol) : "?",
+                qName: decl ? getNodeFullName(checker, decl) : "?",
                 args: [node.template],
                 isExpression: true
             };
-            (node as any).callInfo = callInfo;
+            pxtInfo(node).callInfo = callInfo;
 
             function handleHexLike(pp: (s: string) => string) {
-                if (node.template.kind != SK.NoSubstitutionTemplateLiteral)
-                    throw unhandled(node, lf("substitution not supported in hex literal", attrs.shim), 9265);
-                res = parseHexLiteral(pp((node.template as ts.LiteralExpression).text))
+                res = parseHexLiteral(node, pp((node.template as ts.LiteralExpression).text))
             }
+
+            if (node.template.kind != SK.NoSubstitutionTemplateLiteral)
+                throw unhandled(node, lf("substitution not supported in hex literal", attrs.shim), 9265);
 
             switch (attrs.shim) {
                 case "@hex":
@@ -2411,6 +2791,9 @@ ${lbl}: .short 0xffff
                     handleHexLike(f4PreProcess)
                     break
                 default:
+                    if (attrs.shim === undefined && attrs.helper) {
+                        return emitTaggedTemplateHelper(node.template, attrs);
+                    }
                     throw unhandled(node, lf("invalid shim '{0}' on tagged template", attrs.shim), 9265)
             }
             if (attrs.helper) {
@@ -2428,6 +2811,33 @@ ${lbl}: .short 0xffff
         }
         function emitParenExpression(node: ParenthesizedExpression) {
             return emitExpr(node.expression)
+        }
+
+        function emitTaggedTemplateHelper(node: NoSubstitutionTemplateLiteral, attrs: CommentAttrs) {
+            let syms = checker.getSymbolsInScope(node, SymbolFlags.Module)
+            let helperStmt: Statement
+            for (let sym of syms) {
+                if (sym.name == "helpers") {
+                    for (let d of sym.declarations || [sym.valueDeclaration]) {
+                        if (d.kind == SK.ModuleDeclaration) {
+                            for (let stmt of ((d as ModuleDeclaration).body as ModuleBlock).statements) {
+                                if (stmt.symbol?.name == attrs.helper) {
+                                    helperStmt = stmt;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (!helperStmt)
+                userError(9215, lf("helpers.{0} not found", attrs.helper))
+            if (helperStmt.kind != SK.FunctionDeclaration)
+                userError(9216, lf("helpers.{0} isn't a function", attrs.helper))
+            const decl = <FunctionDeclaration>helperStmt;
+            markFunctionUsed(decl);
+
+            let r = mkProcCall(decl, node, [emitStringLiteral(node.text)]);
+            return r
         }
 
         function getParameters(node: FunctionLikeDeclaration) {
@@ -2449,12 +2859,50 @@ ${lbl}: .short 0xffff
 
         function emitFunLitCore(node: FunctionLikeDeclaration, raw = false) {
             let lbl = getFunctionLabel(node)
-            return ir.ptrlit(lbl + "_Lit", lbl, !raw)
+            return ir.ptrlit(lbl + "_Lit", lbl)
+        }
+
+        function flushWorkQueue() {
+            proc = lookupProc(rootFunction)
+            // we emit everything that's left, but only at top level
+            // to avoid unbounded stack
+            while (usedWorkList.length > 0) {
+                let f = usedWorkList.pop()
+                emitTopLevel(f)
+            }
+        }
+
+        function flushHoistedFunctionDefinitions() {
+            const curr = pendingFunctionDefinitions
+            if (curr.length > 0) {
+                pendingFunctionDefinitions = []
+                for (let node of curr) {
+                    const prevProc = proc;
+                    try {
+                        emitFuncCore(node);
+                    } finally {
+                        proc = prevProc;
+                    }
+                }
+            }
+        }
+        function markVariableDefinition(vi: VariableAddInfo) {
+            if (bin.finalPass && vi.functionsToDefine) {
+                U.pushRange(pendingFunctionDefinitions, vi.functionsToDefine)
+            }
         }
 
         function emitFuncCore(node: FunctionLikeDeclaration) {
-            let info = getFunctionInfo(node)
+            const info = getFunctionInfo(node)
             let lit: ir.Expr = null
+
+            if (bin.finalPass) {
+                if (info.alreadyEmitted) {
+                    U.assert(info.usedBeforeDecl)
+                    return null
+                }
+                info.alreadyEmitted = true
+            }
 
             let isExpression = node.kind == SK.ArrowFunction || node.kind == SK.FunctionExpression
 
@@ -2465,23 +2913,19 @@ ${lbl}: .short 0xffff
                 return l;
             })
 
-            // forbid: let x = function<T>(a:T) { }
-            if (isExpression && isGenericFunction(node))
-                userError(9233, lf("function expressions cannot be generic"))
-
-            if (caps.length > 0 && isGenericFunction(node))
-                userError(9234, lf("nested functions cannot be generic yet"))
+            if (info.usedBeforeDecl === undefined)
+                info.usedBeforeDecl = false
 
             // if no captured variables, then we can get away with a plain pointer to code
             if (caps.length > 0) {
                 assert(getEnclosingFunction(node) != null, "getEnclosingFunction(node) != null)")
-                lit = ir.sharedNoIncr(ir.rtcall("pxt::mkAction", [ir.numlit(caps.length), ir.numlit(caps.length), emitFunLitCore(node, true)]))
+                lit = ir.shared(ir.rtcall("pxt::mkAction", [ir.numlit(caps.length), emitFunLitCore(node, true)]))
+                info.usedAsValue = true
                 caps.forEach((l, i) => {
                     let loc = proc.localIndex(l)
                     if (!loc)
                         userError(9223, lf("cannot find captured value: {0}", checker.symbolToString(l.symbol)))
                     let v = loc.loadCore()
-                    v = ir.op(EK.Incr, [v])
                     proc.emitExpr(ir.rtcall("pxtrt::stclo", [lit, ir.numlit(i), v]))
                 })
                 if (node.kind == SK.FunctionDeclaration) {
@@ -2492,51 +2936,73 @@ ${lbl}: .short 0xffff
             } else {
                 if (isExpression) {
                     lit = emitFunLitCore(node)
+                    info.usedAsValue = true
                 }
             }
 
             assert(!!lit == isExpression, "!!lit == isExpression")
 
-            let id: ir.ProcQuery = { action: node }
-            let existing = bin.procs.filter(p => p.matches(id))[0]
+            let existing = lookupProc(node)
 
             if (existing) {
                 proc = existing
                 proc.reset()
             } else {
                 assert(!bin.finalPass, "!bin.finalPass")
-                proc = new ir.Procedure();
-                proc.isRoot = !!(node as any).isRootFunction
-                proc.action = node;
-                proc.info = info;
-                bin.addProc(proc);
+                const pinfo = pxtInfo(node)
+                const myProc = new ir.Procedure()
+                myProc.isRoot = !!(pinfo.flags & PxtNodeFlags.IsRootFunction)
+                myProc.action = node;
+                myProc.info = info;
+                pinfo.proc = myProc;
+                myProc.usingCtx = currUsingContext;
+                proc = myProc
+                recordAction(bin => bin.addProc(myProc));
             }
 
             proc.captured = locals;
 
+            const initalizedFields: PropertyDeclaration[] = []
+
             if (node.parent.kind == SK.ClassDeclaration) {
                 let parClass = node.parent as ClassDeclaration
-                let numTP = parClass.typeParameters ? parClass.typeParameters.length : 0
                 let classInfo = getClassInfo(null, parClass)
                 if (proc.classInfo)
                     assert(proc.classInfo == classInfo, "proc.classInfo == classInfo")
                 else
                     proc.classInfo = classInfo
                 if (node.kind == SK.Constructor) {
+                    if (classInfo.baseClassInfo) {
+                        for (let m of classInfo.baseClassInfo.decl.members) {
+                            if (m.kind == SK.Constructor)
+                                markFunctionUsed(m as ConstructorDeclaration)
+                        }
+                    }
                     if (classInfo.ctor)
                         assert(classInfo.ctor == proc, "classInfo.ctor == proc")
                     else
                         classInfo.ctor = proc
+                    for (let f of classInfo.allfields) {
+                        if (f.kind == SK.PropertyDeclaration && !isStatic(f)) {
+                            let fi = f as PropertyDeclaration
+                            if (fi.initializer) initalizedFields.push(fi)
+                        }
+                    }
                 }
             }
 
             const destructuredParameters: ParameterDeclaration[] = []
+            const fieldAssignmentParameters: ParameterDeclaration[] = []
 
             proc.args = getParameters(node).map((p, i) => {
                 if (p.name.kind === SK.ObjectBindingPattern) {
                     destructuredParameters.push(p)
                 }
+                if (node.kind == SK.Constructor && isCtorField(p)) {
+                    fieldAssignmentParameters.push(p)
+                }
                 let l = new ir.Cell(i, p, getVarInfo(p))
+                markVariableDefinition(l.info)
                 l.isarg = true
                 return l
             })
@@ -2553,8 +3019,33 @@ ${lbl}: .short 0xffff
 
             destructuredParameters.forEach(dp => emitVariableDeclaration(dp))
 
+            // for constructor(public foo:number) generate this.foo = foo;
+            for (let p of fieldAssignmentParameters) {
+                let idx = fieldIndexCore(proc.classInfo,
+                    getFieldInfo(proc.classInfo, getName(p)), false)
+                let trg2 = ir.op(EK.FieldAccess, [emitLocalLoad(info.thisParameter)], idx)
+                proc.emitExpr(ir.op(EK.Store, [trg2, emitLocalLoad(p)]))
+            }
+
+            for (let f of initalizedFields) {
+                let idx = fieldIndexCore(proc.classInfo,
+                    getFieldInfo(proc.classInfo, getName(f)), false)
+                let trg2 = ir.op(EK.FieldAccess, [emitLocalLoad(info.thisParameter)], idx)
+                proc.emitExpr(ir.op(EK.Store, [trg2, emitExpr(f.initializer)]))
+            }
+
+            flushHoistedFunctionDefinitions()
+
             if (node.body.kind == SK.Block) {
                 emit(node.body);
+                if (funcHasReturn(proc.action)) {
+                    const last = proc.body[proc.body.length - 1]
+                    if (last && last.stmtKind == ir.SK.Jmp && last.jmpMode == ir.JmpMode.Always) {
+                        // skip final 'return undefined' as there was 'return something' just above
+                    } else {
+                        proc.emitJmp(getLabels(node).ret, emitLit(undefined), ir.JmpMode.Always)
+                    }
+                }
             } else {
                 let v = emitExpr(node.body)
                 proc.emitJmp(getLabels(node).ret, v, ir.JmpMode.Always)
@@ -2565,33 +3056,34 @@ ${lbl}: .short 0xffff
             proc.stackEmpty();
 
             let lbl = proc.mkLabel("final")
-            let hasRet = funcHasReturn(proc.action)
-            if (hasRet) {
-                let v = captureJmpValue()
-                proc.emitClrs(lbl, v);
-                proc.emitJmp(lbl, v, ir.JmpMode.Always)
+            if (funcHasReturn(proc.action)) {
+                // the jmp will take R0 with it as the return value
+                proc.emitJmp(lbl)
             } else {
-                proc.emitClrs(lbl, null);
+                proc.emitJmp(lbl, emitLit(undefined))
             }
-            if (hasRet)
-                proc.emitLbl(lbl)
+            proc.emitLbl(lbl)
 
-            // once we have emitted code for this function,
-            // we should emit code for all decls that are used
-            // as a result
-            assert(!bin.finalPass || usedWorkList.length == 0, "!bin.finalPass || usedWorkList.length == 0")
-            while (usedWorkList.length > 0) {
-                let f = usedWorkList.pop()
-                emit(f)
+            if (info.capturedVars.length &&
+                info.usedBeforeDecl &&
+                node.kind == SK.FunctionDeclaration && !bin.finalPass) {
+                info.capturedVars.sort((a, b) => b.pos - a.pos)
+                const vinfo = getVarInfo(info.capturedVars[0])
+                if (!vinfo.functionsToDefine)
+                    vinfo.functionsToDefine = []
+                vinfo.functionsToDefine.push(node)
             }
+
+            // nothing should be on work list in final pass - everything should be already marked as used
+            assert(!bin.finalPass || usedWorkList.length == 0, "!bin.finalPass || usedWorkList.length == 0")
 
             return lit
         }
 
         function sharedDef(e: ir.Expr) {
             let v = ir.shared(e)
-            // make sure we save it, but also don't leak ref-count
-            proc.emitExpr(ir.op(EK.Decr, [v]))
+            // make sure we save it
+            proc.emitExpr(v);
             return v
         }
 
@@ -2607,7 +3099,10 @@ ${lbl}: .short 0xffff
         }
 
         function emitFunctionDeclaration(node: FunctionLikeDeclaration) {
-            if (!isUsed(node))
+            if (!shouldEmitNow(node))
+                return undefined;
+
+            if (pxtInfo(node).flags & PxtNodeFlags.FromPreviousCompile)
                 return undefined;
 
             let attrs = parseComments(node)
@@ -2615,7 +3110,7 @@ ${lbl}: .short 0xffff
                 if (attrs.shim[0] == "@")
                     return undefined;
                 if (opts.target.isNative) {
-                    hex.validateShim(getDeclName(node),
+                    hexfile.validateShim(getDeclName(node),
                         attrs.shim,
                         attrs,
                         funcHasReturn(node),
@@ -2631,54 +3126,82 @@ ${lbl}: .short 0xffff
             if (!node.body)
                 return undefined;
 
-            let info = getFunctionInfo(node)
             let lit: ir.Expr = null
 
-            scope(() => {
-                lit = emitFuncCore(node)
-            })
+            let prevProc = proc;
+            try {
+                lit = emitFuncCore(node);
+            } finally {
+                proc = prevProc;
+            }
 
             return lit
         }
 
-        function emitDeleteExpression(node: DeleteExpression) { }
-        function emitTypeOfExpression(node: TypeOfExpression) { }
+        function emitDeleteExpression(node: DeleteExpression) {
+            let objExpr: Expression
+            let keyExpr: Expression
+            if (node.expression.kind == SK.PropertyAccessExpression) {
+                const inner = node.expression as PropertyAccessExpression
+                objExpr = inner.expression
+                keyExpr = irToNode(emitStringLiteral(inner.name.text))
+            } else if (node.expression.kind == SK.ElementAccessExpression) {
+                const inner = node.expression as ElementAccessExpression
+                objExpr = inner.expression
+                keyExpr = inner.argumentExpression
+            } else {
+                throw userError(9276, lf("expression not supported as argument to 'delete'"))
+            }
+
+            // we know these would just fail at runtime
+            const objExprType = typeOf(objExpr)
+            if (isClassType(objExprType))
+                throw userError(9277, lf("'delete' not supported on class types"))
+            if (isArrayType(objExprType))
+                throw userError(9277, lf("'delete' not supported on array"))
+
+            return rtcallMask("pxtrt::mapDeleteByString", [objExpr, keyExpr], null)
+        }
+        function emitTypeOfExpression(node: TypeOfExpression) {
+            return rtcallMask("pxt::typeOf", [node.expression], null)
+        }
         function emitVoidExpression(node: VoidExpression) { }
         function emitAwaitExpression(node: AwaitExpression) { }
         function emitPrefixUnaryExpression(node: PrefixUnaryExpression): ir.Expr {
-            let tp = typeOf(node.operand)
-            if (node.operator == SK.ExclamationToken) {
-                return fromBool(ir.rtcall("Boolean_::bang", [emitCondition(node.operand)]))
-            }
+            const folded = constantFold(node)
+            if (folded)
+                return emitLit(folded.val)
 
-            if (isNumberType(tp)) {
-                switch (node.operator) {
-                    case SK.PlusPlusToken:
-                        return emitIncrement(node.operand, "numops::adds", false)
-                    case SK.MinusMinusToken:
-                        return emitIncrement(node.operand, "numops::subs", false)
-                    case SK.MinusToken: {
-                        let inner = emitExpr(node.operand)
-                        let v = valueToInt(inner)
-                        if (v != null)
-                            return emitLit(-v)
+            switch (node.operator) {
+                case SK.ExclamationToken:
+                    return fromBool(ir.rtcall("Boolean_::bang", [emitCondition(node.operand)]))
+                case SK.PlusPlusToken:
+                    return emitIncrement(node.operand, "numops::adds", false)
+                case SK.MinusMinusToken:
+                    return emitIncrement(node.operand, "numops::subs", false)
+                case SK.PlusToken:
+                case SK.MinusToken: {
+                    let inner = emitExpr(node.operand)
+                    let v = valueToInt(inner)
+                    if (v != null)
+                        return emitLit(-v)
+                    if (node.operator == SK.MinusToken)
                         return emitIntOp("numops::subs", emitLit(0), inner)
-                    }
-                    case SK.PlusToken:
-                        return emitExpr(node.operand) // no-op
-                    case SK.TildeToken: {
-                        let inner = emitExpr(node.operand)
-                        let v = valueToInt(inner)
-                        if (v != null)
-                            return emitLit(~v)
-                        return rtcallMaskDirect(mapIntOpName("numops::bnot"), [inner]);
-                    }
-                    default:
-                        break
+                    else
+                        // force conversion to number
+                        return emitIntOp("numops::subs", inner, emitLit(0))
                 }
+                case SK.TildeToken: {
+                    let inner = emitExpr(node.operand)
+                    let v = valueToInt(inner)
+                    if (v != null)
+                        return emitLit(~v)
+                    return rtcallMaskDirect(mapIntOpName("numops::bnot"), [inner]);
+                }
+                default:
+                    throw unhandled(node, lf("unsupported prefix unary operation"), 9245)
             }
 
-            throw unhandled(node, lf("unsupported prefix unary operation"), 9245)
         }
 
         function doNothing() { }
@@ -2709,11 +3232,12 @@ ${lbl}: .short 0xffff
         }
 
         function irToNode(expr: ir.Expr, isRef = false): Expression {
-            return {
+            let r: any = {
                 kind: SK.NullKeyword,
                 isRefOverride: isRef,
-                valueOverride: expr
-            } as any
+            }
+            pxtInfo(r).valueOverride = expr
+            return r
         }
 
         function emitIncrement(trg: Expression, meth: string, isPost: boolean, one: Expression = null) {
@@ -2742,13 +3266,20 @@ ${lbl}: .short 0xffff
             throw unhandled(node, lf("unsupported postfix unary operation"), 9246)
         }
 
-        function fieldIndexCore(info: ClassInfo, fld: FieldWithAddInfo, t: Type) {
+        function fieldIndexCore(info: ClassInfo, fld: FieldWithAddInfo, needsCheck = true): FieldAccessInfo {
+            if (isStatic(fld))
+                U.oops("fieldIndex on static field: " + getName(fld))
             let attrs = parseComments(fld)
+            let idx = info.allfields.indexOf(fld)
+            if (idx < 0 && bin.finalPass)
+                U.oops("missing field")
             return {
-                idx: info.allfields.indexOf(fld),
+                idx,
                 name: getName(fld),
                 isRef: true,
-                shimName: attrs.shim
+                shimName: attrs.shim,
+                classInfo: info,
+                needsCheck
             }
         }
 
@@ -2756,7 +3287,10 @@ ${lbl}: .short 0xffff
             const tp = typeOf(pacc.expression)
             if (isPossiblyGenericClassType(tp)) {
                 const info = getClassInfo(tp)
-                return fieldIndexCore(info, getFieldInfo(info, pacc.name.text), typeOf(pacc))
+                let noCheck = pacc.expression.kind == SK.ThisKeyword
+                if (target.switches.noThisCheckOpt)
+                    noCheck = false
+                return fieldIndexCore(info, getFieldInfo(info, pacc.name.text), !noCheck)
             } else {
                 throw unhandled(pacc, lf("bad field access"), 9247)
             }
@@ -2777,7 +3311,7 @@ ${lbl}: .short 0xffff
             let decl = getDecl(trg)
             let isGlobal = isGlobalVar(decl)
             if (trg.kind == SK.Identifier || isGlobal) {
-                if (decl && (isGlobal || decl.kind == SK.VariableDeclaration || decl.kind == SK.Parameter)) {
+                if (decl && (isGlobal || isVar(decl) || isParameter(decl))) {
                     let l = lookupCell(decl)
                     recordUse(<VarOrParam>decl, true)
                     proc.emitExpr(l.storeByRef(emitExpr(src)))
@@ -2786,34 +3320,58 @@ ${lbl}: .short 0xffff
                 }
             } else if (trg.kind == SK.PropertyAccessExpression) {
                 let decl = getDecl(trg)
-                if (decl && decl.kind == SK.GetAccessor) {
+                if (decl && (decl.kind == SK.GetAccessor || decl.kind == SK.SetAccessor)) {
+                    checkGetter(decl)
                     decl = getDeclarationOfKind(decl.symbol, SK.SetAccessor)
                     if (!decl) {
                         unhandled(trg, lf("setter not available"), 9253)
                     }
                     proc.emitExpr(emitCallCore(trg, trg, [src], null, decl as FunctionLikeDeclaration))
-                } else if (decl && (decl.kind == SK.PropertySignature || decl.kind == SK.PropertyAssignment)) {
+                } else if (decl && (decl.kind == SK.PropertySignature || decl.kind == SK.PropertyAssignment || isSlowField(decl))) {
                     proc.emitExpr(emitCallCore(trg, trg, [src], null, decl as FunctionLikeDeclaration))
                 } else {
-                    proc.emitExpr(ir.op(EK.Store, [emitExpr(trg), emitExpr(src)]))
+                    let trg2 = emitExpr(trg)
+                    proc.emitExpr(ir.op(EK.Store, [trg2, emitExpr(src)]))
                 }
             } else if (trg.kind == SK.ElementAccessExpression) {
                 proc.emitExpr(emitIndexedAccess(trg as ElementAccessExpression, src))
+            } else if (trg.kind == SK.ArrayLiteralExpression) {
+                // special-case [a,b,c]=[1,2,3], or more commonly [a,b]=[b,a]
+                if (src.kind == SK.ArrayLiteralExpression) {
+                    // typechecker enforces that these two have the same length
+                    const tmps = (src as ArrayLiteralExpression).elements.map(e => {
+                        const ee = ir.shared(emitExpr(e))
+                        proc.emitExpr(ee)
+                        return ee
+                    });
+                    (trg as ArrayLiteralExpression).elements.forEach((e, idx) => {
+                        emitStore(e, irToNode(tmps[idx]))
+                    })
+                } else {
+                    // unfortunately, this uses completely different syntax tree nodes to the patters in const/let...
+                    const bindingExpr = ir.shared(emitExpr(src));
+                    (trg as ArrayLiteralExpression).elements.forEach((e, idx) => {
+                        emitStore(e, irToNode(rtcallMaskDirect("Array_::getAt", [bindingExpr, ir.numlit(idx)])))
+                    })
+                }
             } else {
                 unhandled(trg, lf("bad assignment target"), 9249)
             }
         }
 
         function handleAssignment(node: BinaryExpression) {
-            let cleanup = prepForAssignment(node.left, node.right)
+            let src = node.right
+            if (node.parent.kind == SK.ExpressionStatement)
+                src = null
+            let cleanup = prepForAssignment(node.left, src)
             emitStore(node.left, node.right, true)
-            let res = emitExpr(node.right)
+            let res = src ? emitExpr(src) : emitLit(undefined)
             cleanup()
             return res
         }
 
         function mapIntOpName(n: string) {
-            if (opts.target.isNative && isThumb()) {
+            if (isThumb()) {
                 switch (n) {
                     case "numops::adds":
                     case "numops::subs":
@@ -2824,6 +3382,14 @@ ${lbl}: .short 0xffff
                 }
             }
 
+            if (isStackMachine()) {
+                switch (n) {
+                    case "pxt::switch_eq":
+                        return "numops::eq"
+                }
+
+            }
+
             return n
         }
 
@@ -2831,15 +3397,206 @@ ${lbl}: .short 0xffff
             return rtcallMaskDirect(mapIntOpName(op), [left, right])
         }
 
+        interface Folded {
+            val: any;
+        }
+
+        function unaryOpConst(tok: SyntaxKind, aa: Folded): Folded {
+            if (!aa)
+                return null
+            const a = aa.val
+            switch (tok) {
+                case SK.PlusToken: return { val: +a }
+                case SK.MinusToken: return { val: -a }
+                case SK.TildeToken: return { val: ~a }
+                case SK.ExclamationToken: return { val: !a }
+                default:
+                    return null
+            }
+        }
+        function binaryOpConst(tok: SyntaxKind, aa: Folded, bb: Folded): Folded {
+            if (!aa || !bb)
+                return null
+            const a = aa.val
+            const b = bb.val
+            switch (tok) {
+                case SK.PlusToken: return { val: a + b }
+                case SK.MinusToken: return { val: a - b }
+                case SK.SlashToken: return { val: a / b }
+                case SK.PercentToken: return { val: a % b }
+                case SK.AsteriskToken: return { val: a * b }
+                case SK.AsteriskAsteriskToken: return { val: a ** b }
+                case SK.AmpersandToken: return { val: a & b }
+                case SK.BarToken: return { val: a | b }
+                case SK.CaretToken: return { val: a ^ b }
+                case SK.LessThanLessThanToken: return { val: a << b }
+                case SK.GreaterThanGreaterThanToken: return { val: a >> b }
+                case SK.GreaterThanGreaterThanGreaterThanToken: return { val: a >>> b }
+                case SK.LessThanEqualsToken: return { val: a <= b }
+                case SK.LessThanToken: return { val: a < b }
+                case SK.GreaterThanEqualsToken: return { val: a >= b }
+                case SK.GreaterThanToken: return { val: a > b }
+                case SK.EqualsEqualsToken: return { val: a == b }
+                case SK.EqualsEqualsEqualsToken: return { val: a === b }
+                case SK.ExclamationEqualsEqualsToken: return { val: a !== b }
+                case SK.ExclamationEqualsToken: return { val: a != b }
+                case SK.BarBarToken: return { val: a || b }
+                case SK.AmpersandAmpersandToken: return { val: a && b }
+                default:
+                    return null
+            }
+        }
+        function quickGetQualifiedName(expr: Expression): string {
+            if (expr.kind == SK.Identifier) {
+                return (expr as Identifier).text
+            } else if (expr.kind == SK.PropertyAccessExpression) {
+                const pa = expr as PropertyAccessExpression
+                const left = quickGetQualifiedName(pa.expression)
+                if (left)
+                    return left + "." + pa.name.text
+            }
+            return null
+        }
+
+        function fun1Const(expr: Expression, aa: Folded): Folded {
+            if (!aa)
+                return null
+            const a = aa.val
+            switch (quickGetQualifiedName(expr)) {
+                case "Math.floor": return { val: Math.floor(a) }
+                case "Math.ceil": return { val: Math.ceil(a) }
+                case "Math.round": return { val: Math.round(a) }
+            }
+            return null
+        }
+
+        function enumValue(decl: EnumMember): string {
+            const attrs = parseComments(decl);
+            let ev = attrs.enumval
+            if (!ev) {
+                let val = checker.getConstantValue(decl)
+                if (val == null)
+                    return null
+                ev = val + ""
+            }
+            if (/^[+-]?\d+$/.test(ev))
+                return ev;
+            if (/^0x[A-Fa-f\d]{2,8}$/.test(ev))
+                return ev;
+            U.userError("enumval only support number literals")
+            return "0"
+        }
+
+        function emitFolded(f: Folded) {
+            if (f)
+                return emitLit(f.val)
+            return null
+        }
+
+        function constantFoldDecl(decl: Declaration) {
+            if (!decl)
+                return null
+
+            const info = pxtInfo(decl)
+            if (info.constantFolded !== undefined)
+                return info.constantFolded
+
+            if (isVar(decl) && (decl.parent.flags & NodeFlags.Const)) {
+                const vardecl = decl as VariableDeclaration
+                if (vardecl.initializer)
+                    info.constantFolded = constantFold(vardecl.initializer)
+            } else if (decl.kind == SK.EnumMember) {
+                const en = decl as EnumMember
+                const ev = enumValue(en)
+                if (ev == null) {
+                    info.constantFolded = constantFold(en.initializer)
+                } else {
+                    const v = parseInt(ev)
+                    if (!isNaN(v))
+                        info.constantFolded = { val: v }
+                }
+            } else if (decl.kind == SK.PropertyDeclaration && isStatic(decl) && isReadOnly(decl)) {
+                const pd = decl as PropertyDeclaration
+                info.constantFolded = constantFold(pd.initializer)
+            }
+
+            //if (info.constantFolded)
+            //    console.log(getDeclName(decl), getSourceFileOfNode(decl).fileName, info.constantFolded.val)
+
+            return info.constantFolded
+        }
+
+        function constantFold(e: Expression): Folded {
+            if (!e)
+                return null
+            const info = pxtInfo(e)
+            if (info.constantFolded === undefined) {
+                info.constantFolded = null // make sure we don't come back here recursively
+                const res = constantFoldCore(e)
+                info.constantFolded = res
+            }
+            return info.constantFolded
+        }
+
+        function constantFoldCore(e: Expression): Folded {
+            if (!e)
+                return null
+            switch (e.kind) {
+                case SK.PrefixUnaryExpression: {
+                    const expr = e as PrefixUnaryExpression
+                    const inner = constantFold(expr.operand)
+                    return unaryOpConst(expr.operator, inner)
+                }
+                case SK.BinaryExpression: {
+                    const expr = e as BinaryExpression
+                    const left = constantFold(expr.left)
+                    if (!left) return null
+                    const right = constantFold(expr.right)
+                    if (!right) return null
+                    return binaryOpConst(expr.operatorToken.kind, left, right)
+                }
+                case SK.NumericLiteral: {
+                    const expr = e as NumericLiteral
+                    const v = parseFloat(expr.text)
+                    if (isNaN(v))
+                        return null
+                    return { val: v }
+                }
+                case SK.NullKeyword:
+                    return { val: null }
+                case SK.TrueKeyword:
+                    return { val: true }
+                case SK.FalseKeyword:
+                    return { val: false }
+                case SK.UndefinedKeyword:
+                    return { val: undefined }
+                case SK.CallExpression: {
+                    const expr = e as CallExpression
+                    if (expr.arguments.length == 1)
+                        return fun1Const(expr.expression, constantFold(expr.arguments[0]))
+                    return null
+                }
+                case SK.PropertyAccessExpression:
+                case SK.Identifier:
+                    // regular getDecl() will mark symbols as used
+                    // if we succeed, we will not use any symbols, so no rason to mark them
+                    return constantFoldDecl(getDeclCore(e))
+                case SK.AsExpression:
+                    return constantFold((e as AsExpression).expression)
+                default:
+                    return null
+            }
+        }
+
         function emitAsInt(e: Expression) {
-            let prev = target.boxDebug
+            let prev = target.switches.boxDebug
             let expr: ir.Expr = null
             if (prev) {
                 try {
-                    target.boxDebug = false
+                    target.switches.boxDebug = false
                     expr = emitExpr(e)
                 } finally {
-                    target.boxDebug = prev
+                    target.switches.boxDebug = prev
                 }
             } else {
                 expr = emitExpr(e)
@@ -2890,7 +3647,7 @@ ${lbl}: .short 0xffff
         function valueToInt(e: ir.Expr): number {
             if (e.exprKind == ir.EK.NumberLiteral) {
                 let v = e.data
-                if (opts.target.isNative) {
+                if (opts.target.isNative && !isStackMachine()) {
                     if (v == taggedNull || v == taggedUndefined || v == taggedFalse)
                         return 0
                     if (v == taggedTrue)
@@ -2901,22 +3658,34 @@ ${lbl}: .short 0xffff
                     if (typeof v == "number")
                         return v
                 }
+            } else if (e.exprKind == ir.EK.RuntimeCall && e.args.length == 2) {
+                let v0 = valueToInt(e.args[0])
+                let v1 = valueToInt(e.args[1])
+                if (v0 === undefined || v1 === undefined)
+                    return undefined
+                switch (e.data) {
+                    case "numops::orrs":
+                        return v0 | v1;
+                    case "numops::adds":
+                        return v0 + v1;
+                    default:
+                        console.log(e)
+                        return undefined;
+                }
             }
             return undefined
         }
 
         function emitLit(v: number | boolean) {
-            if (opts.target.isNative) {
-                if (v === null) return ir.numlit(taggedNull)
-                else if (v === undefined) return ir.numlit(taggedUndefined)
-                else if (v === false) return ir.numlit(taggedFalse)
-                else if (v === true) return ir.numlit(taggedTrue)
+            if (opts.target.isNative && !isStackMachine()) {
+                const numlit = taggedSpecial(v)
+                if (numlit != null) return ir.numlit(numlit)
                 else if (typeof v == "number") {
-                    if (fitsTaggedInt(v as number))
+                    if (fitsTaggedInt(v as number)) {
                         return ir.numlit(((v as number) << 1) | 1)
-                    else {
+                    } else {
                         let lbl = bin.emitDouble(v as number)
-                        return ir.ptrlit(lbl, JSON.stringify(v), true)
+                        return ir.ptrlit(lbl, JSON.stringify(v))
                     }
                 } else {
                     throw U.oops("bad literal: " + v)
@@ -2928,18 +3697,19 @@ ${lbl}: .short 0xffff
 
         function isNumberLike(e: Expression) {
             if (e.kind == SK.NullKeyword) {
-                let vo: ir.Expr = (e as any).valueOverride
-                if (vo !== undefined) {
+                let vo: ir.Expr = pxtInfo(e).valueOverride
+                if (vo != null) {
                     if (vo.exprKind == EK.NumberLiteral) {
                         if (opts.target.isNative)
                             return !!((vo.data as number) & 1)
                         return true
                     } else if (vo.exprKind == EK.RuntimeCall && vo.data == "pxt::ptrOfLiteral") {
                         if (vo.args[0].exprKind == EK.PointerLiteral &&
-                            !isNaN(parseFloat(vo.args[0].jsInfo)))
+                            !isNaN(parseFloat(vo.args[0].jsInfo as string)))
                             return true
                         return false
-                    } else if (vo.exprKind == EK.PointerLiteral && !isNaN(parseFloat(vo.jsInfo))) {
+                    } else if (vo.exprKind == EK.PointerLiteral &&
+                        !isNaN(parseFloat(vo.jsInfo as string))) {
                         return true
                     } else
                         return false
@@ -2955,10 +3725,18 @@ ${lbl}: .short 0xffff
         }
 
         function rtcallMask(name: string, args: Expression[], attrs: CommentAttrs, append: Expression[] = null) {
-            let fmt = ""
-            let inf = hex.lookupFunc(name)
-            if (inf) fmt = inf.argsFmt
+            let fmt: string[] = []
+            let inf = hexfile.lookupFunc(name)
 
+            if (isThumb()) {
+                let inf2 = U.lookup(thumbFuns, name)
+                if (inf2) {
+                    inf = inf2
+                    name = inf2.name
+                }
+            }
+
+            if (inf) fmt = inf.argsFmt
             if (append) args = args.concat(append)
 
             let mask = getMask(args)
@@ -2966,9 +3744,9 @@ ${lbl}: .short 0xffff
 
             let args2 = args.map((a, i) => {
                 let r = emitExpr(a)
-                if (!opts.target.isNative)
+                if (!needsNumberConversions())
                     return r
-                let f = fmt.charAt(i + 1)
+                let f = fmt[i + 1]
                 let isNumber = isNumberLike(a)
 
                 if (!f && name.indexOf("::") < 0) {
@@ -2977,11 +3755,21 @@ ${lbl}: .short 0xffff
                 }
                 if (!f) {
                     throw U.userError("not enough args for " + name)
-                } else if (f == "_" || f == "T" || f == "N") {
+                } else if (f[0] == "_" || f == "T" || f == "N") {
+                    let t = getRefTagToValidate(f)
+                    if (t) {
+                        convInfos.push({
+                            argIdx: i,
+                            method: "_validate",
+                            refTag: t,
+                            refTagNullable: !!attrs.argsNullable
+                        })
+                    }
                     return r
                 } else if (f == "I") {
-                    if (!isNumber)
-                        U.userError("argsFmt=...I... but argument not a number in " + name)
+                    //toInt can handle non-number values as well
+                    //if (!isNumber)
+                    //    U.userError("argsFmt=...I... but argument not a number in " + name)
                     if (r.exprKind == EK.NumberLiteral && typeof r.data == "number") {
                         return ir.numlit(r.data >> 1)
                     }
@@ -2999,7 +3787,7 @@ ${lbl}: .short 0xffff
                     if (!r.isStringLiteral) {
                         convInfos.push({
                             argIdx: i,
-                            method: "numops::stringConv",
+                            method: "_pxt_stringConv",
                             returnsRef: true
                         })
                         // set the mask - the result of conversion is a ref
@@ -3025,13 +3813,14 @@ ${lbl}: .short 0xffff
             if (!r.mask) r.mask = { refMask: 0 }
             r.mask.conversions = convInfos
             if (opts.target.isNative) {
-                if (fmt.charAt(0) == "I")
+                let f0 = fmt[0]
+                if (f0 == "I")
                     r = fromInt(r)
-                else if (fmt.charAt(0) == "B")
+                else if (f0 == "B")
                     r = fromBool(r)
-                else if (fmt.charAt(0) == "F")
+                else if (f0 == "F")
                     r = fromFloat(r)
-                else if (fmt.charAt(0) == "D") {
+                else if (f0 == "D") {
                     U.oops("double returns not yet supported") // take two words
                     r = fromDouble(r)
                 }
@@ -3045,12 +3834,25 @@ ${lbl}: .short 0xffff
             proc.emitLbl(lbl)
         }
 
+        function emitInstanceOfExpression(node: BinaryExpression) {
+            let tp = typeOf(node.right)
+            let classDecl = isPossiblyGenericClassType(tp) ? <ClassDeclaration>getDecl(node.right) : null
+            if (!classDecl || classDecl.kind != SK.ClassDeclaration) {
+                userError(9275, lf("unsupported instanceof expression"))
+            }
+            let info = getClassInfo(tp, classDecl)
+            markVTableUsed(info)
+            let r = ir.op(ir.EK.InstanceOf, [emitExpr(node.left)], info)
+            r.jsInfo = "bool"
+            return r
+        }
+
         function emitLazyBinaryExpression(node: BinaryExpression) {
             let left = emitExpr(node.left)
             let isString = isStringType(typeOf(node.left));
             let lbl = proc.mkLabel("lazy")
 
-            left = ir.sharedNoIncr(left)
+            left = ir.shared(left)
             let cond = ir.rtcall("numops::toBool", [left])
             let lblSkip = proc.mkLabel("lazySkip")
             let mode: ir.JmpMode =
@@ -3062,7 +3864,6 @@ ${lbl}: .short 0xffff
             proc.emitJmp(lbl, left, ir.JmpMode.Always, left)
             proc.emitLbl(lblSkip)
             proc.emitExpr(rtcallMaskDirect("langsupp::ignore", [left]))
-            // proc.emitExpr(ir.op(EK.Decr, [left])) - this gets optimized away
 
             proc.emitJmp(lbl, emitExpr(node.right), ir.JmpMode.Always)
             proc.emitLbl(lbl)
@@ -3089,17 +3890,40 @@ ${lbl}: .short 0xffff
 
         function emitBrk(node: Node) {
             bin.numStmts++
-            if (!opts.breakpoints)
+            const needsComment = assembler.debug || target.switches.size || target.sourceMap
+            let needsBreak = !!opts.breakpoints
+            if (!needsComment && !needsBreak)
                 return
-            let src = getSourceFileOfNode(node)
-            if (opts.justMyCode && U.startsWith(src.fileName, "pxt_modules"))
-                return;
+            const src = getSourceFileOfNode(node)
+            if (opts.justMyCode && isInPxtModules(src))
+                needsBreak = false
+            if (!needsComment && !needsBreak)
+                return
             let pos = node.pos
             while (/^\s$/.exec(src.text[pos]))
                 pos++;
-            let p = ts.getLineAndCharacterOfPosition(src, pos)
-            let e = ts.getLineAndCharacterOfPosition(src, node.end);
-            let brk: Breakpoint = {
+
+            // a leading comment gets attached to statement
+            while (src.text[pos] == '/' && src.text[pos + 1] == '/') {
+                while (src.text[pos] && src.text[pos] != '\n') pos++
+                pos++
+            }
+
+            const p = ts.getLineAndCharacterOfPosition(src, pos)
+
+            if (needsComment) {
+                let endpos = node.end
+                if (endpos - pos > 80)
+                    endpos = pos + 80
+                const srctext = src.text.slice(pos, endpos).trim().replace(/\n[^]*/, "...")
+                proc.emit(ir.comment(`${src.fileName.replace(/pxt_modules\//, "")}(${p.line + 1},${p.character + 1}): ${srctext}`))
+            }
+
+            if (!needsBreak)
+                return
+
+            const e = ts.getLineAndCharacterOfPosition(src, node.end);
+            const brk: Breakpoint = {
                 id: res.breakpoints.length,
                 isDebuggerStmt: node.kind == SK.DebuggerStatement,
                 fileName: src.fileName,
@@ -3111,7 +3935,7 @@ ${lbl}: .short 0xffff
                 endColumn: e.character,
             }
             res.breakpoints.push(brk)
-            let st = ir.stmt(ir.SK.Breakpoint, null)
+            const st = ir.stmt(ir.SK.Breakpoint, null)
             st.breakpointInfo = brk
             proc.emit(st)
         }
@@ -3121,11 +3945,7 @@ ${lbl}: .short 0xffff
                 case SK.PlusToken: return "numops::adds";
                 case SK.MinusToken: return "numops::subs";
                 // we could expose __aeabi_idiv directly...
-                case SK.SlashToken: {
-                    if (opts.warnDiv)
-                        warning(node, 9274, "usage of / operator");
-                    return "numops::div";
-                }
+                case SK.SlashToken: return "numops::div";
                 case SK.PercentToken: return "numops::mod";
                 case SK.AsteriskToken: return "numops::muls";
                 case SK.AsteriskAsteriskToken: return "Math_::pow";
@@ -3135,7 +3955,6 @@ ${lbl}: .short 0xffff
                 case SK.LessThanLessThanToken: return "numops::lsls";
                 case SK.GreaterThanGreaterThanToken: return "numops::asrs"
                 case SK.GreaterThanGreaterThanGreaterThanToken: return "numops::lsrs"
-                // these could be compiled to branches but this is more code-size efficient
                 case SK.LessThanEqualsToken: return "numops::le";
                 case SK.LessThanToken: return "numops::lt";
                 case SK.GreaterThanEqualsToken: return "numops::ge";
@@ -3155,12 +3974,21 @@ ${lbl}: .short 0xffff
                 return handleAssignment(node);
             }
 
-            let lt = typeOf(node.left)
-            let rt = typeOf(node.right)
+            const folded = constantFold(node)
+            if (folded)
+                return emitLit(folded.val)
+
+            let lt: Type = null
+            let rt: Type = null
 
             if (node.operatorToken.kind == SK.PlusToken || node.operatorToken.kind == SK.PlusEqualsToken) {
+                lt = typeOf(node.left)
+                rt = typeOf(node.right)
                 if (isStringType(lt) || (isStringType(rt) && node.operatorToken.kind == SK.PlusToken)) {
-                    (node as any).exprInfo = { leftType: checker.typeToString(lt), rightType: checker.typeToString(rt) } as BinaryExpressionInfo;
+                    pxtInfo(node).exprInfo = {
+                        leftType: checker.typeToString(lt),
+                        rightType: checker.typeToString(rt)
+                    }
                 }
             }
 
@@ -3183,16 +4011,8 @@ ${lbl}: .short 0xffff
                 case SK.BarBarToken:
                 case SK.AmpersandAmpersandToken:
                     return emitLazyBinaryExpression(node);
-            }
-
-            if (isNumericalType(lt) && isNumericalType(rt)) {
-                let noEq = stripEquals(node.operatorToken.kind)
-                let shimName = simpleInstruction(node, noEq || node.operatorToken.kind)
-                if (!shimName)
-                    unhandled(node.operatorToken, lf("unsupported numeric operator"), 9250)
-                if (noEq)
-                    return emitIncrement(node.left, shimName, false, node.right)
-                return shim(shimName)
+                case SK.InstanceOfKeyword:
+                    return emitInstanceOfExpression(node);
             }
 
             if (node.operatorToken.kind == SK.PlusToken) {
@@ -3209,40 +4029,14 @@ ${lbl}: .short 0xffff
                 return post
             }
 
-
-            if (isStringType(lt) && isStringType(rt)) {
-                switch (node.operatorToken.kind) {
-                    case SK.EqualsEqualsToken:
-                    case SK.EqualsEqualsEqualsToken:
-                    case SK.ExclamationEqualsEqualsToken:
-                    case SK.ExclamationEqualsToken:
-                        break; // let the generic case handle this
-                    case SK.LessThanEqualsToken:
-                    case SK.LessThanToken:
-                    case SK.GreaterThanEqualsToken:
-                    case SK.GreaterThanToken:
-                        return ir.rtcallMask(
-                            mapIntOpName(simpleInstruction(node, node.operatorToken.kind)),
-                            opts.target.boxDebug ? 1 : 0,
-                            ir.CallingConvention.Plain,
-                            [fromInt(shim("String_::compare")), emitLit(0)])
-                    default:
-                        unhandled(node.operatorToken, lf("unknown string operator"), 9251)
-                }
-            }
-
-            switch (node.operatorToken.kind) {
-                case SK.EqualsEqualsToken:
-                    return shim("langsupp::ptreq");
-                case SK.EqualsEqualsEqualsToken:
-                    return shim("langsupp::ptreqq");
-                case SK.ExclamationEqualsEqualsToken:
-                    return shim("langsupp::ptrneqq");
-                case SK.ExclamationEqualsToken:
-                    return shim("langsupp::ptrneq");
-                default:
-                    throw unhandled(node.operatorToken, lf("unknown generic operator"), 9252)
-            }
+            // fallback to numeric operation if none of the argument is string and some are numbers
+            let noEq = stripEquals(node.operatorToken.kind)
+            let shimName = simpleInstruction(node, noEq || node.operatorToken.kind)
+            if (!shimName)
+                unhandled(node.operatorToken, lf("unsupported operator"), 9250)
+            if (noEq)
+                return emitIncrement(node.left, shimName, false, node.right)
+            return shim(shimName)
         }
 
         function emitConditionalExpression(node: ConditionalExpression) {
@@ -3279,13 +4073,13 @@ ${lbl}: .short 0xffff
                     throw userError(9269, lf("conflicting values for config.{0}", ent.name))
             }
 
-            if (node.declarationList.flags & NodeFlags.Const)
-                for (let decl of node.declarationList.declarations) {
-                    let nm = getDeclName(decl)
-                    let parname = node.parent && node.parent.kind == SK.ModuleBlock ?
-                        getName(node.parent.parent) : "?"
+            if (node.declarationList.flags & NodeFlags.Const) {
+                let parname = node.parent && node.parent.kind == SK.ModuleBlock ?
+                    getName(node.parent.parent) : "?"
+                if (parname == "config" || parname == "userconfig")
+                    for (let decl of node.declarationList.declarations) {
+                        let nm = getDeclName(decl)
 
-                    if (parname == "config" || parname == "userconfig") {
                         if (!decl.initializer) continue
                         let val = emitAsInt(decl.initializer)
                         let key = lookupDalConst(node, "CFG_" + nm) as number
@@ -3295,7 +4089,8 @@ ${lbl}: .short 0xffff
                             nm = "!" + nm
                         addConfigEntry({ name: nm, key: key, value: val })
                     }
-                }
+            }
+
             if (ts.isInAmbientContext(node))
                 return;
             checkForLetOrConst(node.declarationList);
@@ -3307,18 +4102,15 @@ ${lbl}: .short 0xffff
         function emitCondition(expr: Expression, inner: ir.Expr = null) {
             if (!inner && isThumb() && expr.kind == SK.BinaryExpression) {
                 let be = expr as BinaryExpression
-                let lt = typeOf(be.left)
-                let rt = typeOf(be.right)
-                if ((lt.flags & TypeFlags.NumberLike) && (rt.flags & TypeFlags.NumberLike)) {
-                    let mapped = U.lookup(thumbCmpMap, simpleInstruction(be, be.operatorToken.kind))
-                    if (mapped) {
-                        return ir.rtcall(mapped, [emitExpr(be.left), emitExpr(be.right)])
-                    }
+                let mapped = U.lookup(thumbCmpMap, simpleInstruction(be, be.operatorToken.kind))
+                if (mapped) {
+                    return ir.rtcall(mapped, [emitExpr(be.left), emitExpr(be.right)])
                 }
             }
             if (!inner)
                 inner = emitExpr(expr)
-            // in all cases decr is internal, so no mask
+            if (isStackMachine())
+                return inner
             return ir.rtcall("numops::toBoolDecr", [inner])
         }
         function emitIfStatement(node: IfStatement) {
@@ -3380,14 +4172,6 @@ ${lbl}: .short 0xffff
 
         function emitIgnored(node: Expression) {
             let v = emitExpr(node);
-            let a = typeOf(node)
-            if (!(a.flags & TypeFlags.Void)) {
-                if (v.exprKind == EK.SharedRef && v.data != "noincr") {
-                    // skip decr - SharedRef would have introduced an implicit INCR
-                } else {
-                    v = ir.op(EK.Decr, [v])
-                }
-            }
             return v
         }
 
@@ -3454,9 +4238,8 @@ ${lbl}: .short 0xffff
 
             //As the iterator isn't declared in the usual fashion we must mark it as used, otherwise no cell will be allocated for it
             markUsed(declList.declarations[0])
-            let iterVar = emitVariableDeclaration(declList.declarations[0]) // c
-            //Start with undefined
-            proc.emitExpr(iterVar.storeByRef(emitLit(undefined)))
+            const iterVar = emitVariableDeclaration(declList.declarations[0]) // c
+            U.assert(!!iterVar || !bin.finalPass)
             proc.stackEmpty()
 
             // Store the expression (it could be a string literal, for example) for the collection being iterated over
@@ -3483,11 +4266,14 @@ ${lbl}: .short 0xffff
 
             // TODO this should be changed to use standard indexer lookup and int handling
             let toInt = (e: ir.Expr) => {
-                return ir.rtcall("pxt::toInt", [e])
+                return needsNumberConversions() ? ir.rtcall("pxt::toInt", [e]) : e
             }
 
             // c = a[i]
-            proc.emitExpr(iterVar.storeByRef(ir.rtcall(indexer, [collectionVar.loadCore(), toInt(intVarIter.loadCore())])))
+            if (iterVar)
+                proc.emitExpr(iterVar.storeByRef(ir.rtcall(indexer, [collectionVar.loadCore(), toInt(intVarIter.loadCore())])))
+
+            flushHoistedFunctionDefinitions()
 
             emit(node.statement);
             proc.emitLblDirect(l.cont);
@@ -3508,6 +4294,7 @@ ${lbl}: .short 0xffff
             emitBrk(node)
             let label = node.label ? node.label.text : null
             let isBreak = node.kind == SK.BreakStatement
+            let numTry = 0
             function findOuter(parent: Node): Statement {
                 if (!parent) return null;
                 if (label && parent.kind == SK.LabeledStatement &&
@@ -3517,6 +4304,7 @@ ${lbl}: .short 0xffff
                     return parent as Statement
                 if (!label && isIterationStatement(parent, false))
                     return parent as Statement
+                numTry += numBeginTry(parent)
                 return findOuter(parent.parent);
             }
             let stmt = findOuter(node)
@@ -3524,6 +4312,7 @@ ${lbl}: .short 0xffff
                 error(node, 9230, lf("cannot find outer loop"))
             else {
                 let l = getLabels(stmt)
+                emitEndTry(numTry)
                 if (node.kind == SK.ContinueStatement) {
                     if (!isIterationStatement(stmt, false))
                         error(node, 9231, lf("continue on non-loop"));
@@ -3544,6 +4333,13 @@ ${lbl}: .short 0xffff
             } else if (funcHasReturn(proc.action)) {
                 v = emitLit(undefined) // == return undefined
             }
+            let numTry = 0
+            for (let p: Node = node; p; p = p.parent) {
+                if (p == proc.action)
+                    break
+                numTry += numBeginTry(p)
+            }
+            emitEndTry(numTry)
             proc.emitJmp(getLabels(proc.action).ret, v, ir.JmpMode.Always)
         }
 
@@ -3555,7 +4351,7 @@ ${lbl}: .short 0xffff
             let l = getLabels(node)
             let defaultLabel: ir.Stmt
 
-            let expr = ir.sharedNoIncr(emitExpr(node.expression))
+            let expr = ir.shared(emitExpr(node.expression))
 
             let lbls = node.caseBlock.clauses.map(cl => {
                 let lbl = proc.mkLabel("switch")
@@ -3581,10 +4377,6 @@ ${lbl}: .short 0xffff
                 return lbl
             })
 
-            // this is default case only - none of the switch_eq() succeded,
-            // so there is an outstanding reference to expr
-            proc.emitExpr(ir.op(EK.Decr, [expr]))
-
             if (defaultLabel)
                 proc.emitJmp(defaultLabel, expr)
             else
@@ -3604,42 +4396,160 @@ ${lbl}: .short 0xffff
             emit(node.statement)
             proc.emitLblDirect(l.brk)
         }
-        function emitThrowStatement(node: ThrowStatement) { }
-        function emitTryStatement(node: TryStatement) { }
+
+        function emitThrowStatement(node: ThrowStatement) {
+            emitBrk(node)
+            proc.emitExpr(rtcallMaskDirect("pxt::throwValue", [emitExpr(node.expression)]))
+        }
+
+        function emitEndTry(num = 1) {
+            while (num--) {
+                proc.emitExpr(rtcallMaskDirect("pxt::endTry", []))
+            }
+        }
+
+        function jumpXFinally() {
+            userError(9282, lf("jumps (return, break, continue) through finally blocks not supported yet"))
+        }
+
+        function numBeginTry(node: Node) {
+            let r = 0
+            if (node.kind == SyntaxKind.Block && node.parent) {
+                if (node.parent.kind == SyntaxKind.CatchClause) {
+                    // from inside of catch there's at most the finally block to close
+                    const t = node.parent.parent as TryStatement
+                    if (t.finallyBlock) {
+                        r++
+                        jumpXFinally()
+                    }
+                } else if (node.parent.kind == SyntaxKind.TryStatement) {
+                    // from inside of the body of try{} there possibly the catch and finally blocks to close
+                    const t = node.parent as TryStatement
+                    if (t.tryBlock == node) {
+                        if (t.catchClause) r++
+                        if (t.finallyBlock) {
+                            r++
+                            jumpXFinally()
+                        }
+                    }
+                } else {
+                    // if we're inside of finally there's nothing to close already
+                    // (or more common this block has nothing to do with try{})
+                }
+            }
+            return r
+        }
+
+        function emitTryStatement(node: TryStatement) {
+            const beginTry = (lbl: ir.Stmt) =>
+                rtcallMaskDirect("pxt::beginTry", [ir.ptrlit(lbl.lblName, lbl as any)])
+
+            emitBrk(node)
+
+            const lcatch = proc.mkLabel("catch")
+            lcatch.lblName = "_catch_" + getNodeId(node)
+            const lfinally = proc.mkLabel("finally")
+            lfinally.lblName = "_finally_" + getNodeId(node)
+
+            if (node.finallyBlock)
+                proc.emitExpr(beginTry(lfinally))
+            if (node.catchClause)
+                proc.emitExpr(beginTry(lcatch))
+
+            proc.stackEmpty()
+            emitBlock(node.tryBlock)
+            proc.stackEmpty()
+
+            if (node.catchClause) {
+                const skip = proc.mkLabel("catchend")
+                emitEndTry()
+                proc.emitJmp(skip)
+
+                proc.emitLbl(lcatch)
+                const decl = node.catchClause.variableDeclaration
+                if (decl) {
+                    emitVariableDeclaration(decl)
+                    const loc = lookupCell(decl)
+                    proc.emitExpr(loc.storeByRef(rtcallMaskDirect("pxt::getThrownValue", [])))
+                }
+                flushHoistedFunctionDefinitions()
+                emitBlock(node.catchClause.block)
+                proc.emitLbl(skip)
+            }
+
+            if (node.finallyBlock) {
+                emitEndTry()
+                proc.emitLbl(lfinally)
+                emitBlock(node.finallyBlock)
+                proc.emitExpr(rtcallMaskDirect("pxt::endFinally", []))
+            }
+        }
+
         function emitCatchClause(node: CatchClause) { }
         function emitDebuggerStatement(node: Node) {
             emitBrk(node)
         }
-        function emitVariableDeclaration(node: VarOrParam): ir.Cell {
-            if (node.name.kind === SK.ObjectBindingPattern) {
-                if (!node.initializer) {
-                    (node.name as ObjectBindingPattern).elements.forEach((e: BindingElement) => emitVariableDeclaration(e))
-                    return null;
+        function isLoop(node: Node) {
+            switch (node.kind) {
+                case SK.WhileStatement:
+                case SK.ForInStatement:
+                case SK.ForOfStatement:
+                case SK.ForStatement:
+                case SK.DoStatement:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+        function inLoop(node: Node) {
+            while (node) {
+                if (isLoop(node))
+                    return true
+                node = node.parent
+            }
+            return false
+        }
+
+        function emitVarOrParam(node: VarOrParam, bindingExpr: ir.Expr, bindingType: Type): ir.Cell {
+            if (node.name.kind === SK.ObjectBindingPattern || node.name.kind == SK.ArrayBindingPattern) {
+                if (!bindingExpr) {
+                    bindingExpr = node.initializer ? ir.shared(emitExpr(node.initializer)) :
+                        emitLocalLoad(node as VariableDeclaration)
+                    bindingType = node.initializer ? typeOf(node.initializer) : typeOf(node);
                 }
-                else {
-                    userError(9259, "Object destructuring with initializers is not supported")
-                }
+                (node.name as ObjectBindingPattern).elements.forEach((e: BindingElement) => emitVarOrParam(e, bindingExpr, bindingType));
+                proc.stackEmpty(); // stack empty only after all assigned
+                return null;
             }
 
-            typeCheckVar(node)
-            if (!isUsed(node)) {
+            if (!shouldEmitNow(node)) {
                 return null;
             }
-            if (isConstLiteral(node))
+
+            // skip emit of things, where access to them is emitted as literal
+            if (constantFoldDecl(node))
                 return null;
-            let loc = isGlobalVar(node) ?
-                lookupCell(node) : proc.mkLocal(node, getVarInfo(node))
+
+            let loc: ir.Cell
+
+            if (isGlobalVar(node)) {
+                emitGlobal(node)
+                loc = lookupCell(node)
+            } else {
+                loc = proc.mkLocal(node, getVarInfo(node))
+            }
+
+            markVariableDefinition(loc.info)
+
             if (loc.isByRefLocal()) {
-                proc.emitClrIfRef(loc) // we might be in a loop
                 proc.emitExpr(loc.storeDirect(ir.rtcall("pxtrt::mklocRef", [])))
             }
+            typeCheckVar(typeOf(node))
 
             if (node.kind === SK.BindingElement) {
                 emitBrk(node)
-                let rhs = bindingElementAccessExpression(node as BindingElement)
-                typeCheckSubtoSup(rhs[1], node)
-                proc.emitExpr(loc.storeByRef(rhs[0]))
-                proc.stackEmpty();
+                let [expr, tp] = bindingElementAccessExpression(node as BindingElement, bindingExpr, bindingType)
+                proc.emitExpr(loc.storeByRef(expr))
             }
             else if (node.initializer) {
                 emitBrk(node)
@@ -3648,12 +4558,12 @@ ${lbl}: .short 0xffff
                     let jrname = attrs.jres
                     if (jrname) {
                         if (jrname == "true") {
-                            jrname = getFullName(checker, node.symbol)
+                            jrname = getNodeFullName(checker, node)
                         }
                         let jr = U.lookup(opts.jres || {}, jrname)
-                        if (!jr)
+                        if (!jr) {
                             userError(9270, lf("resource '{0}' not found in any .jres file", jrname))
-                        else {
+                        } else {
                             currJres = jr
                         }
                     }
@@ -3662,47 +4572,73 @@ ${lbl}: .short 0xffff
                 proc.emitExpr(loc.storeByRef(emitExpr(node.initializer)))
                 currJres = null
                 proc.stackEmpty();
+            } else if (inLoop(node)) {
+                // the variable is declared in a loop - we need to clear it on each iteration
+                emitBrk(node)
+                proc.emitExpr(loc.storeByRef(emitLit(undefined)))
+                proc.stackEmpty();
             }
             return loc;
         }
 
-        function bindingElementAccessExpression(bindingElement: BindingElement): [ir.Expr, Type] {
+        function emitVariableDeclaration(node: VarOrParam): ir.Cell {
+            return emitVarOrParam(node, null, null)
+        }
+
+        function emitFieldAccess(node: Node, objRef: ir.Expr, objType: Type, fieldName: string): [ir.Expr, Type] {
+            const fieldSym = checker.getPropertyOfType(objType, fieldName);
+            U.assert(!!fieldSym, "field sym")
+            const myType = checker.getTypeOfSymbolAtLocation(fieldSym, node);
+            let exres: ir.Expr
+            if (isPossiblyGenericClassType(objType)) {
+                const info = getClassInfo(objType)
+                exres = ir.op(EK.FieldAccess, [objRef], fieldIndexCore(info, getFieldInfo(info, fieldName)))
+            } else {
+                exres = mkMethodCall([objRef], {
+                    ifaceIndex: getIfaceMemberId(fieldName, true),
+                    callLocationIndex: markCallLocation(node),
+                    noArgs: true
+                })
+            }
+            return [exres, myType]
+        }
+
+        function bindingElementAccessExpression(bindingElement: BindingElement, parentAccess: ir.Expr, parentType: Type): [ir.Expr, Type] {
             const target = bindingElement.parent.parent;
 
-            let parentAccess: ir.Expr;
-            let parentType: Type;
-
             if (target.kind === SK.BindingElement) {
-                const parent = bindingElementAccessExpression(target as BindingElement);
+                const parent = bindingElementAccessExpression(target as BindingElement,
+                    parentAccess, parentType);
                 parentAccess = parent[0];
                 parentType = parent[1];
             }
-            else {
-                parentType = typeOf(target);
-            }
 
-            const propertyName = (bindingElement.propertyName || bindingElement.name) as Identifier;
 
-            if (isPossiblyGenericClassType(parentType)) {
-                const info = getClassInfo(parentType)
-                parentAccess = parentAccess || emitLocalLoad(target as VariableDeclaration);
-
-                const myType = checker.getTypeOfSymbolAtLocation(checker.getPropertyOfType(parentType, propertyName.text), bindingElement);
+            if (bindingElement.parent.kind == SK.ArrayBindingPattern) {
+                const idx = (bindingElement.parent as ArrayBindingPattern).elements.indexOf(bindingElement)
+                if (bindingElement.dotDotDotToken)
+                    userError(9203, lf("spread operator not supported yet"))
+                const myType = arrayElementType(parentType, idx)
                 return [
-                    ir.op(EK.FieldAccess, [parentAccess], fieldIndexCore(info, getFieldInfo(info, propertyName.text), myType)),
+                    rtcallMaskDirect("Array_::getAt", [parentAccess, ir.numlit(idx)]),
                     myType
-                ];
+                ]
             } else {
-                throw unhandled(bindingElement, lf("bad field access"), 9247)
+                const propertyName = (bindingElement.propertyName || bindingElement.name) as Identifier;
+                return emitFieldAccess(bindingElement, parentAccess, parentType, propertyName.text)
             }
         }
 
         function emitClassDeclaration(node: ClassDeclaration) {
-            getClassInfo(null, node)
+            const info = getClassInfo(null, node)
+            if (info.isUsed && bin.usedClassInfos.indexOf(info) < 0) {
+                // U.assert(!bin.finalPass)
+                bin.usedClassInfos.push(info)
+            }
             node.members.forEach(emit)
         }
         function emitInterfaceDeclaration(node: InterfaceDeclaration) {
-            checkInterfaceDeclaration(node, classInfos)
+            checkInterfaceDeclaration(bin, node)
             let attrs = parseComments(node)
             if (attrs.autoCreate)
                 autoCreateFunctions[attrs.autoCreate] = true
@@ -3763,6 +4699,32 @@ ${lbl}: .short 0xffff
             throw new Error("expecting expression")
         }
 
+        function emitTopLevel(node: Declaration): void {
+            const pinfo = pxtInfo(node)
+            if (pinfo.usedNodes) {
+                needsUsingInfo = false
+                for (let node of U.values(pinfo.usedNodes))
+                    markUsed(node)
+                for (let fn of pinfo.usedActions)
+                    fn(bin)
+                needsUsingInfo = true
+            } else if (isGlobalVar(node) || isClassDeclaration(node)) {
+                needsUsingInfo = false
+                currUsingContext = pinfo
+                currUsingContext.usedNodes = null
+                currUsingContext.usedActions = null
+                if (isGlobalVar(node) && !constantFoldDecl(node)) emitGlobal(node)
+                emit(node)
+                needsUsingInfo = true
+            } else {
+                currUsingContext = pinfo
+                currUsingContext.usedNodes = {}
+                currUsingContext.usedActions = []
+                emit(node)
+                currUsingContext = null
+            }
+        }
+
         function emit(node: Node): void {
             catchErrors(node, emitNodeCore)
         }
@@ -3792,6 +4754,7 @@ ${lbl}: .short 0xffff
                     return emitBlock(<Block>node);
                 case SK.VariableDeclaration:
                     emitVariableDeclaration(<VariableDeclaration>node);
+                    flushHoistedFunctionDefinitions()
                     return
                 case SK.IfStatement:
                     return emitIfStatement(<IfStatement>node);
@@ -3820,6 +4783,10 @@ ${lbl}: .short 0xffff
                 case SK.TypeAliasDeclaration:
                     // skip
                     return
+                case SyntaxKind.TryStatement:
+                    return emitTryStatement(<TryStatement>node);
+                case SyntaxKind.ThrowStatement:
+                    return emitThrowStatement(<ThrowStatement>node);
                 case SK.DebuggerStatement:
                     return emitDebuggerStatement(node);
                 case SK.GetAccessor:
@@ -3830,6 +4797,8 @@ ${lbl}: .short 0xffff
                     return emitImportEqualsDeclaration(<ImportEqualsDeclaration>node);
                 case SK.EmptyStatement:
                     return;
+                case SK.SemicolonClassElement:
+                    return;
                 default:
                     unhandled(node);
             }
@@ -3838,7 +4807,7 @@ ${lbl}: .short 0xffff
         function emitExprCore(node: Node): ir.Expr {
             switch (node.kind) {
                 case SK.NullKeyword:
-                    let v = (node as any).valueOverride;
+                    let v = pxtInfo(node).valueOverride;
                     if (v) return v
                     return emitLit(null);
                 case SK.TrueKeyword:
@@ -3891,6 +4860,10 @@ ${lbl}: .short 0xffff
                     return emitTemplateExpression(<TemplateExpression>node);
                 case SK.ObjectLiteralExpression:
                     return emitObjectLiteral(<ObjectLiteralExpression>node);
+                case SK.TypeOfExpression:
+                    return emitTypeOfExpression(<TypeOfExpression>node);
+                case SyntaxKind.DeleteExpression:
+                    return emitDeleteExpression(<DeleteExpression>node);
                 default:
                     unhandled(node);
                     return null
@@ -3924,10 +4897,6 @@ ${lbl}: .short 0xffff
                     return emitComputedPropertyName(<ComputedPropertyName>node);
                 case SyntaxKind.TaggedTemplateExpression:
                     return emitTaggedTemplateExpression(<TaggedTemplateExpression>node);
-                case SyntaxKind.DeleteExpression:
-                    return emitDeleteExpression(<DeleteExpression>node);
-                case SyntaxKind.TypeOfExpression:
-                    return emitTypeOfExpression(<TypeOfExpression>node);
                 case SyntaxKind.VoidExpression:
                     return emitVoidExpression(<VoidExpression>node);
                 case SyntaxKind.AwaitExpression:
@@ -3948,10 +4917,6 @@ ${lbl}: .short 0xffff
                 case SyntaxKind.CaseClause:
                 case SyntaxKind.DefaultClause:
                     return emitCaseOrDefaultClause(<CaseOrDefaultClause>node);
-                case SyntaxKind.ThrowStatement:
-                    return emitThrowStatement(<ThrowStatement>node);
-                case SyntaxKind.TryStatement:
-                    return emitTryStatement(<TryStatement>node);
                 case SyntaxKind.CatchClause:
                     return emitCatchClause(<CatchClause>node);
                 case SyntaxKind.ClassExpression:
@@ -3967,10 +4932,20 @@ ${lbl}: .short 0xffff
                 */
             }
         }
+
+        function markCallLocation(node: ts.Node) {
+            return res.procCallLocations.push(pxtc.nodeLocationInfo(node)) - 1;
+        }
     }
 
     function doubleToBits(v: number) {
         let a = new Float64Array(1)
+        a[0] = v
+        return U.toHex(new Uint8Array(a.buffer))
+    }
+
+    function floatToBits(v: number) {
+        let a = new Float32Array(1)
         a[0] = v
         return U.toHex(new Uint8Array(a.buffer))
     }
@@ -3983,7 +4958,7 @@ ${lbl}: .short 0xffff
     }
 
 
-    function isStringType(t: Type) {
+    export function isStringType(t: Type) {
         return checkPrimitiveType(t, TypeFlags.String | TypeFlags.StringLiteral, HasLiteralType.String);
     }
 
@@ -4007,18 +4982,26 @@ ${lbl}: .short 0xffff
         procs: ir.Procedure[] = [];
         globals: ir.Cell[] = [];
         globalsWords: number;
+        nonPtrGlobals: number;
         finalPass = false;
         target: CompileTarget;
         writeFile = (fn: string, cont: string) => { };
         res: CompileResult;
         options: CompileOptions;
         usedClassInfos: ClassInfo[] = [];
-        sourceHash = "";
         checksumBlock: number[];
         numStmts = 1;
         commSize = 0;
         packedSource: string;
+        itEntries = 0;
+        itFullEntries = 0;
+        numMethods = 0;
+        numVirtMethods = 0;
+        usedChars = new Uint32Array(0x10000 / 32);
 
+        explicitlyUsedIfaceMembers: pxt.Map<boolean> = {};
+        ifaceMemberMap: pxt.Map<number> = {};
+        ifaceMembers: string[];
         strings: pxt.Map<string> = {};
         hexlits: pxt.Map<string> = {};
         doubles: pxt.Map<string> = {};
@@ -4035,11 +5018,36 @@ ${lbl}: .short 0xffff
             this.numStmts = 0
         }
 
+        getTitle() {
+            const title = this.options.name || U.lf("Untitled")
+            if (title.length >= 90)
+                return title.slice(0, 87) + "..."
+            else
+                return title
+        }
+
         addProc(proc: ir.Procedure) {
             assert(!this.finalPass, "!this.finalPass")
             this.procs.push(proc)
             proc.seqNo = this.procs.length
             //proc.binary = this
+        }
+
+        recordHelper(usingCtx: PxtNode, id: string, gen: (bin: Binary) => string) {
+            const act = (bin: Binary) => {
+                if (!bin.codeHelpers[id])
+                    bin.codeHelpers[id] = gen(bin)
+            }
+            act(this)
+            this.recordAction(usingCtx, act)
+        }
+
+        recordAction<T>(usingCtx: PxtNode, f: (bin: Binary) => T) {
+            if (usingCtx) {
+                if (usingCtx.usedActions)
+                    usingCtx.usedActions.push(f as EmitAction)
+            } else
+                U.oops("no using ctx!")
         }
 
         private emitLabelled(v: string, hash: pxt.Map<string>, lblpref: string) {
@@ -4052,19 +5060,57 @@ ${lbl}: .short 0xffff
         }
 
         emitDouble(v: number): string {
-            return this.emitLabelled(doubleToBits(v), this.doubles, "_dbl")
+            return this.emitLabelled(target.switches.numFloat ? floatToBits(v) : doubleToBits(v), this.doubles, "_dbl")
         }
 
         emitString(s: string): string {
+            if (!this.finalPass)
+                for (let i = 0; i < s.length; ++i) {
+                    const ch = s.charCodeAt(i)
+                    if (ch >= 128)
+                        this.usedChars[ch >> 5] |= 1 << (ch & 31)
+                }
             return this.emitLabelled(s, this.strings, "_str")
         }
 
         emitHexLiteral(s: string): string {
             return this.emitLabelled(s, this.hexlits, "_hexlit")
         }
+
+        setPerfCounters(systemPerfCounters: string[]) {
+            if (!target.switches.profile)
+                return []
+            const perfCounters = systemPerfCounters.slice()
+            this.procs.forEach(p => {
+                if (p.perfCounterName) {
+                    U.assert(target.switches.profile)
+                    p.perfCounterNo = perfCounters.length
+                    perfCounters.push(p.perfCounterName)
+                }
+            })
+            return perfCounters
+        }
     }
 
-    function isNumberLikeType(type: Type) {
-        return !!(type.flags & (TypeFlags.NumberLike | TypeFlags.EnumLike | TypeFlags.BooleanLike))
+    export function isCtorField(p: ParameterDeclaration) {
+        if (!p.modifiers)
+            return false
+        if (p.parent.kind != SK.Constructor)
+            return false
+        for (let m of p.modifiers) {
+            if (m.kind == SK.PrivateKeyword ||
+                m.kind == SK.PublicKeyword ||
+                m.kind == SK.ProtectedKeyword)
+                return true
+        }
+        return false
+    }
+
+    function isNumberLikeType(type: Type): boolean {
+        if (type.flags & TypeFlags.Union) {
+            return (type as UnionType).types.every(t => isNumberLikeType(t));
+        } else {
+            return !!(type.flags & (TypeFlags.NumberLike | TypeFlags.EnumLike | TypeFlags.BooleanLike));
+        }
     }
 }

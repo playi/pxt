@@ -5,7 +5,7 @@ namespace pxtblockly {
     export class FieldProcedure extends Blockly.FieldDropdown {
 
         constructor(funcname: string, opt_validator?: Function) {
-            super(null, opt_validator);
+            super([["Temp", "Temp"]], opt_validator);
 
             this.setValue(funcname || '');
         }
@@ -28,19 +28,6 @@ namespace pxtblockly {
             super.setSourceBlock.call(this, block);
         };
 
-        getValue() {
-            return this.getText();
-        };
-
-        setValue(newValue: string) {
-            if (this.sourceBlock_ && Blockly.Events.isEnabled()) {
-                Blockly.Events.fire(new Blockly.Events.Change(
-                    this.sourceBlock_, 'field', this.name, this.value_, newValue));
-            }
-            this.value_ = newValue;
-            this.setText(newValue);
-        };
-
         /**
          * Return a sorted list of variable names for procedure dropdown menus.
          * Include a special option at the end for creating a new function name.
@@ -50,7 +37,7 @@ namespace pxtblockly {
         public dropdownCreate() {
             let functionList: string[] = [];
             if (this.sourceBlock_ && this.sourceBlock_.workspace) {
-                let blocks = this.sourceBlock_.workspace.getAllBlocks();
+                let blocks = this.sourceBlock_.workspace.getAllBlocks(false);
                 // Iterate through every block and check the name.
                 for (let i = 0; i < blocks.length; i++) {
                     if ((blocks[i] as any).getProcedureDef) {
@@ -60,7 +47,7 @@ namespace pxtblockly {
                 }
             }
             // Ensure that the currently selected variable is an option.
-            let name = this.getText();
+            let name = this.getValue();
             if (name && functionList.indexOf(name) == -1) {
                 functionList.push(name);
             }
@@ -83,10 +70,6 @@ namespace pxtblockly {
 
         onItemSelected(menu: any, menuItem: any) {
             let itemText = menuItem.getValue();
-            if (this.sourceBlock_) {
-                // Call any validation function, and allow it to override.
-                itemText = this.callValidator(itemText);
-            }
             if (itemText !== null) {
                 this.setValue(itemText);
             }

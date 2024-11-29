@@ -1,4 +1,4 @@
-/* tslint:disable */
+/* eslint-disable */
 declare namespace Windows.Foundation.Projections {
     class Promise<T> {
         cancel(): void;

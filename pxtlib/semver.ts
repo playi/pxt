@@ -51,14 +51,24 @@ namespace pxt.semver {
         }
     }
 
-    export function parse(v: string): Version {
-        let r = tryParse(v)
+    export function parse(v: string, defaultVersion?: string): Version {
+        let r = tryParse(v) || tryParse(defaultVersion)
         if (!r)
             U.userError(U.lf("'{0}' doesn't look like a semantic version number", v))
         return r
     }
 
     export function tryParse(v: string): Version {
+        if (!v) return null
+        if ("*" === v) {
+            return {
+                major: Number.MAX_SAFE_INTEGER,
+                minor: Number.MAX_SAFE_INTEGER,
+                patch: Number.MAX_SAFE_INTEGER,
+                pre: [],
+                build: []
+            };
+        }
         if (/^v\d/i.test(v)) v = v.slice(1)
         let m = /^(\d+)\.(\d+)\.(\d+)(-([0-9a-zA-Z\-\.]+))?(\+([0-9a-zA-Z\-\.]+))?$/.exec(v)
         if (m)

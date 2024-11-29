@@ -1,50 +1,103 @@
+// TODO: enable reference so we don't need to use: (pxt as any).py
+//      the issue is that this creates a circular dependency. This
+//      is easily handled if we used proper TS modules.
+//// <reference path="../../built/pxtpy.d.ts"/>
+
 namespace ts.pxtc {
 
     export const placeholderChar = "◊";
-    export const defaultImgLit = `
-. . . . .
-. . . . .
-. . # . .
-. . . . .
-. . . . .
-`
 
-    function renderDefaultVal(apis: pxtc.ApisInfo, p: pxtc.ParameterDesc, imgLit: boolean, cursorMarker: string): string {
-        if (p.initializer) return p.initializer
-        if (p.default) return p.default
-        if (p.type == "number") return "0"
-        if (p.type == "boolean") return "false"
-        else if (p.type == "string") {
-            if (imgLit) {
-                imgLit = false
-                return "`" + defaultImgLit + cursorMarker + "`";
+    export interface FunOverride {
+        n: string;
+        t: any;
+        scale?: number;
+        snippet?: string;
+    }
+
+    export const ts2PyFunNameMap: pxt.Map<FunOverride> = {
+        "Math.trunc": { n: "int", t: ts.SyntaxKind.NumberKeyword, snippet: "int(0)" },
+        "Math.min": { n: "min", t: ts.SyntaxKind.NumberKeyword, snippet: "min(0, 0)" },
+        "Math.max": { n: "max", t: ts.SyntaxKind.NumberKeyword, snippet: "max(0, 0)" },
+        "Math.abs": { n: "abs", t: ts.SyntaxKind.NumberKeyword, snippet: "abs(0)" },
+        "console.log": { n: "print", t: ts.SyntaxKind.VoidKeyword, snippet: 'print(":)")' },
+        ".length": { n: "len", t: ts.SyntaxKind.NumberKeyword },
+        ".toLowerCase()": { n: "string.lower", t: ts.SyntaxKind.StringKeyword },
+        ".toUpperCase()": { n: "string.upper", t: ts.SyntaxKind.StringKeyword },
+        ".charCodeAt(0)": { n: "ord", t: ts.SyntaxKind.NumberKeyword },
+        "pins.createBuffer": { n: "bytearray", t: ts.SyntaxKind.Unknown },
+        "pins.createBufferFromArray": { n: "bytes", t: ts.SyntaxKind.Unknown },
+        "control.createBuffer": { n: "bytearray", t: ts.SyntaxKind.Unknown },
+        "control.createBufferFromArray": { n: "bytes", t: ts.SyntaxKind.Unknown },
+        "!!": { n: "bool", t: ts.SyntaxKind.BooleanKeyword },
+        "Array.indexOf": { n: "Array.index", t: ts.SyntaxKind.Unknown },
+        "Array.push": { n: "Array.append", t: ts.SyntaxKind.Unknown },
+        "parseInt": { n: "int", t: ts.SyntaxKind.NumberKeyword, snippet: 'int("0")' },
+        "_py.range": { n: "range", t: ts.SyntaxKind.Unknown, snippet: 'range(4)' }
+    }
+
+
+    export function emitPyTypeFromTypeNode(s: ts.TypeNode): string {
+        if (!s || !s.kind) return null;
+        switch (s.kind) {
+            case ts.SyntaxKind.StringKeyword:
+                return "str"
+            case ts.SyntaxKind.NumberKeyword:
+                // Note, "real" python expects this to be "float" or "int", we're intentionally diverging here
+                return "number"
+            case ts.SyntaxKind.BooleanKeyword:
+                return "bool"
+            case ts.SyntaxKind.VoidKeyword:
+                return "None"
+            case ts.SyntaxKind.FunctionType:
+                return emitFuncPyType(s as ts.FunctionTypeNode)
+            case ts.SyntaxKind.ArrayType: {
+                let t = s as ts.ArrayTypeNode
+                let elType = emitPyTypeFromTypeNode(t.elementType)
+                return `List[${elType}]`
             }
-            return `"${cursorMarker}"`
+            case ts.SyntaxKind.TypeReference: {
+                let t = s as ts.TypeReferenceNode
+                let nm = t.typeName && t.typeName.getText ? t.typeName.getText() : "";
+                return nm
+            }
+            case ts.SyntaxKind.AnyKeyword:
+                return "any"
+            default:
+                pxt.tickEvent("depython.todo.tstypenodetopytype", { kind: s.kind })
+                return ``
         }
-        let si = apis ? Util.lookup(apis.byQName, p.type) : undefined;
-        if (si && si.kind == SymbolKind.Enum) {
-            let en = Util.values(apis.byQName).filter(e => e.namespace == p.type)[0]
-            if (en)
-                return en.namespace + "." + en.name;
-        }
-        let m = /^\((.*)\) => (.*)$/.exec(p.type)
-        if (m)
-            return `(${m[1]}) => {\n    ${cursorMarker}\n}`
-        return placeholderChar;
+        // // TODO translate type
+        // return s.getText()
     }
 
-    export function renderCall(apiInfo: pxtc.ApisInfo, si: SymbolInfo): string {
-        return `${si.namespace}.${si.name}${renderParameters(apiInfo, si)};`;
+    export function emitPyTypeFromTsType(s: ts.Type): string {
+        if (!s || !s.flags) return null;
+        switch (s.flags) {
+            case ts.TypeFlags.String:
+                return "str"
+            case ts.TypeFlags.Number:
+                // Note: "real" python expects this to be "float" or "int", we're intentionally diverging here
+                return "number"
+            case ts.TypeFlags.Boolean:
+                return "bool"
+            case ts.TypeFlags.Void:
+                return "None"
+            case ts.TypeFlags.Any:
+                return "any"
+            default:
+                pxt.tickEvent("depython.todo.tstypetopytype", { kind: s.flags })
+                return ``
+        }
     }
 
-    export function renderParameters(apis: pxtc.ApisInfo, si: SymbolInfo, cursorMarker: string = ''): string {
-        if (si.parameters) {
-            let imgLit = !!si.attributes.imageLiteral
-            return "(" + si.parameters
-                .filter(p => !p.initializer)
-                .map(p => renderDefaultVal(apis, p, imgLit, cursorMarker)).join(", ") + ")"
-        }
-        return '';
+    function emitFuncPyType(s: ts.FunctionTypeNode): string {
+        let returnType = emitPyTypeFromTypeNode(s.type)
+        let params = s.parameters
+            .map(p => p.type) // python type syntax doesn't allow names
+            .map(emitPyTypeFromTypeNode)
+
+        // "Real" python expects this to be "Callable[[arg1, arg2], ret]", we're intentionally changing to "(arg1, arg2) -> ret"
+        return `(${params.join(", ")}) -> ${returnType}`
     }
 
     function getSymbolKind(node: Node) {
@@ -57,6 +110,7 @@ namespace ts.pxtc {
             case SK.GetAccessor:
             case SK.SetAccessor:
                 return SymbolKind.Property;
+            case SK.Constructor:
             case SK.FunctionDeclaration:
                 return SymbolKind.Function;
             case SK.VariableDeclaration:
@@ -76,49 +130,10 @@ namespace ts.pxtc {
         }
     }
 
-    function isExported(decl: Declaration) {
-        if (decl.modifiers && decl.modifiers.some(m => m.kind == SK.PrivateKeyword || m.kind == SK.ProtectedKeyword))
-            return false;
 
-        let symbol = decl.symbol
-
-        if (!symbol)
-            return false;
-
-        while (true) {
-            let parSymbol: Symbol = (symbol as any).parent
-            if (parSymbol) symbol = parSymbol
-            else break
-        }
-
-        let topDecl = symbol.valueDeclaration || symbol.declarations[0]
-
-        if (topDecl.kind == SK.VariableDeclaration)
-            topDecl = topDecl.parent.parent as Declaration
-
-        if (topDecl.parent && topDecl.parent.kind == SK.SourceFile)
-            return true;
-        else
-            return false;
-    }
-
-    function isInKsModule(decl: Node): boolean {
-        while (decl) {
-            if (decl.kind == SK.SourceFile) {
-                let src = decl as SourceFile
-                return src.fileName.indexOf("pxt_modules") >= 0
-            }
-            decl = decl.parent
-        }
-        return false
-    }
-
-    function isReadonly(decl: Declaration) {
-        return decl.modifiers && decl.modifiers.some(m => m.kind == SK.ReadonlyKeyword)
-    }
 
     function createSymbolInfo(typechecker: TypeChecker, qName: string, stmt: Node): SymbolInfo {
-        function typeOf(tn: TypeNode, n: Node, stripParams = false) {
+        function typeOf(tn: TypeNode, n: Node, stripParams = false): string {
             let t = typechecker.getTypeAtLocation(n)
             if (!t) return "None"
             if (stripParams) {
@@ -128,8 +143,13 @@ namespace ts.pxtc {
 
             // TypeScript 2.0.0+ will assign constant variables numeric literal types which breaks the
             // type checking we do in the blocks
-            if (!isNaN(Number(readableName))) {
+            // This can be a number literal '7' or a union type of them '0 | 1 | 2'
+            if (/^\d/.test(readableName)) {
                 return "number";
+            }
+
+            if (readableName == "this") {
+                return getFullName(typechecker, t.symbol);
             }
 
             return readableName;
@@ -147,6 +167,7 @@ namespace ts.pxtc {
             let hasParams = kind == SymbolKind.Function || kind == SymbolKind.Method
 
             let pkg: string = null
+            let pkgs: string[] = null
 
             let src = getSourceFileOfNode(stmt)
             if (src) {
@@ -176,12 +197,18 @@ namespace ts.pxtc {
 
             let r: SymbolInfo = {
                 kind,
+                qName,
                 namespace: m ? m[1] : "",
                 name: m ? m[2] : qName,
+                fileName: stmt.getSourceFile().fileName,
                 attributes,
                 pkg,
+                pkgs,
                 extendsTypes,
-                retType: kind == SymbolKind.Module ? "" : typeOf(decl.type, decl, hasParams),
+                retType:
+                    stmt.kind == SyntaxKind.Constructor ? "void" :
+                        kind == SymbolKind.Module ? "" :
+                            typeOf(decl.type, decl, hasParams),
                 parameters: !hasParams ? null : Util.toArray(decl.parameters).map((p, i) => {
                     let n = getName(p)
                     let desc = attributes.paramHelp[n] || ""
@@ -203,7 +230,7 @@ namespace ts.pxtc {
                             parameters = callbackParameters.map((sym, i) => {
                                 return {
                                     name: sym.getName(),
-                                    type: typechecker.typeToString(typechecker.getTypeOfSymbolAtLocation(sym, p))
+                                    type: typechecker.typeToString(typechecker.getTypeOfSymbolAtLocation(sym, p), undefined, TypeFormatFlags.UseFullyQualifiedType)
                                 };
                             });
                         }
@@ -224,11 +251,18 @@ namespace ts.pxtc {
                     }
                     if (minVal) options['min'] = { value: minVal };
                     if (maxVal) options['max'] = { value: maxVal };
+                    const pyTypeString = (p.type && emitPyTypeFromTypeNode(p.type))
+                        || (paramType && emitPyTypeFromTsType(paramType))
+                        || "unknown";
+                    const initializer = p.initializer ? p.initializer.getText() :
+                        getExplicitDefault(attributes, n) ||
+                        (p.questionToken ? "undefined" : undefined)
                     return {
                         name: n,
                         description: desc,
                         type: typeOf(p.type, p),
-                        initializer: p.initializer ? p.initializer.getText() : attributes.paramDefl[n],
+                        pyTypeString,
+                        initializer,
                         default: attributes.paramDefl[n],
                         properties: props,
                         handlerParameters: parameters,
@@ -236,7 +270,26 @@ namespace ts.pxtc {
                         isEnum
                     }
                 }),
-                snippet: service.getSnippet(decl, attributes)
+                snippet: ts.isFunctionLike(stmt) ? null : undefined
+            }
+
+            switch (r.kind) {
+                case SymbolKind.EnumMember:
+                    r.pyName = U.snakify(r.name).toUpperCase()
+                    break
+                case SymbolKind.Variable:
+                case SymbolKind.Method:
+                case SymbolKind.Property:
+                case SymbolKind.Function:
+                    r.pyName = U.snakify(r.name)
+                    break
+                case SymbolKind.Enum:
+                case SymbolKind.Class:
+                case SymbolKind.Interface:
+                case SymbolKind.Module:
+                default:
+                    r.pyName = r.name
+                    break
             }
 
             if (stmt.kind === SK.GetAccessor ||
@@ -253,6 +306,7 @@ namespace ts.pxtc {
         package?: boolean;
         locs?: boolean;
         docs?: boolean;
+        pxtsnippet?: pxt.SnippetConfig[]; // extract localizable strings from pxtsnippets.json files
     }
 
     export function genDocs(pkg: string, apiInfo: ApisInfo, options: GenDocsOptions = {}): pxt.Map<string> {
@@ -261,8 +315,10 @@ namespace ts.pxtc {
 
         const files: pxt.Map<string> = {};
         const infos = Util.values(apiInfo.byQName);
-        const enumMembers = infos.filter(si => si.kind == SymbolKind.EnumMember).sort(compareSymbol);
+        const enumMembers = infos.filter(si => si.kind == SymbolKind.EnumMember)
+            .sort(compareSymbols);
 
+        const snippetStrings: pxt.Map<string> = {};
         const locStrings: pxt.Map<string> = {};
         const jsdocStrings: pxt.Map<string> = {};
         const writeLoc = (si: SymbolInfo) => {
@@ -313,34 +369,81 @@ namespace ts.pxtc {
             });
         mapLocs(locStrings, "");
         mapLocs(jsdocStrings, "-jsdoc");
+        // Localize pxtsnippets.json files
+        if (options.pxtsnippet) {
+            options.pxtsnippet.forEach(snippet => localizeSnippet(snippet, snippetStrings));
+            mapLocs(snippetStrings, "-snippet");
+        }
+
         return files;
-
-        function hasBlock(sym: SymbolInfo): boolean {
-            return !!sym.attributes.block && !!sym.attributes.blockId;
-        }
-
-        function capitalize(name: string) {
-            return name[0].toUpperCase() + name.slice(1);
-        }
-
-        function compareSymbol(l: SymbolInfo, r: SymbolInfo): number {
-            let c = -(hasBlock(l) ? 1 : -1) + (hasBlock(r) ? 1 : -1);
-            if (c) return c;
-            c = -(l.attributes.weight || 50) + (r.attributes.weight || 50);
-            if (c) return c;
-            return U.strcmp(l.name, r.name);
-        }
     }
 
-    export function getApiInfo(opts: CompileOptions, program: Program, legacyOnly = false): ApisInfo {
-        let res: ApisInfo = {
-            byQName: {},
-            jres: opts.jres
+    function localizeSnippet(snippet: pxt.SnippetConfig, locs: pxt.Map<string>) {
+        const localizableQuestionProperties = ['label', 'title', 'hint', 'errorMessage']; // TODO(jb) provide this elsewhere
+        locs[snippet.label] = snippet.label;
+        snippet.questions.forEach((question: pxt.Map<any>) => {
+            localizableQuestionProperties.forEach((prop) => {
+                if (question[prop]) {
+                    locs[question[prop]] = question[prop];
+                }
+            });
+        })
+    }
+
+    export function hasBlock(sym: SymbolInfo): boolean {
+        return !!sym.attributes.block && !!sym.attributes.blockId;
+    }
+
+    let symbolKindWeight: pxt.Map<number>;
+    export function compareSymbols(l: SymbolInfo, r: SymbolInfo): number {
+        function cmpr(toValue: (s: SymbolInfo) => number) {
+            const c = -toValue(l) + toValue(r)
+            return c
         }
 
-        let typechecker = program.getTypeChecker()
+        // favor symbols with blocks
+        let c = cmpr(s => hasBlock(s) ? 1 : -1);
+        if (c) return c;
 
-        let collectDecls = (stmt: Node) => {
+        // favor top-level symbols
+        c = cmpr(s => !s.namespace ? 1 : -1)
+        if (c) return c;
+
+        // sort by symbol kind
+        if (!symbolKindWeight) {
+            symbolKindWeight = {};
+            symbolKindWeight[SymbolKind.Variable] = 100;
+            symbolKindWeight[SymbolKind.Module] = 101;
+            symbolKindWeight[SymbolKind.Function] = 99;
+            symbolKindWeight[SymbolKind.Property] = 98;
+            symbolKindWeight[SymbolKind.Method] = 97;
+            symbolKindWeight[SymbolKind.Class] = 89;
+            symbolKindWeight[SymbolKind.Enum] = 81;
+            symbolKindWeight[SymbolKind.EnumMember] = 80;
+        }
+        c = cmpr(s => symbolKindWeight[s.kind] || 0)
+        if (c) return c;
+
+        // check for a weight attribute
+        c = cmpr(s => s.attributes.weight || 50)
+        if (c) return c;
+
+        return U.strcmp(l.name, r.name);
+    }
+
+
+    export function getApiInfo(program: Program, jres?: pxt.Map<pxt.JRes>, legacyOnly = false): ApisInfo {
+        return internalGetApiInfo(program, jres, legacyOnly).apis;
+    }
+
+    export function internalGetApiInfo(program: Program, jres?: pxt.Map<pxt.JRes>, legacyOnly = false) {
+        const res: ApisInfo = {
+            byQName: {},
+            jres: jres
+        }
+        const qNameToNode: pxt.Map<Declaration> = {};
+        const typechecker = program.getTypeChecker()
+        const collectDecls = (stmt: Node) => {
             if (stmt.kind == SK.VariableStatement) {
                 let vs = stmt as VariableStatement
                 vs.declarationList.declarations.forEach(collectDecls)
@@ -355,22 +458,56 @@ namespace ts.pxtc {
                 let qName = getFullName(typechecker, stmt.symbol)
                 if (stmt.kind == SK.SetAccessor)
                     qName += "@set" // otherwise we get a clash with the getter
+                qNameToNode[qName] = stmt as Declaration;
                 let si = createSymbolInfo(typechecker, qName, stmt)
                 if (si) {
                     let existing = U.lookup(res.byQName, qName)
                     if (existing) {
-                        si.attributes = parseCommentString(
-                            existing.attributes._source + "\n" +
-                            si.attributes._source)
-                        if (existing.extendsTypes) {
-                            si.extendsTypes = si.extendsTypes || []
-                            existing.extendsTypes.forEach(t => {
-                                if (si.extendsTypes.indexOf(t) === -1) {
-                                    si.extendsTypes.push(t);
+                        // we can have a function and an interface of the same name
+                        if (existing.kind == SymbolKind.Interface && si.kind != SymbolKind.Interface) {
+                            // save existing entry
+                            res.byQName[qName + "@type"] = existing
+                        } else if (existing.kind != SymbolKind.Interface && si.kind == SymbolKind.Interface) {
+                            res.byQName[qName + "@type"] = si
+                            si = existing
+                        } else {
+                            const foundSrc = existing.attributes._source?.trim();
+                            const newSrc = si.attributes._source?.trim();
+                            let source = foundSrc + "\n" + newSrc;
+                            // Avoid duplicating source if possible
+                            if (!!foundSrc && newSrc?.indexOf(foundSrc) >= 0) {
+                                source = newSrc;
+                            } else if (!!newSrc && foundSrc?.indexOf(newSrc) >= 0) {
+                                source = foundSrc;
+                            }
+                            si.attributes = parseCommentString(source);
+
+                            // Check if the colliding symbols are namespace definitions. The same namespace can be
+                            // defined in different packages/extensions, so we want to keep track of that information.
+                            // That way, we can make sure each cached extension has a copy of the namespace
+                            if (existing.kind === SymbolKind.Module) {
+                                // Reference the existing array of packages where this namespace has been defined
+                                si.pkgs = existing.pkgs || []
+                                if (existing.pkg !== si.pkg) {
+                                    if (!si.pkgs.find(element => element === existing.pkg)) {
+                                        si.pkgs.push(existing.pkg)
+                                    }
                                 }
-                            })
+                            }
+                            if (existing.extendsTypes) {
+                                si.extendsTypes = si.extendsTypes || []
+                                existing.extendsTypes.forEach(t => {
+                                    if (si.extendsTypes.indexOf(t) === -1) {
+                                        si.extendsTypes.push(t);
+                                    }
+                                })
+                            }
                         }
                     }
+                    if (stmt.parent &&
+                        (stmt.parent.kind == SK.ClassDeclaration || stmt.parent.kind == SK.InterfaceDeclaration) &&
+                        !isStatic(stmt as Declaration))
+                        si.isInstance = true
                     res.byQName[qName] = si
                 }
             }
@@ -411,12 +548,33 @@ namespace ts.pxtc {
             let jrname = si.attributes.jres
             if (jrname) {
                 if (jrname == "true") jrname = qName
-                let jr = U.lookup(opts.jres || {}, jrname)
+                let jr = U.lookup(jres || {}, jrname)
                 if (jr && jr.icon && !si.attributes.iconURL) {
                     si.attributes.iconURL = jr.icon
                 }
                 if (jr && jr.data && !si.attributes.jresURL) {
                     si.attributes.jresURL = "data:" + jr.mimeType + ";base64," + jr.data
+                }
+            }
+
+            if (si.pyName) {
+                let override = U.lookup(ts2PyFunNameMap, si.qName);
+                if (override && override.n) {
+                    si.pyQName = override.n;
+                    si.pySnippet = override.snippet;
+                    si.pySnippetName = override.n;
+                    si.pySnippetWithMarkers = undefined;
+                } else if (si.namespace) {
+                    let par = res.byQName[si.namespace]
+                    if (par) {
+                        si.pyQName = par.pyQName + "." + si.pyName
+                    } else {
+                        // shouldn't happen
+                        pxt.log("namespace missing: " + si.namespace)
+                        si.pyQName = si.namespace + "." + si.pyName
+                    }
+                } else {
+                    si.pyQName = si.pyName
                 }
             }
         }
@@ -445,54 +603,32 @@ namespace ts.pxtc {
             delete res.byQName["Array.map"]
         }
 
-        return res
+        return {
+            apis: res,
+            decls: qNameToNode
+        }
     }
 
     export function getFullName(typechecker: TypeChecker, symbol: Symbol): string {
+        if ((symbol as any).isBogusSymbol)
+            return symbol.name
         return typechecker.getFullyQualifiedName(symbol);
-    }
-
-    export function fillCompletionEntries(program: Program, symbols: Symbol[], r: CompletionInfo, apiInfo: ApisInfo) {
-        let typechecker = program.getTypeChecker()
-
-        for (let s of symbols) {
-            let qName = getFullName(typechecker, s)
-
-            if (!r.isMemberCompletion && Util.lookup(apiInfo.byQName, qName))
-                continue; // global symbol
-
-            if (Util.lookup(r.entries, qName))
-                continue;
-
-            let decl = s.valueDeclaration || (s.declarations || [])[0]
-            if (!decl) continue;
-
-            let si = createSymbolInfo(typechecker, qName, decl)
-            if (!si) continue;
-
-            si.isContextual = true;
-
-            //let tmp = ts.getLocalSymbolForExportDefault(s)
-            //let name = typechecker.symbolToString(tmp || s)
-
-            r.entries[qName] = si;
-        }
     }
 }
 
-
 namespace ts.pxtc.service {
+
     let emptyOptions: CompileOptions = {
         fileSystem: {},
         sourceFiles: [],
-        target: { isNative: false, hasHex: false },
-        hexinfo: null
+        target: { isNative: false, hasHex: false, switches: {} }
     }
 
     class Host implements LanguageServiceHost {
         opts = emptyOptions;
         fileVersions: pxt.Map<number> = {};
         projectVer = 0;
+        pxtModulesOK: string = null;
 
         getProjectVersion() {
             return this.projectVer + ""
@@ -506,13 +642,24 @@ namespace ts.pxtc.service {
             }
         }
 
+        reset() {
+            this.setOpts(emptyOptions)
+            this.pxtModulesOK = null
+        }
+
         setOpts(o: CompileOptions) {
             Util.iterMap(o.fileSystem, (fn, v) => {
                 if (this.opts.fileSystem[fn] != v) {
                     this.fileVersions[fn] = (this.fileVersions[fn] || 0) + 1
                 }
-            })
-            this.opts = o
+            });
+            // shallow copy, but deep copy the file system
+            this.opts = {
+                ...o,
+                fileSystem: {
+                    ...o.fileSystem,
+                },
+            }
             this.projectVer++
         }
 
@@ -530,7 +677,7 @@ namespace ts.pxtc.service {
 
         getScriptSnapshot(fileName: string): IScriptSnapshot {
             let f = this.opts.fileSystem[fileName]
-            if (f)
+            if (f != null)
                 return ScriptSnapshot.fromString(f)
             else
                 return null
@@ -548,15 +695,29 @@ namespace ts.pxtc.service {
         // directoryExists?(directoryName: string): boolean;
     }
 
-    let service: LanguageService;
-    let host: Host;
-    let lastApiInfo: ApisInfo;
-    let lastBlocksInfo: BlocksInfo;
-    let lastLocBlocksInfo: BlocksInfo;
+    interface CachedApisInfo {
+        apis: ApisInfo;
+        decls: pxt.Map<Declaration>;
+    }
+
+    export interface CompletionSymbol {
+        symbol: SymbolInfo;
+        weight: number;
+    }
+
+    // compiler service context
+    export let service: LanguageService;
+    export let host: Host;
+    export let lastApiInfo: CachedApisInfo | undefined;
+    export let lastGlobalNames: pxt.Map<SymbolInfo> | undefined;
+    export let lastBlocksInfo: BlocksInfo;
+    export let lastLocBlocksInfo: BlocksInfo;
+    // don't export, fuse is internal only
     let lastFuse: Fuse<SearchInfo>;
-    let builtinItems: SearchInfo[];
-    let blockDefinitions: pxt.Map<pxt.blocks.BlockDefinition>;
-    let tbSubset: pxt.Map<boolean | string>;
+    let lastProjectFuse: Fuse<ProjectSearchInfo>;
+    export let builtinItems: SearchInfo[];
+    export let blockDefinitions: pxt.Map<pxt.blocks.BlockDefinition>;
+    export let tbSubset: pxt.Map<boolean | string>;
 
     function fileDiags(fn: string) {
         if (!/\.ts$/.test(fn))
@@ -569,16 +730,7 @@ namespace ts.pxtc.service {
         return d
     }
 
-    interface InternalCompletionData {
-        symbols: ts.Symbol[];
-        isMemberCompletion: boolean;
-        isNewIdentifierLocation: boolean;
-        location: ts.Node;
-        isRightOfDot: boolean;
-        isJsDocTagName: boolean;
-    }
-
-    const blocksInfoOp = (apisInfoLocOverride?: pxtc.ApisInfo, bannedCategories?: string[]) => {
+    export function blocksInfoOp(apisInfoLocOverride: pxtc.ApisInfo, bannedCategories: string[]) {
         if (apisInfoLocOverride) {
             if (!lastLocBlocksInfo) {
                 lastLocBlocksInfo = getBlocksInfo(apisInfoLocOverride, bannedCategories);
@@ -586,52 +738,223 @@ namespace ts.pxtc.service {
             return lastLocBlocksInfo;
         } else {
             if (!lastBlocksInfo) {
-                lastBlocksInfo = getBlocksInfo(lastApiInfo, bannedCategories);
+                lastBlocksInfo = getBlocksInfo(lastApiInfo.apis, bannedCategories);
             }
             return lastBlocksInfo;
         }
     }
 
-    const operations: pxt.Map<(v: OpArg) => any> = {
+    export function getLastApiInfo(opts: CompileOptions) {
+        if (!lastApiInfo)
+            lastApiInfo = internalGetApiInfo(service.getProgram(), opts.jres)
+        return lastApiInfo;
+    }
+
+    export function addApiInfo(opts: CompileOptions) {
+        if (!opts.apisInfo) {
+            const info = getLastApiInfo(opts);
+            opts.apisInfo = U.clone(info.apis)
+        }
+    }
+
+    export function cloneCompileOpts(opts: CompileOptions) {
+        let newOpts = pxt.U.flatClone(opts)
+        newOpts.fileSystem = pxt.U.flatClone(newOpts.fileSystem)
+        return newOpts
+    }
+
+    export interface ServiceOps {
+        reset: () => void;
+        setOptions: (v: OpArg) => void;
+        syntaxInfo: (v: OpArg) => SyntaxInfo;
+        getCompletions: (v: OpArg) => CompletionInfo;
+        compile: (v: OpArg) => CompileResult;
+        decompile: (v: OpArg) => CompileResult;
+        pydecompile: (v: OpArg) => transpile.TranspileResult;
+        decompileSnippets: (v: OpArg) => string[];
+        assemble: (v: OpArg) => {
+            words: number[];
+        };
+        py2ts: (v: OpArg) => transpile.TranspileResult;
+        fileDiags: (v: OpArg) => KsDiagnostic[];
+        allDiags: () => CompileResult;
+        format: (v: OpArg) => {
+            formatted: string;
+            pos: number;
+        };
+        apiInfo: () => ApisInfo;
+        snippet: (v: OpArg) => string;
+        blocksInfo: (v: OpArg) => BlocksInfo;
+        apiSearch: (v: OpArg) => SearchInfo[];
+        projectSearch: (v: OpArg) => ProjectSearchInfo[];
+        projectSearchClear: () => void;
+    };
+
+    export type OpRes =
+        string | void | SyntaxInfo | CompletionInfo | CompileResult
+        | transpile.TranspileResult
+        | { words: number[]; }
+        | KsDiagnostic[]
+        | { formatted: string; pos: number; }
+        | ApisInfo | BlocksInfo | ProjectSearchInfo[]
+        | {};
+
+    export type OpError = { errorMessage: string };
+
+    export type OpResOrError = OpRes | OpError;
+
+    export function IsOpErr(res: OpResOrError): res is OpError {
+        return !!(res as OpError).errorMessage;
+    }
+
+    const operations: ServiceOps = {
         reset: () => {
-            service.cleanupSemanticCache();
-            host.setOpts(emptyOptions)
+            service = ts.createLanguageService(host)
+            lastApiInfo = undefined
+            lastGlobalNames = undefined
+            host.reset()
         },
 
         setOptions: v => {
             host.setOpts(v.options)
         },
 
-        getCompletions: v => {
+        syntaxInfo: v => {
+            let src: string = v.fileContent
             if (v.fileContent) {
                 host.setFile(v.fileName, v.fileContent);
             }
+            let opts = cloneCompileOpts(host.opts)
+            opts.fileSystem[v.fileName] = src
+            addApiInfo(opts);
+            opts.syntaxInfo = {
+                position: v.position,
+                type: v.infoType
+            };
 
-            let program = service.getProgram() // this synchornizes host data as well
-            let data: InternalCompletionData = (service as any).getCompletionData(v.fileName, v.position);
+            const isPython = opts.target.preferredEditor == pxt.PYTHON_PROJECT_NAME;
+            const isSymbolReq = opts.syntaxInfo.type === "symbol";
+            const isSignatureReq = opts.syntaxInfo.type === "signature";
 
-            if (!data) return {}
+            if (isPython) {
+                let res = transpile.pyToTs(opts)
+                if (res.globalNames)
+                    lastGlobalNames = res.globalNames
+            }
+            else {
+                // typescript
+                opts.ast = true;
+                host.setOpts(opts)
+                const res = runConversionsAndCompileUsingService()
+                const prog = service.getProgram()
+                const tsAst = prog.getSourceFile(v.fileName)
+                const tc = prog.getTypeChecker()
 
-            let typechecker = program.getTypeChecker()
+                if (isSymbolReq || isSignatureReq) {
+                    let tsNode = findInnerMostNodeAtPosition(tsAst, v.position);
+                    if (tsNode) {
+                        if (isSymbolReq) {
+                            const symbol = tc.getSymbolAtLocation(tsNode);
+                            if (symbol) {
+                                let pxtSym = getPxtSymbolFromTsSymbol(symbol, opts.apisInfo, tc)
+                                opts.syntaxInfo.symbols = [pxtSym];
+                                opts.syntaxInfo.beginPos = tsNode.getStart();
+                                opts.syntaxInfo.endPos = tsNode.getEnd();
+                            }
+                        }
+                        else if (isSignatureReq) {
+                            const pxtCall = tsNode?.pxt?.callInfo
+                            if (pxtCall) {
+                                const pxtSym = opts.apisInfo.byQName[pxtCall.qName]
+                                opts.syntaxInfo.symbols = [pxtSym];
+                                opts.syntaxInfo.beginPos = tsNode.getStart();
+                                opts.syntaxInfo.endPos = tsNode.getEnd();
 
-            let r: CompletionInfo = {
-                entries: {},
-                isMemberCompletion: data.isMemberCompletion,
-                isNewIdentifierLocation: data.isNewIdentifierLocation,
-                isTypeLocation: false // TODO
+                                const tsCall = getParentCallExpression(tsNode)
+                                if (tsCall) {
+                                    const argIdx = findCurrentCallArgIdx(tsCall, tsNode, v.position)
+                                    opts.syntaxInfo.auxResult = argIdx
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
-            fillCompletionEntries(program, data.symbols, r, lastApiInfo)
+            if (isSymbolReq && !opts.syntaxInfo.symbols?.length) {
+                const possibleKeyword = getWordAtPosition(v.fileContent, v.position);
+                if (possibleKeyword) {
+                    // In python if range() is used in a for-loop, we don't convert
+                    // it to a function call when going to TS (we just convert it to
+                    // a regular for-loop). Because our symbol detection is based off
+                    // of the TS, we won't get a symbol result for range at this position
+                    // in the file. This special case makes sure we return the same help
+                    // as a standalone call to range().
+                    if (isPython && possibleKeyword.text === "range") {
+                        const apiInfo = getLastApiInfo(opts).apis;
+                        if (apiInfo.byQName["_py.range"]) {
+                            opts.syntaxInfo.symbols = [apiInfo.byQName["_py.range"]];
+                            opts.syntaxInfo.beginPos = possibleKeyword.start;
+                            opts.syntaxInfo.endPos = possibleKeyword.end;
+                        }
+                    }
+                    else {
+                        const help = getHelpForKeyword(possibleKeyword.text, isPython);
 
-            return r;
+                        if (help) {
+                            opts.syntaxInfo.auxResult = {
+                                documentation: help,
+                                displayString: displayStringForKeyword(possibleKeyword.text, isPython),
+                            };
+                            opts.syntaxInfo.beginPos = possibleKeyword.start;
+                            opts.syntaxInfo.endPos = possibleKeyword.end;
+                        }
+                    }
+                }
+            }
+
+            if (opts.syntaxInfo.symbols?.length) {
+                const apiInfo = getLastApiInfo(opts).apis;
+                if (isPython) {
+                    opts.syntaxInfo.symbols = opts.syntaxInfo.symbols.map(s => {
+                        // symbol info gathered during the py->ts compilation phase
+                        // is less precise than the symbol info created when doing
+                        // a pass over ts, so we prefer the latter if available
+                        return apiInfo.byQName[s.qName] || s
+                    })
+                }
+
+                if (isSymbolReq) {
+                    opts.syntaxInfo.auxResult = opts.syntaxInfo.symbols.map(s =>
+                        displayStringForSymbol(s, isPython, apiInfo))
+                }
+            }
+
+            return opts.syntaxInfo
+        },
+
+        getCompletions: v => {
+            return getCompletions(v)
         },
 
         compile: v => {
-            return compile(v.options)
+            host.setOpts(v.options)
+            const res = runConversionsAndCompileUsingService()
+            timesToMs(res);
+            return res
         },
         decompile: v => {
-            const bannedCategories = v.blocks ? v.blocks.bannedCategories : undefined;
-            return decompile(v.options, v.fileName, false, bannedCategories);
+            host.setOpts(v.options)
+            return decompile(service.getProgram(), v.options, v.fileName, false);
+        },
+        pydecompile: v => {
+            host.setOpts(v.options)
+            return transpile.tsToPy(service.getProgram(), v.fileName);
+
+        },
+        decompileSnippets: v => {
+            host.setOpts(v.options)
+            return decompileSnippets(service.getProgram(), v.options, false);
         },
         assemble: v => {
             return {
@@ -639,29 +962,25 @@ namespace ts.pxtc.service {
             }
         },
 
+        py2ts: v => {
+            addApiInfo(v.options)
+            return transpile.pyToTs(v.options)
+        },
+
         fileDiags: v => patchUpDiagnostics(fileDiags(v.fileName)),
 
         allDiags: () => {
-            let global = service.getCompilerOptionsDiagnostics() || []
-            let byFile = host.getScriptFileNames().map(fileDiags)
-            let allD: ReadonlyArray<Diagnostic> = global.concat(Util.concat(byFile))
-
-            if (allD.length == 0) {
-                let res: CompileResult = {
-                    outfiles: {},
-                    diagnostics: [],
-                    success: true,
-                    times: {}
-                }
-                const program = service.getProgram();
-                const sources = program.getSourceFiles();
-                // entry point is main.ts or the last file which should be the test file if any
-                const entryPoint = sources.filter(f => f.fileName == "main.ts")[0] || sources[sources.length - 1];
-                const binOutput = compileBinary(program, null, host.opts, res, entryPoint ? entryPoint.fileName : "main.ts");
-                allD = binOutput.diagnostics
-            }
-
-            return patchUpDiagnostics(allD)
+            // not comapatible with incremental compilation
+            // host.opts.noEmit = true
+            // TODO: "allDiags" sounds like it's just reading state
+            // but it's actually kicking off a full compile. We should
+            // do better about caching and returning cached results from
+            // previous compiles.
+            let res = runConversionsAndCompileUsingService();
+            timesToMs(res);
+            if (host.opts.target.switches.time)
+                console.log("DIAG-TIME", res.times)
+            return res
         },
 
         format: v => {
@@ -676,14 +995,48 @@ namespace ts.pxtc.service {
                 // Host was reset, don't load apis with empty options
                 return undefined;
             }
-            return lastApiInfo = getApiInfo(host.opts, service.getProgram());
+            lastApiInfo = internalGetApiInfo(service.getProgram(), host.opts.jres);
+            return lastApiInfo.apis;
         },
-        blocksInfo: v => blocksInfoOp(v as any),
+        snippet: v => {
+            const o = v.snippet;
+            if (!lastApiInfo) return undefined;
+            const fn = lastApiInfo.apis.byQName[o.qName];
+            const n = lastApiInfo.decls[o.qName];
+            if (!fn || !n || !ts.isFunctionLike(n))
+                return undefined;
+
+            const isPython = !!o.python
+
+            // determine which names are taken for auto-generated variable names
+            let takenNames: pxt.Map<SymbolInfo> = {}
+            if (isPython && lastGlobalNames) {
+                takenNames = lastGlobalNames
+            } else {
+                takenNames = lastApiInfo.apis.byQName
+            }
+
+            const { bannedCategories, screenSize } = v.runtime;
+            const { apis } = lastApiInfo;
+            const blocksInfo = blocksInfoOp(apis, bannedCategories);
+            const checker = service && service.getProgram().getTypeChecker();
+            const snippetContext = {
+                apis,
+                blocksInfo,
+                takenNames,
+                bannedCategories,
+                screenSize,
+                checker,
+            }
+            const snippetNode = getSnippet(snippetContext, fn, n as FunctionLikeDeclaration, isPython)
+            const snippet = snippetStringify(snippetNode)
+            return snippet
+        },
+        blocksInfo: v => blocksInfoOp(v as any, v.blocks && v.blocks.bannedCategories),
         apiSearch: v => {
             const SEARCH_RESULT_COUNT = 7;
             const search = v.search;
-            const bannedCategories = v.blocks ? v.blocks.bannedCategories : undefined;
-            const blockInfo = blocksInfoOp(search.localizedApis, bannedCategories); // cache
+            const blockInfo = blocksInfoOp(search.localizedApis, v.blocks && v.blocks.bannedCategories); // caches
 
             if (search.localizedStrings) {
                 pxt.Util.setLocalizedStrings(search.localizedStrings);
@@ -705,6 +1058,44 @@ namespace ts.pxtc.service {
                 // The block definition does not specify which tooltip or block text to use for search; join all values with a space
                 return Object.keys(tooltipOrBlock).map(k => (<pxt.Map<string>>tooltipOrBlock)[k]).join(" ");
             };
+
+            // Fill default parameters in block string
+            const computeBlockString = (symbol: SymbolInfo): string => {
+                if (symbol.attributes?._def) {
+                    let block = [];
+                    const blockDef = symbol.attributes._def;
+                    const compileInfo = pxt.blocks.compileInfo(symbol);
+
+                    // Construct block string from parsed blockdef
+                    for (let part of blockDef.parts) {
+                        switch (part.kind) {
+                            case "label":
+                                block.push(part.text);
+                                break;
+                            case "param":
+                                // In order, preference default value, var name, param name, blockdef param name
+                                let actualParam = compileInfo.definitionNameToParam[part.name];
+                                block.push(actualParam?.defaultValue
+                                    || part.varName
+                                    || actualParam?.actualName
+                                    || part.name);
+                                break;
+                        }
+                    }
+
+                    return block.join(" ");
+                }
+                return symbol.attributes.block;
+            }
+
+            // Join parameter jsdoc into a string
+            const computeParameterString = (symbol: SymbolInfo): string => {
+                const paramHelp = symbol.attributes?.paramHelp;
+                if (paramHelp) {
+                    Object.keys(paramHelp).map(p => paramHelp[p]).join(" ");
+                }
+                return "";
+            }
 
             if (!builtinItems) {
                 builtinItems = [];
@@ -750,7 +1141,7 @@ namespace ts.pxtc.service {
 
             if (!lastFuse || search.subset) {
                 const weights: pxt.Map<number> = {};
-                let builtinSearchSet: SearchInfo[];
+                let builtinSearchSet: SearchInfo[] = [];
 
                 if (search.subset) {
                     tbSubset = search.subset;
@@ -771,14 +1162,20 @@ namespace ts.pxtc.service {
                         qName: s.qName,
                         name: s.name,
                         namespace: s.namespace,
-                        block: s.attributes.block,
+                        block: computeBlockString(s),
+                        params: computeParameterString(s),
                         jsdoc: s.attributes.jsDoc,
                         localizedCategory: tbSubset && typeof tbSubset[s.attributes.blockId] === "string"
-                            ? tbSubset[s.attributes.blockId] as string : undefined
+                            ? tbSubset[s.attributes.blockId] as string : undefined,
                     };
                     return mappedSi;
                 });
 
+                // filter out built-ins from the main search set as those
+                // should come from the built-in search set
+                let builtinBlockIds: pxt.Map<Boolean> = {}
+                builtinSearchSet.forEach(b => builtinBlockIds[b.id] = true)
+                searchSet = searchSet.filter(b => !(b.id in builtinBlockIds));
 
                 let mw = 0;
                 subset.forEach(b => {
@@ -802,6 +1199,7 @@ namespace ts.pxtc.service {
                         { name: 'namespace', weight: 0.1 },
                         { name: 'localizedCategory', weight: 0.1 },
                         { name: 'block', weight: 0.4375 },
+                        { name: 'params', weight: 0.0625 },
                         { name: 'jsdoc', weight: 0.0625 }
                     ],
                     sortFn: function (a: any, b: any): number {
@@ -815,16 +1213,96 @@ namespace ts.pxtc.service {
             }
             const fns = lastFuse.search(search.term);
             return fns.slice(0, SEARCH_RESULT_COUNT);
+        },
+        projectSearch: v => {
+            const search = v.projectSearch;
+            const searchSet = search.headers;
+
+            if (!lastProjectFuse) {
+                const fuseOptions = {
+                    shouldSort: true,
+                    threshold: 0.6,
+                    location: 0,
+                    distance: 100,
+                    maxPatternLength: 16,
+                    minMatchCharLength: 2,
+                    findAllMatches: false,
+                    caseSensitive: false,
+                    keys: [
+                        { name: 'name', weight: 0.3 }
+                    ]
+                };
+                lastProjectFuse = new Fuse(searchSet, fuseOptions);
+            }
+            const fns = lastProjectFuse.search(search.term);
+            return fns;
+        },
+        projectSearchClear: () => {
+            lastProjectFuse = undefined;
         }
     }
 
-    export function performOperation(op: string, arg: OpArg) {
+    export function runConversionsAndCompileUsingService(): CompileResult {
+        addApiInfo(host.opts)
+        const prevFS = U.flatClone(host.opts.fileSystem);
+        let res = runConversionsAndStoreResults(host.opts);
+        if (res?.globalNames) {
+            lastGlobalNames = res.globalNames
+        }
+        const newFS = host.opts.fileSystem
+        host.opts.fileSystem = prevFS
+        for (let k of Object.keys(newFS))
+            host.setFile(k, newFS[k]) // update version numbers
+        if (res.diagnostics.length == 0) {
+            host.opts.skipPxtModulesEmit = false
+            host.opts.skipPxtModulesTSC = false
+            const currKey = host.opts.target.isNative ? "native" : "js"
+            if (!host.opts.target.switches.noIncr && host.pxtModulesOK) {
+                host.opts.skipPxtModulesTSC = true
+                if (host.opts.noEmit)
+                    host.opts.skipPxtModulesEmit = true
+                else if (host.opts.target.isNative)
+                    host.opts.skipPxtModulesEmit = false
+                // don't cache emit when debugging pxt_modules/*
+                else if (host.pxtModulesOK == "js" && (!host.opts.breakpoints || host.opts.justMyCode))
+                    host.opts.skipPxtModulesEmit = true
+            }
+            let ts2asm = compile(host.opts, service)
+            res = {
+                sourceMap: res.sourceMap,
+                ...ts2asm,
+            }
+            if (res.needsFullRecompile || ((!res.success || res.diagnostics.length) && host.opts.clearIncrBuildAndRetryOnError)) {
+                pxt.debug("triggering full recompile")
+                pxt.tickEvent("compile.fullrecompile")
+                host.opts.skipPxtModulesEmit = false;
+                ts2asm = compile(host.opts, service);
+                res = {
+                    sourceMap: res.sourceMap,
+                    ...ts2asm,
+                }
+            }
+            if (res.diagnostics.every(d => !isPxtModulesFilename(d.fileName)))
+                host.pxtModulesOK = currKey
+            if (res.ast) {
+                // keep api info up to date after each compile
+                let ai = internalGetApiInfo(res.ast);
+                if (ai)
+                    lastApiInfo = ai
+            }
+        }
+        return res;
+    }
+
+    export function performOperation<T extends keyof ServiceOps>(op: T, arg: OpArg):
+        OpResOrError {
         init();
-        let res: any = null;
+        let res: OpResOrError = null;
 
         if (operations.hasOwnProperty(op)) {
             try {
-                res = operations[op](arg) || {}
+                let opFn = operations[op]
+                res = opFn(arg) || {}
             } catch (e) {
                 res = {
                     errorMessage: e.stack
@@ -845,117 +1323,5 @@ namespace ts.pxtc.service {
             service = ts.createLanguageService(host)
         }
     }
-    const defaultImgLit = `\`
-. . . . .
-. . . . .
-. . # . .
-. . . . .
-. . . . .
-\``;
 
-    export function getSnippet(n: ts.SignatureDeclaration, attrs?: CommentAttrs): string {
-        if (!ts.isFunctionLike(n)) {
-            return undefined;
-        }
-        const checker = service ? service.getProgram().getTypeChecker() : undefined;
-        const args = n.parameters ? n.parameters.filter(param => !param.initializer && !param.questionToken).map(param => {
-            const typeNode = param.type;
-            if (!typeNode) return "null";
-
-            const name = param.name.kind === SK.Identifier ? (param.name as ts.Identifier).text : undefined;
-
-            if (attrs && attrs.paramDefl && attrs.paramDefl[name]) {
-                if (typeNode.kind == SK.StringKeyword) {
-                    const defaultName = attrs.paramDefl[name];
-                    return typeNode.kind == SK.StringKeyword && defaultName.indexOf(`"`) != 0 ? `"${defaultName}"` : defaultName;
-                }
-                return attrs.paramDefl[name];
-            }
-            switch (typeNode.kind) {
-                case SK.StringKeyword: return (name == "leds" ? defaultImgLit : `""`);
-                case SK.NumberKeyword: return "0";
-                case SK.BooleanKeyword: return "false";
-                case SK.ArrayType: return "[]";
-                case SK.TypeReference:
-                    // handled below
-                    break;
-                case SK.FunctionType:
-                    const tn = typeNode as ts.FunctionTypeNode;
-                    let functionSignature = checker ? checker.getSignatureFromDeclaration(tn) : undefined;
-                    if (functionSignature) {
-                        return getFunctionString(functionSignature);
-                    }
-                    return `function () {}`;
-            }
-
-            const type = checker ? checker.getTypeAtLocation(param) : undefined;
-            if (type) {
-                if (isObjectType(type)) {
-                    if (type.objectFlags & ts.ObjectFlags.Anonymous) {
-                        const sigs = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
-                        if (sigs.length) {
-                            return getFunctionString(sigs[0]);
-                        }
-                        return `function () {}`;
-                    }
-                }
-                if (type.flags & ts.TypeFlags.EnumLike) {
-                    return getDefaultEnumValue(type, checker);
-                }
-                if (type.flags & ts.TypeFlags.NumberLike) {
-                    return "0";
-                }
-            }
-            return "null";
-        }) : [];
-
-
-        return `${n.name.getText()}(${args.join(', ')})`;
-
-        function getFunctionString(functionSignature: ts.Signature) {
-            let functionArgument = "()";
-            let returnValue = "";
-
-            let displayParts = (ts as any).mapToDisplayParts((writer: ts.DisplayPartsSymbolWriter) => {
-                checker.getSymbolDisplayBuilder().buildSignatureDisplay(functionSignature, writer);
-            });
-
-            let returnType = checker.getReturnTypeOfSignature(functionSignature);
-
-            if (returnType.flags & ts.TypeFlags.NumberLike)
-                returnValue = "return 0;";
-            else if (returnType.flags & ts.TypeFlags.StringLike)
-                returnValue = "return \"\";";
-            else if (returnType.flags & (ts.TypeFlags.Boolean | ts.TypeFlags.BooleanLiteral))
-                returnValue = "return false;";
-
-            let displayPartsStr = ts.displayPartsToString(displayParts);
-            functionArgument = displayPartsStr.substr(0, displayPartsStr.lastIndexOf(":"));
-
-            return `function ${functionArgument} {\n    ${returnValue}\n}`
-        }
-    }
-
-    function getDefaultEnumValue(t: Type, checker: TypeChecker) {
-        // Note: AFAIK this is NOT guranteed to get the same default as you get in
-        // blocks. That being said, it should get the first declared value. Only way
-        // to guarantee an API has the same default in blocks and in TS is to actually
-        // set a default on the parameter in its comment attributes
-        if (t.symbol && t.symbol.declarations && t.symbol.declarations.length) {
-            for (let i = 0; i < t.symbol.declarations.length; i++) {
-                const decl = t.symbol.declarations[i];
-                if (decl.kind === SK.EnumDeclaration) {
-                    const enumDeclaration = decl as EnumDeclaration;
-                    for (let j = 0; j < enumDeclaration.members.length; j++) {
-                        const member = enumDeclaration.members[i];
-                        if (member.name.kind === SK.Identifier) {
-                            return checker.getFullyQualifiedName(checker.getSymbolAtLocation(member.name));
-                        }
-                    }
-                }
-            }
-        }
-
-        return "0";
-    }
 }

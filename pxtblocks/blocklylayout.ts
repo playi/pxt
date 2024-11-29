@@ -1,4 +1,3 @@
-
 namespace pxt.blocks.layout {
     export interface FlowOptions {
         ratio?: number;
@@ -17,7 +16,7 @@ namespace pxt.blocks.layout {
         const oldDom = Blockly.Xml.workspaceToDom(oldWs, true);
         const newDom = Blockly.Xml.workspaceToDom(newWs, true);
         Util.toArray(oldDom.childNodes)
-            .filter(n => n.nodeType == Node.ELEMENT_NODE && n.localName == "block" && (<Element>n).getAttribute("disabled") == "true")
+            .filter((n: ChildNode) => n.nodeType == Node.ELEMENT_NODE && (n as Element).localName == "block" && (<Element>n).getAttribute("disabled") == "true")
             .forEach(n => newDom.appendChild(newDom.ownerDocument.importNode(n, true)));
         const updatedXml = Blockly.Xml.domToText(newDom);
         return updatedXml;
@@ -26,12 +25,12 @@ namespace pxt.blocks.layout {
     function alignBlocks(blockInfo: ts.pxtc.BlocksInfo, oldWs: Blockly.Workspace, newWs: Blockly.Workspace) {
         let env: pxt.blocks.Environment;
         let newBlocks: pxt.Map<Blockly.Block[]>; // support for multiple events with similar name
-        oldWs.getTopBlocks(false).filter(ob => !ob.disabled)
+        oldWs.getTopBlocks(false).filter(ob => ob.isEnabled())
             .forEach(ob => {
                 const otp = ob.xy_;
                 if (otp && otp.x != 0 && otp.y != 0) {
                     if (!env) {
-                        env = pxt.blocks.mkEnv(oldWs, blockInfo, true);
+                        env = pxt.blocks.mkEnv(oldWs, blockInfo);
                         newBlocks = {};
                         newWs.getTopBlocks(false).forEach(b => {
                             const nkey = pxt.blocks.callKey(env, b);
@@ -54,29 +53,35 @@ namespace pxt.blocks.layout {
      * Splits a blockly SVG AFTER a vertical layout. This function relies on the ordering
      * of blocks / comments to get as getTopBlock(true)/getTopComment(true)
      */
-    export function splitSvg(svg: SVGSVGElement, ws: Blockly.Workspace, emPixels: number = 18): Element {
-        const comments = ws.getTopComments(true);
-        const blocks = ws.getTopBlocks(true)
+    export function splitSvg(svg: SVGSVGElement, ws: Blockly.WorkspaceSvg, emPixels: number = 18): Element {
+        const comments = ws.getTopComments(true) as Blockly.WorkspaceCommentSvg[];
+        const blocks = ws.getTopBlocks(true) as Blockly.BlockSvg[];
         // don't split for a single block
         if (comments.length + blocks.length < 2)
             return svg;
 
         const div = document.createElement("div") as HTMLDivElement;
-        div.className = "blocks-svg-list"
+        div.className = `blocks-svg-list ${ws.getInjectionDiv().className}`
 
         function extract(
             parentClass: string,
             otherClass: string,
             blocki: number,
             size: { height: number, width: number },
-            translate: { x: number, y: number }
+            translate: { x: number, y: number },
+            itemClass?: string
         ) {
             const svgclone = svg.cloneNode(true) as SVGSVGElement;
             // collect all blocks
             const parentSvg = svgclone.querySelector(`g.blocklyWorkspace > g.${parentClass}`) as SVGGElement;
             const otherSvg = svgclone.querySelector(`g.blocklyWorkspace > g.${otherClass}`) as SVGGElement;
-            const blocksSvg = Util.toArray(parentSvg.querySelectorAll(`g.blocklyWorkspace > g.${parentClass} > g`));
+            const blocksSvg = Util.toArray(parentSvg.querySelectorAll(`g.blocklyWorkspace > g.${parentClass} > ${itemClass ? ("." + itemClass) : "g[transform]"}`));
             const blockSvg = blocksSvg.splice(blocki, 1)[0];
+            if (!blockSvg) {
+                // seems like no blocks were generated
+                pxt.log(`missing block, did block failed to load?`)
+                return;
+            }
             // remove all but the block we care about
             blocksSvg.filter(g => g != blockSvg)
                 .forEach(g => {
@@ -98,29 +103,29 @@ namespace pxt.blocks.layout {
         }
 
         comments.forEach((comment, commenti) => extract('blocklyBubbleCanvas', 'blocklyBlockCanvas',
-            commenti, comment.getHeightWidth(), { x: 0, y: 0 }));
+            commenti, comment.getHeightWidth(), { x: 0, y: 0 }, "blocklyComment"));
         blocks.forEach((block, blocki) => {
-                const size = block.getHeightWidth();
-                const translate = { x: 0, y: 0 };
-                if (block.getStartHat()) {
-                    size.height += emPixels;
-                    translate.y += emPixels;
-                }
-                extract('blocklyBlockCanvas', 'blocklyBubbleCanvas',
-                    blocki, size, translate)
-            });
+            const size = block.getHeightWidth();
+            const translate = { x: 0, y: 0 };
+            if (block.getStartHat()) {
+                size.height += emPixels;
+                translate.y += emPixels;
+            }
+            extract('blocklyBlockCanvas', 'blocklyBubbleCanvas',
+                blocki, size, translate)
+        });
         return div;
     }
 
-    export function verticalAlign(ws: Blockly.Workspace, emPixels: number) {
+    export function verticalAlign(ws: Blockly.WorkspaceSvg, emPixels: number) {
         let y = 0
-        let comments = ws.getTopComments(true);
+        let comments = ws.getTopComments(true) as Blockly.WorkspaceCommentSvg[];
         comments.forEach(comment => {
             comment.moveBy(0, y)
             y += comment.getHeightWidth().height
             y += emPixels; //buffer
         })
-        let blocks = ws.getTopBlocks(true);
+        let blocks = ws.getTopBlocks(true) as Blockly.BlockSvg[];
         blocks.forEach((block, bi) => {
             // TODO: REMOVE THIS WHEN FIXED IN PXT-BLOCKLY
             if (block.getStartHat())
@@ -129,24 +134,35 @@ namespace pxt.blocks.layout {
             y += block.getHeightWidth().height
             y += emPixels; //buffer
         })
-    };
+    }
 
-    export function flow(ws: Blockly.Workspace, opts?: FlowOptions) {
+    export function setCollapsedAll(ws: Blockly.WorkspaceSvg, collapsed: boolean) {
+        ws.getTopBlocks(false)
+            .filter(b => b.isEnabled())
+            .forEach(b => b.setCollapsed(collapsed));
+    }
+
+    // Workspace margins
+    const marginx = 20;
+    const marginy = 20;
+    export function flow(ws: Blockly.WorkspaceSvg, opts?: FlowOptions) {
         if (opts) {
             if (opts.useViewWidth) {
                 const metrics = ws.getMetrics();
 
                 // Only use the width if in portrait, otherwise the blocks are too spread out
                 if (metrics.viewHeight > metrics.viewWidth) {
-                    flowBlocks(ws.getTopComments(true), ws.getTopBlocks(true), undefined, metrics.viewWidth)
+                    flowBlocks(ws.getTopComments(true) as Blockly.WorkspaceCommentSvg[], ws.getTopBlocks(true) as Blockly.BlockSvg[], undefined, metrics.viewWidth)
+                    ws.scroll(marginx, marginy);
                     return;
                 }
             }
-            flowBlocks(ws.getTopComments(true), ws.getTopBlocks(true), opts.ratio);
+            flowBlocks(ws.getTopComments(true) as Blockly.WorkspaceCommentSvg[], ws.getTopBlocks(true) as Blockly.BlockSvg[], opts.ratio);
         }
         else {
-            flowBlocks(ws.getTopComments(true), ws.getTopBlocks(true));
+            flowBlocks(ws.getTopComments(true) as Blockly.WorkspaceCommentSvg[], ws.getTopBlocks(true) as Blockly.BlockSvg[]);
         }
+        ws.scroll(marginx, marginy);
     }
 
     export function screenshotEnabled(): boolean {
@@ -154,69 +170,60 @@ namespace pxt.blocks.layout {
             && !BrowserUtils.isUwpEdge(); // TODO figure out why screenshots are not working in UWP; disable for now
     }
 
-    export function screenshotAsync(ws: Blockly.Workspace): Promise<string> {
-        return toPngAsync(ws);
+    export function screenshotAsync(ws: Blockly.WorkspaceSvg, pixelDensity?: number, encodeBlocks?: boolean): Promise<string> {
+        return toPngAsync(ws, pixelDensity, encodeBlocks);
     }
 
-    export function toPngAsync(ws: Blockly.Workspace): Promise<string> {
-        return toSvgAsync(ws)
-            .then(sg => {
-                if (!sg) return Promise.resolve<string>(undefined);
-                return toPngAsyncInternal(sg.width, sg.height, 4, sg.xml);
-            });
-    }
-
-    export function svgToPngAsync(svg: SVGElement, x: number, y: number, width: number, height: number, pixelDensity: number): Promise<string> {
-        return blocklyToSvgAsync(svg, x, y, width, height)
-            .then(sg => {
-                if (!sg) return Promise.resolve<string>(undefined);
-                return toPngAsyncInternal(sg.width, sg.height, pixelDensity, sg.xml);
-            });
-    }
-
-    const MAX_SCREENSHOT_SIZE = 1e6; // max 1Mb
-    function toPngAsyncInternal(width: number, height: number, pixelDensity: number, data: string): Promise<string> {
-        return new Promise<string>((resolve, reject) => {
-            const cvs = document.createElement("canvas") as HTMLCanvasElement;
-            const ctx = cvs.getContext("2d");
-            const img = new Image;
-
-            cvs.width = width * pixelDensity;
-            cvs.height = height * pixelDensity;
-            img.onload = function () {
-                ctx.drawImage(img, 0, 0, width, height, 0, 0, cvs.width, cvs.height);
-                let canvasdata = cvs.toDataURL("image/png");
-                // if the generated image is too big, shrink image
-                while (canvasdata.length > MAX_SCREENSHOT_SIZE) {
-                    cvs.width = (cvs.width / 2) >> 0;
-                    cvs.height = (cvs.height / 2) >> 0;
-                    pxt.log(`screenshot size ${canvasdata.length}b, shrinking to ${cvs.width}x${cvs.height}`)
-                    ctx.drawImage(img, 0, 0, width, height, 0, 0, cvs.width, cvs.height);
-                    canvasdata = cvs.toDataURL("image/png");
-                }
-                resolve(canvasdata);
+    export function toPngAsync(ws: Blockly.WorkspaceSvg, pixelDensity?: number, encodeBlocks?: boolean): Promise<string> {
+        let blockSnippet: BlockSnippet;
+        if (encodeBlocks) {
+            blockSnippet = {
+                target: pxt.appTarget.id,
+                versions: pxt.appTarget.versions,
+                xml: pxt.blocks.saveBlocksXml(ws).map(text => pxt.Util.htmlEscape(text))
             };
-            img.onerror = ev => {
-                pxt.reportError("blocks", "blocks screenshot failed");
-                resolve(undefined)
-            }
-            img.src = data;
-        })
+        }
+
+        const density = (pixelDensity | 0) || 4
+        return toSvgAsync(ws, density)
+            .then(sg => {
+                if (!sg) return Promise.resolve<string>(undefined);
+                return pxt.BrowserUtils.encodeToPngAsync(sg.xml,
+                    {
+                        width: sg.width,
+                        height: sg.height,
+                        pixelDensity: density,
+                        text: encodeBlocks ? JSON.stringify(blockSnippet, null, 2) : null
+                    });
+            }).catch(e => {
+                pxt.reportException(e);
+                return undefined;
+            })
     }
 
     const XLINK_NAMESPACE = "http://www.w3.org/1999/xlink";
+    const MAX_AREA = 120000000; // https://github.com/jhildenbiddle/canvas-size
 
-    export function toSvgAsync(ws: Blockly.Workspace): Promise<{
+    export function toSvgAsync(ws: Blockly.WorkspaceSvg, pixelDensity: number): Promise<{
         width: number; height: number; xml: string;
     }> {
         if (!ws)
             return Promise.resolve<{ width: number; height: number; xml: string; }>(undefined);
 
-        const bbox = (document.getElementsByClassName("blocklyBlockCanvas")[0] as any).getBBox();
-        let sg = (ws as any).svgBlockCanvas_.cloneNode(true) as SVGGElement;
+        const metrics = ws.getBlocksBoundingBox();
+        const sg = ws.getParentSvg().cloneNode(true) as SVGElement;
+        cleanUpBlocklySvg(sg);
 
+        let width = metrics.right - metrics.left;
+        let height = metrics.bottom - metrics.top;
+        let scale = 1;
 
-        return blocklyToSvgAsync(sg, bbox.x, bbox.y, bbox.width, bbox.height);
+        const area = width * height * Math.pow(pixelDensity, 2);
+        if (area > MAX_AREA) {
+            scale = Math.sqrt(MAX_AREA / area);
+        }
+
+        return blocklyToSvgAsync(sg, metrics.left, metrics.top, width, height, scale);
     }
 
     export function serializeNode(sg: Node): string {
@@ -232,7 +239,38 @@ namespace pxt.blocks.layout {
         width: number; height: number; svg: string; xml: string; css: string;
     }
 
-    export function blocklyToSvgAsync(sg: SVGElement, x: number, y: number, width: number, height: number): Promise<BlockSvg> {
+    export function cleanUpBlocklySvg(svg: SVGElement): SVGElement {
+        pxt.BrowserUtils.removeClass(svg, "blocklySvg");
+        pxt.BrowserUtils.addClass(svg, "blocklyPreview pxt-renderer classic-theme");
+
+        // Remove background elements
+        pxt.U.toArray(svg.querySelectorAll('.blocklyMainBackground,.blocklyScrollbarBackground'))
+            .forEach(el => { if (el) el.parentNode.removeChild(el) });
+
+        // Remove connection indicator elements
+        pxt.U.toArray(svg.querySelectorAll('.blocklyConnectionIndicator,.blocklyInputConnectionIndicator'))
+            .forEach(el => { if (el) el.parentNode.removeChild(el) });
+
+        svg.removeAttribute('width');
+        svg.removeAttribute('height');
+
+        pxt.U.toArray(svg.querySelectorAll('.blocklyBlockCanvas,.blocklyBubbleCanvas'))
+            .forEach(el => el.removeAttribute('transform'));
+
+        // In order to get the Blockly comment's text area to serialize properly they have to have names
+        const parser = new DOMParser();
+        pxt.U.toArray(svg.querySelectorAll('.blocklyCommentTextarea'))
+            .forEach(el => {
+                const dom = parser.parseFromString(
+                    '<!doctype html><body>' + pxt.docs.html2Quote((el as any).value),
+                    'text/html');
+                (el as any).textContent = dom.body.textContent;
+            });
+
+        return svg;
+    }
+
+    export function blocklyToSvgAsync(sg: SVGElement, x: number, y: number, width: number, height: number, scale?: number): Promise<BlockSvg> {
         if (!sg.childNodes[0])
             return Promise.resolve<BlockSvg>(undefined);
 
@@ -240,20 +278,29 @@ namespace pxt.blocks.layout {
         sg.removeAttribute("height");
         sg.removeAttribute("transform");
 
+        let renderWidth = Math.round(width * (scale || 1));
+        let renderHeight = Math.round(height * (scale || 1));
+
         const xmlString = serializeNode(sg)
             .replace(/^\s*<svg[^>]+>/i, '')
             .replace(/<\/svg>\s*$/i, '') // strip out svg tag
-        const svgXml = `<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="${XLINK_NAMESPACE}" width="${width}" height="${height}" viewBox="${x} ${y} ${width} ${height}">${xmlString}</svg>`;
+        const svgXml = `<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="${XLINK_NAMESPACE}" width="${renderWidth}" height="${renderHeight}" viewBox="${x} ${y} ${width} ${height}" class="pxt-renderer">${xmlString}</svg>`;
         const xsg = new DOMParser().parseFromString(svgXml, "image/svg+xml");
+
         const cssLink = xsg.createElementNS("http://www.w3.org/1999/xhtml", "style");
         const isRtl = Util.isUserLanguageRtl();
         const customCssHref = (document.getElementById(`style-${isRtl ? 'rtl' : ''}blockly.css`) as HTMLLinkElement).href;
-        return pxt.BrowserUtils.loadAjaxAsync(customCssHref)
+        const semanticCssHref = Util.toArray(document.head.getElementsByTagName("link"))
+            .filter(l => Util.endsWith(l.getAttribute("href"), "semantic.css"))[0].href;
+        return Promise.all([pxt.BrowserUtils.loadAjaxAsync(customCssHref), pxt.BrowserUtils.loadAjaxAsync(semanticCssHref)])
             .then((customCss) => {
                 const blocklySvg = Util.toArray(document.head.querySelectorAll("style"))
                     .filter((el: HTMLStyleElement) => /\.blocklySvg/.test(el.innerText))[0] as HTMLStyleElement;
+                // Custom CSS injected directly into the DOM by Blockly
+                customCss.unshift((document.getElementById(`blockly-common-style`) as HTMLLinkElement)?.innerText || "");
+                customCss.unshift((document.getElementById(`blockly-renderer-style-pxt`) as HTMLLinkElement)?.innerText || "");
                 // CSS may contain <, > which need to be stored in CDATA section
-                const cssString = (blocklySvg ? blocklySvg.innerText : "") + '\n\n' + customCss + '\n\n';
+                const cssString = (blocklySvg ? blocklySvg.innerText : "") + '\n\n' + customCss.map(el => el + '\n\n');
                 cssLink.appendChild(xsg.createCDATASection(cssString));
                 xsg.documentElement.insertBefore(cssLink, xsg.documentElement.firstElementChild);
 
@@ -261,8 +308,8 @@ namespace pxt.blocks.layout {
                     .then(() => convertIconsToPngAsync(xsg))
                     .then(() => {
                         return <BlockSvg>{
-                            width: width,
-                            height: height,
+                            width: renderWidth,
+                            height: renderHeight,
                             svg: serializeNode(xsg).replace('<style xmlns="http://www.w3.org/1999/xhtml">', '<style>'),
                             xml: documentToSvg(xsg),
                             css: cssString
@@ -281,9 +328,13 @@ namespace pxt.blocks.layout {
     function expandImagesAsync(xsg: Document): Promise<void> {
         if (!imageXLinkCache) imageXLinkCache = {};
 
-        const images = xsg.getElementsByTagName("image") as NodeListOf<Element>;
+        const images = xsg.getElementsByTagName("image")
         const p = pxt.Util.toArray(images)
-            .filter(image => !/^data:/.test(image.getAttributeNS(XLINK_NAMESPACE, "href")))
+            .filter(image => {
+                const href = image.getAttributeNS(XLINK_NAMESPACE, "href");
+                return href && !/^data:/.test(href);
+            })
+            .map(img => img as unknown as HTMLImageElement)
             .map((image: HTMLImageElement) => {
                 const href = image.getAttributeNS(XLINK_NAMESPACE, "href");
                 let dataUri = imageXLinkCache[href];
@@ -292,14 +343,17 @@ namespace pxt.blocks.layout {
                         .then((img: HTMLImageElement) => {
                             const cvs = document.createElement("canvas") as HTMLCanvasElement;
                             const ctx = cvs.getContext("2d");
-                            cvs.width = img.width;
-                            cvs.height = img.height;
-                            ctx.drawImage(img, 0, 0, img.width, img.height, 0, 0, cvs.width, cvs.height);
+                            let w = img.width
+                            let h = img.height
+                            cvs.width = w;
+                            cvs.height = h;
+                            ctx.drawImage(img, 0, 0, w, h, 0, 0, cvs.width, cvs.height);
                             imageXLinkCache[href] = dataUri = cvs.toDataURL("image/png");
                             return dataUri;
                         }).catch(e => {
                             // ignore load error
-                            pxt.debug(`svg render: failed to load ${href}`)
+                            pxt.debug(`svg render: failed to load ${href}`);
+                            return "";
                         }))
                     .then(href => { image.setAttributeNS(XLINK_NAMESPACE, "href", href); })
             });
@@ -312,9 +366,10 @@ namespace pxt.blocks.layout {
 
         if (!BrowserUtils.isEdge()) return Promise.resolve();
 
-        const images = xsg.getElementsByTagName("image") as NodeListOf<Element>;
+        const images = xsg.getElementsByTagName("image")
         const p = pxt.Util.toArray(images)
             .filter(image => /^data:image\/svg\+xml/.test(image.getAttributeNS(XLINK_NAMESPACE, "href")))
+            .map(img => img as unknown as HTMLImageElement)
             .map((image: HTMLImageElement) => {
                 const svgUri = image.getAttributeNS(XLINK_NAMESPACE, "href");
                 const width = parseInt(image.getAttribute("width").replace(/[^0-9]/g, ""));
@@ -322,7 +377,7 @@ namespace pxt.blocks.layout {
                 let pngUri = imageIconCache[svgUri];
 
                 return (pngUri ? Promise.resolve(pngUri)
-                    : toPngAsyncInternal(width, height, 4, svgUri))
+                    : pxt.BrowserUtils.encodeToPngAsync(svgUri, { width, height, pixelDensity: 2 }))
                     .then(href => {
                         imageIconCache[svgUri] = href;
                         image.setAttributeNS(XLINK_NAMESPACE, "href", href);
@@ -332,7 +387,7 @@ namespace pxt.blocks.layout {
     }
 
     interface Formattable {
-        value: Blockly.Block | Blockly.WorkspaceComment;
+        value: Blockly.BlockSvg | Blockly.WorkspaceCommentSvg;
         children?: Formattable[];
         width: number;
         height: number;
@@ -342,36 +397,42 @@ namespace pxt.blocks.layout {
         y?: number;
     }
 
-    function flowBlocks(comments: Blockly.WorkspaceComment[], blocks: Blockly.Block[], ratio: number = 1.62, maxWidth?: number) {
+    function flowBlocks(comments: Blockly.WorkspaceCommentSvg[], blocks: Blockly.BlockSvg[], ratio: number = 1.62, maxWidth?: number) {
         // Margin between blocks and their comments
         const innerGroupMargin = 13;
 
         // Margin between groups of blocks and comments
         const outerGroupMargin = 45;
 
-        // Workspace margins
-        const marginx = 20;
-        const marginy = 20;
-
         const groups: Formattable[] = [];
-        const commentMap: Map<Blockly.WorkspaceComment> = {};
+        const commentMap: Map<Blockly.WorkspaceCommentSvg> = {};
 
         comments.forEach(comment => {
             const ref: string = (comment as any).data;
             if (ref != undefined) {
                 commentMap[ref] = comment;
             }
-            else {
-                groups.push(formattable(comment));
-            }
         });
 
         let onStart: Formattable;
 
+        // Sort so that on-start is first, events are second, functions are third, and disabled blocks are last
+        blocks.sort((a, b) => {
+            if (a.isEnabled() === b.isEnabled()) {
+                if (a.type === b.type) return 0;
+                else if (a.type === "function_definition") return 1
+                else if (b.type === "function_definition") return -1;
+                else return a.type.localeCompare(b.type);
+            }
+            else if (a.isEnabled())
+                return -1;
+            else
+                return 1
+        });
+
         blocks.forEach(block => {
-            const commentRefs = (block as any).data;
-            if (commentRefs) {
-                const refs = commentRefs.split(";");
+            const refs = getBlockData(block).commentRefs;
+            if (refs.length) {
                 const children: Formattable[] = [];
                 for (let i = 0; i < refs.length; i++) {
                     const comment = commentMap[refs[i]];
@@ -388,7 +449,7 @@ namespace pxt.blocks.layout {
             }
             const f = formattable(block);
 
-            if (block.type === pxtc.ON_START_TYPE) {
+            if (!onStart && block.isEnabled() && block.type === pxtc.ON_START_TYPE) { // there might be duplicate on-start blocks
                 onStart = f;
             }
             else {
@@ -401,7 +462,6 @@ namespace pxt.blocks.layout {
         }
 
         // Collect the comments that were not linked to a top-level block
-        // and puth them in on start (if it exists)
         Object.keys(commentMap).sort((a, b) => {
             // These are strings of integers (eg "0", "17", etc.) with no duplicates
             if (a.length === b.length) {
@@ -412,16 +472,15 @@ namespace pxt.blocks.layout {
             }
         }).forEach(key => {
             if (commentMap[key]) {
-                if (onStart) {
-                    if (!onStart.children) {
-                        onStart.children = [];
-                    }
-                    onStart.children.push(formattable(commentMap[key]));
-                }
-                else {
-                    // Stick the comments in the front so that they show up in the top left
-                    groups.unshift(formattable(commentMap[key]));
-                }
+                // Comments go at the end after disabled blocks
+                groups.push(formattable(commentMap[key]));
+            }
+        });
+
+        comments.forEach(comment => {
+            const ref: string = (comment as any).data;
+            if (ref == undefined) {
+                groups.push(formattable(comment));
             }
         });
 
@@ -429,7 +488,7 @@ namespace pxt.blocks.layout {
         for (let i = 0; i < groups.length; i++) {
             const group = groups[i];
             if (group.children) {
-                const valueDimensions = group.value.getHeightWidth();
+                const valueDimensions = (group.value as Blockly.BlockSvg).getHeightWidth();
                 group.x = 0;
                 group.y = 0;
 
@@ -487,11 +546,11 @@ namespace pxt.blocks.layout {
 
         function moveFormattable(f: Formattable, x: number, y: number) {
             const bounds = f.value.getBoundingRectangle();
-            f.value.moveBy(x - bounds.topLeft.x, y - bounds.topLeft.y);
+            f.value.moveBy(x - bounds.left, y - bounds.top);
         }
     }
 
-    function formattable(entity: Blockly.Block | Blockly.WorkspaceComment): Formattable {
+    function formattable(entity: Blockly.BlockSvg | Blockly.WorkspaceCommentSvg): Formattable {
         const hw = entity.getHeightWidth();
         return { value: entity, height: hw.height, width: hw.width }
     }

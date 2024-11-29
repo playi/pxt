@@ -1,7 +1,9 @@
 /// <reference path='../localtypings/pxtarget.d.ts' />
+/// <reference path='../localtypings/dompurify.d.ts' />
 /// <reference path="commonutil.ts"/>
 
 namespace pxt.docs {
+    // eslint-disable-next-line no-var
     declare var require: any;
     import U = pxtc.Util;
 
@@ -18,7 +20,17 @@ namespace pxt.docs {
     let stdsettings: Map<string> = {
         "parent": stdSetting,
         "short": stdSetting,
-        "description": "<!-- desc -->"
+        "description": "<!-- desc -->",
+        "activities": "<!-- activities -->",
+        "explicitHints": "<!-- hints -->",
+        "flyoutOnly": "<!-- flyout -->",
+        "hideIteration": "<!-- iter -->",
+        "codeStart": "<!-- start -->",
+        "codeStop": "<!-- stop -->",
+        "autoOpen": "<!-- autoOpen -->",
+        "autoexpandOff": "<!-- autoexpandOff -->",
+        "preferredEditor": "<!-- preferredEditor -->",
+        "tutorialCodeValidation": "<!-- tutorialCodeValidation -->"
     }
 
     function replaceAll(replIn: string, x: string, y: string) {
@@ -78,6 +90,12 @@ namespace pxt.docs {
         if (typeof marked !== "undefined") return marked;
         if (typeof require === "undefined") return undefined;
         return require("marked") as typeof marked;
+    }
+
+    export let requireDOMSanitizer = () => {
+        if (typeof DOMPurify !== "undefined") return DOMPurify.sanitize;
+        if (typeof require === "undefined") return undefined;
+        return (require("DOMPurify") as typeof DOMPurify).sanitize;
     }
 
     export interface RenderData {
@@ -155,8 +173,17 @@ namespace pxt.docs {
                 NAME: m.name,
             }
             if (m.subitems) {
-                if (lev == 0) templ = menus["top-dropdown"]
-                else templ = menus["inner-dropdown"]
+                if (!!menus["toc-dropdown"]) {
+                    templ = menus["toc-dropdown"]
+                }
+                else {
+                    /** TODO: when all targets bumped to include https://github.com/microsoft/pxt/pull/6058,
+                     * swap templ assignments below with the commented out version, and remove
+                     * top-dropdown, top-dropdown-noheading, inner-dropdown, and nested-dropdown from
+                     * docfiles/macros.html **/
+                    if (lev == 0) templ = menus["top-dropdown"]
+                    else templ = menus["inner-dropdown"]
+                }
                 mparams["ITEMS"] = m.subitems.map(e => recMenu(e, lev + 1)).join("\n")
             } else {
                 if (/^-+$/.test(m.name)) {
@@ -183,7 +210,7 @@ namespace pxt.docs {
                     return true
                 }
             }
-            if (d.filepath && d.filepath.indexOf(m.path) == 0) {
+            if (d.filepath && !!m.path && d.filepath.indexOf(m.path) == 0) {
                 tocPath.push(m)
                 return true
             }
@@ -191,7 +218,6 @@ namespace pxt.docs {
         };
         TOC.forEach(isCurrentTOC)
 
-        let currentTocEntry: TOCMenuEntry;
         let recTOC = (m: TOCMenuEntry, lev: number) => {
             let templ = toc["item"]
             let mparams: Map<string> = {
@@ -204,7 +230,6 @@ namespace pxt.docs {
             if (tocPath.indexOf(m) >= 0) {
                 mparams["ACTIVE"] = 'active';
                 mparams["EXPANDED"] = 'true';
-                currentTocEntry = m;
                 breadcrumb.push({
                     name: m.name,
                     href: m.path
@@ -213,14 +238,29 @@ namespace pxt.docs {
                 mparams["EXPANDED"] = 'false';
             }
             if (m.subitems && m.subitems.length > 0) {
-                if (lev == 0) {
+                if (!!toc["toc-dropdown"]) {
+                    // if macros support "toc-*", use them
                     if (m.name !== "") {
-                        templ = toc["top-dropdown"]
+                        templ = toc["toc-dropdown"]
                     } else {
-                        templ = toc["top-dropdown-noHeading"]
+                        templ = toc["toc-dropdown-noLink"]
                     }
-                } else if (lev == 1) templ = toc["inner-dropdown"]
-                else templ = toc["nested-dropdown"]
+                }
+                else {
+                    // if macros don't support "toc-*"
+                    /** TODO: when all targets bumped to include https://github.com/microsoft/pxt/pull/6058,
+                     * delete this else branch, and remove
+                     * top-dropdown, top-dropdown-noheading, inner-dropdown, and nested-dropdown from
+                     * docfiles/macros.html **/
+                    if (lev == 0) {
+                        if (m.name !== "") {
+                            templ = toc["top-dropdown"]
+                        } else {
+                            templ = toc["top-dropdown-noHeading"]
+                        }
+                    } else if (lev == 1) templ = toc["inner-dropdown"]
+                    else templ = toc["nested-dropdown"]
+                }
                 mparams["ITEMS"] = m.subitems.map(e => recTOC(e, lev + 1)).join("\n")
             } else {
                 if (/^-+$/.test(m.name)) {
@@ -241,26 +281,13 @@ namespace pxt.docs {
             breadcrumbHtml = `
             <nav class="ui breadcrumb" aria-label="${lf("Breadcrumb")}">
                 ${breadcrumb.map((b, i) =>
-                    `<a class="${i == breadcrumb.length - 1 ? "active" : ""} section"
+                `<a class="${i == breadcrumb.length - 1 ? "active" : ""} section"
                         href="${html2Quote(b.href)}" aria-current="${i == breadcrumb.length - 1 ? "page" : ""}">${html2Quote(b.name)}</a>`)
                     .join('<i class="right chevron icon divider"></i>')}
             </nav>`;
         }
 
         params["breadcrumb"] = breadcrumbHtml;
-
-        if (currentTocEntry) {
-            if (currentTocEntry.prevPath) {
-                params["prev"] = `<a href="${normalizeUrl(currentTocEntry.prevPath)}" class="navigation navigation-prev " title="${currentTocEntry.prevName}">
-                                    <i class="icon angle left"></i>
-                                </a>`;
-            }
-            if (currentTocEntry.nextPath) {
-                params["next"] = `<a href="${normalizeUrl(currentTocEntry.nextPath)}" class="navigation navigation-next " title="${currentTocEntry.nextName}">
-                                    <i class="icon angle right"></i>
-                                </a>`;
-            }
-        }
 
         if (theme.boardName)
             params["boardname"] = html2Quote(theme.boardName);
@@ -270,9 +297,20 @@ namespace pxt.docs {
             params["drivename"] = html2Quote(theme.driveDisplayName);
         if (theme.homeUrl)
             params["homeurl"] = html2Quote(theme.homeUrl);
+
+
         params["targetid"] = theme.id || "???";
         params["targetname"] = theme.name || "Microsoft MakeCode";
-        params["targetlogo"] = theme.docsLogo ? `<img aria-hidden="true" role="presentation" class="ui ${theme.logoWide ? "small" : "mini"} image" src="${theme.docsLogo}" />` : ""
+        params["docsheader"] = theme.docsHeader || "Documentation";
+        params["orgtitle"] = "MakeCode";
+
+        const docsLogo = theme.docsLogo && U.htmlEscape(theme.docsLogo);
+        const orgLogo = (theme.organizationWideLogo || theme.organizationLogo) && U.htmlEscape(theme.organizationWideLogo || theme.organizationLogo);
+        const orglogomobile = theme.organizationLogo && U.htmlEscape(theme.organizationLogo)
+        params["targetlogo"] = docsLogo ? `<img aria-hidden="true" role="presentation" class="ui ${theme.logoWide ? "small" : "mini"} image" src="${docsLogo}" />` : ""
+        params["orglogo"] = orgLogo ? `<img aria-hidden="true" role="presentation" class="ui image" src="${orgLogo}" />` : ""
+        params["orglogomobile"] = orglogomobile ? `<img aria-hidden="true" role="presentation" class="ui image" src="${orglogomobile}" />` : ""
+
         let ghURLs = d.ghEditURLs || []
         if (ghURLs.length) {
             let ghText = `<p style="margin-top:1em">\n`
@@ -293,9 +331,10 @@ namespace pxt.docs {
         `
         params['accMenu'] = accMenuHtml;
 
+        const printButtonTitleText = lf("Print this page")
         // Add print button
         const printBtnHtml = `
-            <button id="printbtn" class="circular ui icon right floated button hideprint" title="${lf("Print this page")}">
+            <button id="printbtn" class="circular ui icon right floated button hideprint" title="${printButtonTitleText}" aria-label="${printButtonTitleText}">
                 <i class="icon print"></i>
             </button>
         `
@@ -303,7 +342,7 @@ namespace pxt.docs {
 
         // Add sidebar toggle
         const sidebarToggleHtml = `
-            <a id="togglesidebar" class="launch icon item" tabindex="0" title="Side menu" aria-label="${lf("Side menu")}" role="menu" aria-expanded="false">
+            <a id="togglesidebar" class="launch icon item" tabindex="0" title="Side menu" aria-label="${lf("Side menu")}" role="menuitem" aria-expanded="false">
                 <i class="content icon"></i>
             </a>
         `
@@ -344,6 +383,8 @@ namespace pxt.docs {
             "printBtn",
             "breadcrumb",
             "targetlogo",
+            "orglogo",
+            "orglogomobile",
             "github",
             "JSON",
             "appstoremeta",
@@ -377,11 +418,12 @@ namespace pxt.docs {
 
     export function setupRenderer(renderer: marked.Renderer) {
         renderer.image = function (href: string, title: string, text: string) {
-            let out = '<img class="ui centered image" src="' + href + '" alt="' + text + '"';
+            let out = '<img class="ui image" src="' + href + '" alt="' + text + '"';
             if (title) {
                 out += ' title="' + title + '"';
             }
-            out += this.options.xhtml ? '/>' : '>';
+            out += ' loading="lazy"';
+            out += (this as any).options.xhtml ? '/>' : '>';
             return out;
         }
         renderer.listitem = function (text: string): string {
@@ -395,14 +437,29 @@ namespace pxt.docs {
             if (m) {
                 text = m[1]
                 id = m[2]
-            } else {
-                id = raw.toLowerCase().replace(/[^\w]+/g, '-')
             }
             // remove tutorial macros
             if (text)
-                text = text.replace(/@(fullscreen|unplugged)/g, '');
-            return `<h${level} id="${this.options.headerPrefix}${id}">${text}</h${level}>`
-        } as any
+                text = text.replace(/@(fullscreen|unplugged|showdialog|showhint)/gi, '');
+            // remove brackets for hiding step title
+            if (text.match(/\{([\s\S]+)\}/))
+                text = text.match(/\{([\s\S]+)\}/)[1].trim()
+            if (id === "") {
+                id = text.toLowerCase().replace(/[^\w]+/g, '-')
+            }
+            return `<h${level} id="${(this as any).options.headerPrefix}${id}">${text}</h${level}>`
+        }
+    }
+
+    export function renderConditionalMacros(template: string, pubinfo: Map<string>): string {
+        return template
+            .replace(/<!--\s*@(ifn?def)\s+(\w+)\s*-->([^]*?)<!--\s*@endif\s*-->/g,
+                (full, cond, sym, inner) => {
+                    if ((cond == "ifdef" && pubinfo[sym]) || (cond == "ifndef" && !pubinfo[sym]))
+                        return `<!-- ${cond} ${sym} -->${inner}<!-- endif -->`
+                    else
+                        return `<!-- ${cond} ${sym} endif -->`
+                });
     }
 
     export function renderMarkdown(opts: RenderOptions): string {
@@ -443,14 +500,8 @@ namespace pxt.docs {
                     return "<!-- include " + fn + " -->\n" + cont + "\n<!-- end include -->\n"
                 })
 
-        template = template
-            .replace(/<!--\s*@(ifn?def)\s+(\w+)\s*-->([^]*?)<!--\s*@endif\s*-->/g,
-                (full, cond, sym, inner) => {
-                    if ((cond == "ifdef" && pubinfo[sym]) || (cond == "ifndef" && !pubinfo[sym]))
-                        return `<!-- ${cond} ${sym} -->${inner}<!-- endif -->`
-                    else
-                        return `<!-- ${cond} ${sym} endif -->`
-                })
+
+        template = renderConditionalMacros(template, pubinfo);
 
         if (opts.locale)
             template = translate(template, opts.locale).text
@@ -475,12 +526,14 @@ namespace pxt.docs {
         setupRenderer(renderer);
         const linkRenderer = renderer.link;
         renderer.link = function (href: string, title: string, text: string) {
-            const relative = href.indexOf('/') == 0;
+            const relative = new RegExp('^[/#]').test(href);
             const target = !relative ? '_blank' : '';
             if (relative && d.versionPath) href = `/${d.versionPath}${href}`;
             const html = linkRenderer.call(renderer, href, title, text);
             return html.replace(/^<a /, `<a ${target ? `target="${target}"` : ''} rel="nofollow noopener" `);
         };
+
+        let sanitizer = requireDOMSanitizer();
         markedInstance.setOptions({
             renderer: renderer,
             gfm: true,
@@ -488,6 +541,7 @@ namespace pxt.docs {
             breaks: false,
             pedantic: false,
             sanitize: true,
+            sanitizer: sanitizer,
             smartLists: true,
             smartypants: true
         });
@@ -528,16 +582,35 @@ ${opts.repo.name.replace(/^pxt-/, '')}=github:${opts.repo.fullName}#${opts.repo.
         // support for breaks which somehow don't work out of the box
         html = html.replace(/&lt;br\s*\/&gt;/ig, "<br/>");
 
-        let endBox = ""
+        // github will render images if referenced as ![](/docs/static/foo.png)
+        // we require /static/foo.png
+        html = html.replace(/(<img [^>]* src=")\/docs\/static\/([^">]+)"/g,
+            (f, pref, addr) => pref + '/static/' + addr + '"')
 
-        html = html.replace(/<h\d[^>]+>\s*([~@])\s*(.*?)<\/h\d>/g, (f, tp, body) => {
+        let endBox = ""
+        let boxSize = 0;
+        function appendEndBox(size: number, box: string, html: string): string {
+            let r = html;
+            if (size <= boxSize) {
+                r = endBox + r;
+                endBox = "";
+                boxSize = 0;
+            }
+            return r;
+        }
+
+        html = html.replace(/<h(\d)[^>]+>\s*([~@])?\s*(.*?)<\/h\d>/g, (f, lvl, tp, body) => {
             let m = /^(\w+)\s+(.*)/.exec(body)
             let cmd = m ? m[1] : body
             let args = m ? m[2] : ""
             let rawArgs = args
             args = html2Quote(args)
             cmd = html2Quote(cmd)
-            if (tp == "@") {
+            lvl = parseInt(lvl);
+
+            if (!tp) {
+                return appendEndBox(lvl, endBox, f);
+            } else if (tp == "@") {
                 let expansion = U.lookup(d.settings, cmd)
                 if (expansion != null) {
                     pubinfo[cmd] = args
@@ -555,7 +628,7 @@ ${opts.repo.name.replace(/^pxt-/, '')}=github:${opts.repo.fullName}#${opts.repo.
                     CMD: cmd
                 }
 
-                return injectHtml(expansion, ivars, ["ARGS", "CMD"])
+                return appendEndBox(lvl, endBox, injectHtml(expansion, ivars, ["ARGS", "CMD"]))
             } else {
                 if (!cmd) {
                     let r = endBox
@@ -566,8 +639,14 @@ ${opts.repo.name.replace(/^pxt-/, '')}=github:${opts.repo.fullName}#${opts.repo.
                 let box = U.lookup(d.boxes, cmd)
                 if (box) {
                     let parts = box.split("@BODY@")
-                    endBox = parts[1]
-                    return parts[0].replace("@ARGS@", args)
+                    let r = appendEndBox(lvl, endBox, parts[0].replace("@ARGS@", args));
+                    endBox = parts[1];
+
+                    let attrs = box.match(/data-[^>\s]+/ig);
+                    if (attrs && attrs.indexOf('data-inferred') >= 0) {
+                        boxSize = lvl;
+                    }
+                    return r;
                 } else {
                     if (opts.throwOnError)
                         U.userError(`Unknown box: ~ ${cmd}`);
@@ -575,6 +654,8 @@ ${opts.repo.name.replace(/^pxt-/, '')}=github:${opts.repo.fullName}#${opts.repo.
                 }
             }
         })
+
+        if (endBox) html = html + endBox;
 
         if (!pubinfo["title"]) {
             let titleM = /<h1[^<>]*>([^<>]+)<\/h1>/.exec(html)
@@ -620,7 +701,8 @@ ${opts.repo.name.replace(/^pxt-/, '')}=github:${opts.repo.fullName}#${opts.repo.
         }
 
         pubinfo["body"] = html
-        pubinfo["name"] = pubinfo["title"] + " - " + pubinfo["targetname"]
+        // don't mangle target name in title, it is already in the sitename
+        pubinfo["name"] = pubinfo["title"] || ""
 
         for (let k of Object.keys(opts.theme)) {
             let v = (opts.theme as any)[k]
@@ -801,13 +883,15 @@ ${opts.repo.name.replace(/^pxt-/, '')}=github:${opts.repo.fullName}#${opts.repo.
             return null
 
         const markedInstance = pxt.docs.requireMarked();
+        const sanitizer = requireDOMSanitizer();
         const options = {
             renderer: new markedInstance.Renderer(),
             gfm: true,
             tables: false,
             breaks: false,
             pedantic: false,
-            sanitize: false,
+            sanitize: true,
+            sanitizer: sanitizer,
             smartLists: false,
             smartypants: false
         };
@@ -817,6 +901,7 @@ ${opts.repo.name.replace(/^pxt-/, '')}=github:${opts.repo.fullName}#${opts.repo.
         currentStack.push(dummy);
 
         let tokens = markedInstance.lexer(summaryMD, options);
+        let wasListStart = false
         tokens.forEach((token: any) => {
             switch (token.type) {
                 case "heading":
@@ -828,17 +913,25 @@ ${opts.repo.name.replace(/^pxt-/, '')}=github:${opts.repo.fullName}#${opts.repo.
                     break;
                 case "list_item_start":
                 case "loose_item_start":
+                    wasListStart = true;
                     let newItem: pxt.TOCMenuEntry = {
                         name: '',
+                        path: '',
                         subitems: []
                     };
                     currentStack.push(newItem);
-                    break;
+                    return;
                 case "text":
-                    token.text.replace(/^\[(.*)\]\((.*)\)$/i, function (full: string, name: string, path: string) {
-                        currentStack[currentStack.length - 1].name = name;
-                        currentStack[currentStack.length - 1].path = path.replace('.md', '');
-                    });
+                    let lastTocEntry = currentStack[currentStack.length - 1]
+                    if (token.text.indexOf("[") >= 0) {
+                        token.text.replace(/\[(.*?)\]\((.*?)\)/i, function (full: string, name: string, path: string) {
+                            lastTocEntry.name = name;
+                            lastTocEntry.path = path.replace('.md', '');
+                        });
+                    }
+                    else if (wasListStart) {
+                        lastTocEntry.name = token.text
+                    }
                     break;
                 case "list_item_end":
                 case "loose_item_end":
@@ -849,33 +942,11 @@ ${opts.repo.name.replace(/^pxt-/, '')}=github:${opts.repo.fullName}#${opts.repo.
                     break;
                 default:
             }
+            wasListStart = false;
         })
 
         let TOC = dummy.subitems
         if (!TOC || TOC.length == 0) return null
-
-        let previousNode: pxt.TOCMenuEntry;
-        // Scan tree and build next / prev paths
-        let buildPrevNext = (node: pxt.TOCMenuEntry) => {
-            if (previousNode) {
-                node.prevName = previousNode.name;
-                node.prevPath = previousNode.path;
-
-                previousNode.nextName = node.name;
-                previousNode.nextPath = node.path;
-            }
-            if (node.path) {
-                previousNode = node;
-            }
-            node.subitems.forEach((tocItem, tocIndex) => {
-                buildPrevNext(tocItem);
-            })
-        }
-
-        TOC.forEach((tocItem, tocIndex) => {
-            buildPrevNext(tocItem)
-        })
-
         return TOC
     }
 

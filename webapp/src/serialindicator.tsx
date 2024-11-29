@@ -3,10 +3,12 @@
 import * as React from "react";
 import * as sui from "./sui";
 import * as data from "./data";
+import { fireClickOnEnter } from "./util";
 
 export interface SerialIndicatorProps {
     isSim: boolean,
     onClick: () => any
+    parent: pxt.editor.IProjectView;
 }
 
 export interface SerialIndicatorState {
@@ -34,8 +36,19 @@ export class SerialIndicator extends data.Component<SerialIndicatorProps, Serial
             const sim = !!msg.sim
             if (sim === this.props.isSim) {
                 this.setState({ active: true })
+
+                const parent = this.props.parent;
+                if (this.props.isSim) {
+                    parent.setState({ simSerialActive: true });
+                } else {
+                    parent.setState({ deviceSerialActive: true });
+                }
             }
         }
+    }
+
+    active() {
+        return !!this.state.active;
     }
 
     clear() {
@@ -43,9 +56,9 @@ export class SerialIndicator extends data.Component<SerialIndicatorProps, Serial
     }
 
     renderCore() {
-        if (!this.state.active) return <div />;
+        if (!this.active()) return <div />;
         return (
-            <div role="button" title={lf("Open console")} className="ui label circular" tabIndex={0} onClick={this.props.onClick} onKeyDown={sui.fireClickOnEnter}>
+            <div role="button" title={lf("Open console")} className="ui label circular" tabIndex={0} onClick={this.props.onClick} onKeyDown={fireClickOnEnter}>
                 <div className="detail">
                     <img alt={lf("Animated bar chart")} className="barcharticon" src={pxt.Util.pathJoin(pxt.webConfig.commitCdnUrl, `images/Bars_black.gif`)}></img>
                 </div>

@@ -14,7 +14,7 @@
         bottom: 0;
         width:100%;
         height:100%;
-        background-color: @greenScreenColor !important;        
+        background-color: @greenScreenColor !important;
     }
     .videoContainer video {
         min-width:100%;
@@ -24,7 +24,7 @@
         transform: scaleX(-1);
     }
 
-    #maineditor, #filelist, .blocklyToolboxDiv, svg.blocklySvg,
+    #maineditor, #editorSidebar, .blocklyToolboxDiv, svg.blocklySvg,
     .monaco-editor, .monaco-editor .margin, .monaco-editor .monaco-editor-background,
     .monacoToolboxDiv {
         background-image: none !important;
@@ -45,6 +45,14 @@
         box-shadow: 1px 1px #000;
     }
 
+    .blocklyBlockBackground {
+        stroke-width: 2px;
+    }
+
+    .blocklyBlockBackground[fill="@{greenScreenBlockColor}"] {
+        fill: @greenScreenGreen !important;
+    }
+
     .pxtToolbox:not(.invertedToolbox) {
         .blocklyTreeRow:not(.blocklyTreeSelected) {
             background: white;
@@ -60,6 +68,6 @@
         background-image: none !important;
         background-color: transparent !important;
         border: none !important;
-        box-shadow: none !important;    
+        box-shadow: none !important;
     }
 }

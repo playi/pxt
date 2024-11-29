@@ -1,5 +1,6 @@
 /// <reference path="../localtypings/monaco.d.ts" />
 /// <reference path="../built/pxtlib.d.ts"/>
+/// <reference path="../built/pxtblocks.d.ts"/>
 
 namespace pxt.vs {
 
@@ -37,7 +38,8 @@ namespace pxt.vs {
                 let proto = "pkg:" + fp;
                 if (/\.(ts)$/.test(f) && fp != currFile) {
                     if (!(monaco.languages.typescript.typescriptDefaults as any).getExtraLibs()[fp]) {
-                        let content = pkg.readFile(f) || " ";
+                        // inserting a space creates syntax errors in Python
+                        let content = pkg.readFile(f) || "\n";
                         libs[fp] = monaco.languages.typescript.typescriptDefaults.addExtraLib(content, fp);
                     }
                     modelMap[fp] = "1";
@@ -87,57 +89,49 @@ namespace pxt.vs {
     }
 
     function setupMonaco() {
-        if (!monaco.languages.typescript) return;
-
         initAsmMonarchLanguage();
-
-        // validation settings
-        monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
-            noSyntaxValidation: true,
-            noSemanticValidation: true
-        });
-
-        // compiler options
-        monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
-            allowUnreachableCode: true,
-            noImplicitAny: true,
-            allowJs: false,
-            allowUnusedLabels: true,
-            target: monaco.languages.typescript.ScriptTarget.ES5,
-            outDir: "built",
-            rootDir: ".",
-            noLib: true,
-            mouseWheelZoom: false
-        });
-
-        // maximum idle time
-        monaco.languages.typescript.typescriptDefaults.setMaximunWorkerIdleTime(20 * 60 * 1000);
+        initTypeScriptLanguageDefinition();
     }
 
     export function createEditor(element: HTMLElement): monaco.editor.IStandaloneCodeEditor {
         const inverted = pxt.appTarget.appTheme.invertedMonaco;
+        const hasFieldEditors = !!(pxt.appTarget.appTheme.monacoFieldEditors && pxt.appTarget.appTheme.monacoFieldEditors.length);
+        const isAndroid = pxt.BrowserUtils.isAndroid();
 
         let editor = monaco.editor.create(element, {
             model: null,
             ariaLabel: Util.lf("JavaScript editor"),
             fontFamily: "'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', 'monospace'",
-            scrollBeyondLastLine: false,
+            scrollBeyondLastLine: true,
             language: "typescript",
             mouseWheelZoom: false,
             wordBasedSuggestions: true,
             lineNumbersMinChars: 3,
             formatOnPaste: true,
+            folding: hasFieldEditors,
+            glyphMargin: hasFieldEditors || pxt.appTarget.appTheme.debugger,
             minimap: {
                 enabled: false
             },
-            autoIndent: true,
+            fixedOverflowWidgets: true,
+            autoIndent: "full",
+            useTabStops: true,
             dragAndDrop: true,
-            matchBrackets: true,
+            matchBrackets: "always",
             occurrencesHighlight: false,
             quickSuggestionsDelay: 200,
             theme: inverted ? 'vs-dark' : 'vs',
-            //accessibilitySupport: 'on',
-            accessibilityHelpUrl: "" //TODO: Add help url explaining how to use the editor with a screen reader
+            renderIndentGuides: true,
+            accessibilityHelpUrl: "", //TODO: Add help url explaining how to use the editor with a screen reader
+            // disable completions on android
+            quickSuggestions: {
+                "other": !isAndroid,
+                "comments": !isAndroid,
+                "strings": !isAndroid
+           },
+            acceptSuggestionOnCommitCharacter: !isAndroid,
+            acceptSuggestionOnEnter: !isAndroid ? "on" : "off",
+            accessibilitySupport: !isAndroid ? "on" : "off"
         });
 
         editor.layout();
@@ -241,5 +235,35 @@ namespace pxt.vs {
                 ],
             }
         });
+    }
+
+    function initTypeScriptLanguageDefinition() {
+        if (!monaco.languages.typescript) {
+            return;
+        }
+
+        // validation settings
+        monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
+            noSyntaxValidation: true,
+            noSemanticValidation: true
+         });
+
+        // Register our worker
+        monaco.languages.typescript.typescriptDefaults.setWorkerOptions({
+            customWorkerPath: pxt.webConfig.typeScriptWorkerJs
+        });
+
+        // compiler options
+        monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
+            allowUnreachableCode: true,
+            noImplicitAny: true,
+            allowJs: false,
+            allowUnusedLabels: true,
+            target: monaco.languages.typescript.ScriptTarget.ES5,
+            outDir: "built",
+            rootDir: ".",
+            noLib: true,
+            mouseWheelZoom: false
+         });
     }
 }

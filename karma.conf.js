@@ -1,5 +1,8 @@
-// Karma configuration
+const puppeteer = require('puppeteer');
+process.env.CHROME_BIN = puppeteer.executablePath()
+console.log(`chromium: `, process.env.CHROME_BIN)
 
+// Karma configuration
 module.exports = function(config) {
   config.set({
 
@@ -14,7 +17,6 @@ module.exports = function(config) {
 
     // list of files / patterns to load in the browser
     files: [
-      'built/web/bluebird.min.js',
       'built/web/jquery.js',
       'built/web/typescript.js',
       'webapp/public/blockly/**/*.js',
@@ -67,7 +69,7 @@ module.exports = function(config) {
 
     // We don't use the watcher but for some reason this must be set to true for tests to run
     autoWatch: true,
-    browsers: [process.env.TRAVIS ? 'chromium_travis' : 'Chrome'],
+    browsers: [process.env.TRAVIS ? 'chromium_travis' : 'ChromeHeadless'],
 
     // Continuous Integration mode
     // if true, Karma captures browsers, runs the tests and exits

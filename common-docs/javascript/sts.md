@@ -2,14 +2,14 @@
 
 ### ~ hint
 
-This is a draft reflecting the design of STS - not exactly what is implemented, but quite close.
+This is a draft reflecting the design of Static TypeScript (STS) - not exactly what is implemented, but quite close.
 Comments welcome. 
 
 ### ~ 
 
 [TypeScript](http://typescriptlang.org) is a typed superset of JavaScript designed to enable JavaScript developers 
 to take advantage of code intellisense,
-static checking and refactoring made possible by types.  TypeScript is gradually typed, meaning that types are optional. 
+static checking and refactoring made possible by types. TypeScript is gradually typed, meaning that types are optional. 
 Type inference helps to assign types to untyped code.
 
 In this document, we define a subset of TypeScript called Static TypeScript (STS, for short), 
@@ -148,7 +148,7 @@ associated with the class.
 ### Functions
 
 In STS, functions and methods are related by classical function subtyping (no parameter 
-bivariance, as in TypeScript). Furthemore:
+bivariance, as in TypeScript). Furthermore:
 * function/method overloading is not permitted;
 * a function can only be cast to an interface J which has a single call signature 
   matching the function's type; the interface J can have no other properties
@@ -156,7 +156,7 @@ bivariance, as in TypeScript). Furthemore:
 ### Arrays
 
 As with functions, arrays can only be cast to an interface J with has a single index
-singature matching the array's type; the interface J can have no other properties.
+signature matching the array's type; the interface J can have no other properties.
 
 ## Optional properties
 

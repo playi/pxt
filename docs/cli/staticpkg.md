@@ -5,7 +5,7 @@
 Packages the target into static HTML pages
 
 ```
-pxt staticpkg [--route route] [--githubpages] [--output output]
+pxt staticpkg [--route route] [--githubpages] [--output output] [--locs-src locs-src]
 ```
 
 ## Description
@@ -20,15 +20,11 @@ Routing path. If missing, defaults to ``local``. The route will be injected into
 
 ### githubpages (optional)
 
-Generate a web site compatiable with GitHub pages.
+Generate a web site compatible with GitHub pages.
 
 ### output (optional)
 
-Directory for generated files. 
-
-### bump (option)
-
-Bump version number generating pages
+Directory for generated files.
 
 ### ~ hint
 
@@ -36,6 +32,34 @@ This directory is cleaned before starting the process.
 
 ### ~
 
+### locs-src <directory> (optional)
+
+Directory to fetch editor translations to include in the build.
+
+Files must be listed as follows:
+
+```
+{locs-src}/{lang id}/target-strings.json
+{locs-src}/{lang id}/sim-strings.json
+{locs-src}/{lang id}/{package id}-strings.json
+{locs-src}/{lang id}/{package id}-jsdoc-strings.json
+```
+
+where `{locs-src}` is the directory parameter passed in here,
+`{lang id}` is one of the language identifiers listed as in `availableLocales` in `pxtarget.json`,
+and `{package id}` is the for packages listed in `bundleddirs` (e.g. `core`).
+
+### minify (optional)
+
+Minifies all generated js files.
+
+### githubpages (optional)
+
+Generate a web site compatible with GitHub pages.
+
+### bump (option)
+
+Bump version number generating pages.
 
 ## Deploying PXT with static files
 
@@ -60,7 +84,7 @@ If you wish to publish your web site to GitHub pages, simply add ``--githubpages
 
 This will:
 * create a fresh checkout in `built/gh-pages` if needed
-* implicityly run `pxt staticpkg --route repo-name`
+* implicitly run `pxt staticpkg --route repo-name`
 * copy files from `built/packaged/repo-name` to `built/gh-pages`
 * add files to git, commit, and push
 

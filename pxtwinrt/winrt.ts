@@ -4,9 +4,11 @@ namespace pxt.winrt {
     type SuspendingArgs = Windows.ApplicationModel.ISuspendingEventArgs;
     type ResumingArgs = any;
 
+    pxt.BrowserUtils.isWinRT = isWinRT;
+
     export function promisify<T>(p: Windows.Foundation.IAsyncOperation<T> | Windows.Foundation.Projections.Promise<T>): Promise<T> {
         return new Promise<T>((resolve, reject) => {
-            p.done(v => resolve(v), e => reject(e));
+            p.then(v => resolve(v), e => reject(e));
         })
     }
 
@@ -28,7 +30,7 @@ namespace pxt.winrt {
         return typeof Windows !== "undefined";
     }
 
-    export function initAsync(importHexImpl?: (hex: pxt.cpp.HexFile, createNewIfFailed?: boolean) => void) {
+    export function initAsync(importHexImpl?: (hex: pxt.cpp.HexFile, options?: pxt.editor.ImportFileOptions) => void) {
         if (!isWinRT() || pxt.BrowserUtils.isIFrame()) return Promise.resolve();
 
         const uiCore = Windows.UI.Core;
@@ -37,15 +39,11 @@ namespace pxt.winrt {
         app.addEventListener("suspending", suspendingHandler);
         app.addEventListener("resuming", resumingHandler);
         navMgr.onbackrequested = (e) => {
-            try {
-                // Ignore the built-in back button; it tries to back-navigate the sidedoc panel, but it crashes the
-                // app if the sidedoc has been closed since the navigation happened
-                console.log("BACK NAVIGATION");
-                navMgr.appViewBackButtonVisibility = uiCore.AppViewBackButtonVisibility.collapsed;
-                e.handled = true;
-            } catch (err) {
-                console.error(err);
-            }
+            // Ignore the built-in back button; it tries to back-navigate the sidedoc panel, but it crashes the
+            // app if the sidedoc has been closed since the navigation happened
+            pxt.log("BACK NAVIGATION");
+            navMgr.appViewBackButtonVisibility = uiCore.AppViewBackButtonVisibility.collapsed;
+            e.handled = true;
         };
 
         initSerial();
@@ -64,14 +62,14 @@ namespace pxt.winrt {
         if (!isWinRT()) {
             return;
         }
-        initialActivationDeferred = Promise.defer<ActivationArgs>();
+        initialActivationDeferred = pxt.Util.defer<ActivationArgs>();
         const app = Windows.UI.WebUI.WebUIApplication as any;
         app.addEventListener("activated", initialActivationHandler);
     }
 
     export function loadActivationProject() {
         return initialActivationDeferred.promise
-            .then((args) => fileActivationHandler(args, /* createNewIfFailed */ true));
+            .then((args) => fileActivationHandler(args, /* openHomeIfFailed */ true));
     }
 
     export function hasActivationProjectAsync() {
@@ -129,22 +127,22 @@ namespace pxt.winrt {
                 () => suspensionDeferral.complete(),
                 (e) => suspensionDeferral.complete()
             )
-            .done();
+            .then();
     }
 
     function resumingHandler(args: ResumingArgs) {
         pxt.log(`resuming`);
         if (packetIO) {
             pxt.log(`reconnet pack io`);
-            packetIO.reconnectAsync().done();
+            packetIO.reconnectAsync();
         }
         initSerial();
     }
 
-    let initialActivationDeferred: Promise.Resolver<ActivationArgs>;
-    let importHex: (hex: pxt.cpp.HexFile, createNewIfFailed?: boolean) => void;
+    let initialActivationDeferred: pxt.Util.DeferredPromise<ActivationArgs>;
+    let importHex: (hex: pxt.cpp.HexFile, options?: pxt.editor.ImportFileOptions) => void;
 
-    function fileActivationHandler(args: ActivationArgs, createNewIfFailed = false) {
+    function fileActivationHandler(args: ActivationArgs, openHomeIfFailed = false) {
         if (args.kind === Windows.ApplicationModel.Activation.ActivationKind.file) {
             let info = args as Windows.UI.WebUI.WebUIFileActivatedEventArgs;
             let file: Windows.Storage.IStorageItem = info.files.getAt(0);
@@ -160,7 +158,7 @@ namespace pxt.winrt {
                         dataReader.close();
                         return pxt.cpp.unpackSourceFromHexAsync(new Uint8Array(ar));
                     })
-                    .then((hex) => importHex(hex, createNewIfFailed));
+                    .then((hex) => importHex(hex as unknown as pxt.cpp.HexFile, { openHomeIfFailed }));
             }
         }
     }

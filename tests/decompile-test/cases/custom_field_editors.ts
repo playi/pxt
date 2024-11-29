@@ -1,4 +1,5 @@
-/// <reference path="./testBlocks/basic.ts" />
+
+testNamespace.sliderFieldEditor(10);
 
 testNamespace.customFieldEditor(100);
 

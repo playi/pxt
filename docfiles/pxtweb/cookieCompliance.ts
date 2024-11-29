@@ -1,47 +1,16 @@
-/// <reference path="../../localtypings/mscc.d.ts" />
 /// <reference path="../../pxtwinrt/winrtrefs.d.ts"/>
 
-declare var process: any;
+declare let process: any;
 
 namespace pxt {
     type Map<T> = { [index: string]: T };
-
-    interface CookieBannerInfo {
-        /* Does the banner need to be shown? */
-        IsConsentRequired: boolean;
-
-        /* Name of the cookie, usually MSCC */
-        CookieName: string;
-
-        /* HTML for the banner to be embedded into the page */
-        Markup: string;
-
-        /* Scripts to be loaded in the page for the banner */
-        Js: string[];
-
-        /* CSS files to be loaded in the page for the banner*/
-        Css: string[];
-
-        /* The minimum date for which consent is considered valid (any consent given before this date does not count) */
-        MinimumConsentDate: string;
-
-        /* Error message from the server, if present */
-        Error?: string;
-    }
-
-    interface HttpResponse {
-        status: number;
-        body: string;
-    }
-
-    interface Callback<T> {
-        (err?: any, res?: T): void;
-    }
 
     const eventBufferSizeLimit = 20;
     const queues: TelemetryQueue<any, any, any>[] = [];
 
     let analyticsLoaded = false;
+    let interactiveConsent = false;
+    let isProduction = false;
 
     class TelemetryQueue<A, B, C> {
         private q: [A, B, C][] = [];
@@ -70,58 +39,117 @@ namespace pxt {
     let eventLogger: TelemetryQueue<string, Map<string>, Map<number>>;
     let exceptionLogger: TelemetryQueue<any, string, Map<string>>;
 
+    // performance measuring, added here because this is amongst the first (typescript) code ever executed
+    export namespace perf {
+        let enabled: boolean;
+
+        export let startTimeMs: number;
+        export let stats: {
+            // name, start, duration
+            durations: [string, number, number][],
+            // name, event
+            milestones: [string, number][]
+        } = {
+            durations: [],
+            milestones: []
+        }
+        export let perfReportLogged = false
+        export function splitMs(): number {
+            return Math.round(performance.now() - startTimeMs)
+        }
+        export function prettyStr(ms: number): string {
+            ms = Math.round(ms)
+            let r_ms = ms % 1000
+            let s = Math.floor(ms / 1000)
+            let r_s = s % 60
+            let m = Math.floor(s / 60)
+            if (m > 0)
+                return `${m}m${r_s}s`
+            else if (s > 5)
+                return `${s}s`
+            else if (s > 0)
+                return `${s}s${r_ms}ms`
+            else
+                return `${ms}ms`
+        }
+        export function splitStr(): string {
+            return prettyStr(splitMs())
+        }
+
+        export function recordMilestone(msg: string, time: number = splitMs()) {
+            stats.milestones.push([msg, time])
+        }
+        export function init() {
+            enabled = performance && !!performance.mark && !!performance.measure;
+            if (enabled) {
+                performance.measure("measure from the start of navigation to now")
+                let navStartMeasure = performance.getEntriesByType("measure")[0]
+                startTimeMs = navStartMeasure.startTime
+            }
+        }
+        export function measureStart(name: string) {
+            if (enabled) performance.mark(`${name} start`)
+        }
+        export function measureEnd(name: string) {
+            if (enabled && performance.getEntriesByName(`${name} start`).length) {
+                performance.mark(`${name} end`)
+                performance.measure(`${name} elapsed`, `${name} start`, `${name} end`)
+                let e = performance.getEntriesByName(`${name} elapsed`, "measure")
+                if (e && e.length === 1) {
+                    let measure = e[0]
+                    let durMs = measure.duration
+                    if (durMs > 10) {
+                        stats.durations.push([name, measure.startTime, durMs])
+                    }
+                }
+                performance.clearMarks(`${name} start`)
+                performance.clearMarks(`${name} end`)
+                performance.clearMeasures(`${name} elapsed`)
+            }
+        }
+        export function report(filter: string = null) {
+            if (enabled) {
+                let report = `performance report:\n`
+                for (let [msg, time] of stats.milestones) {
+                    if (!filter || msg.indexOf(filter) >= 0) {
+                        let pretty = prettyStr(time)
+                        report += `\t\t${msg} @ ${pretty}\n`
+                    }
+                }
+                report += `\n`
+                for (let [msg, start, duration] of stats.durations) {
+                    let filterIncl = filter && msg.indexOf(filter) >= 0
+                    if ((duration > 50 && !filter) || filterIncl) {
+                        let pretty = prettyStr(duration)
+                        report += `\t\t${msg} took ~ ${pretty}`
+                        if (duration > 1000) {
+                            report += ` (${prettyStr(start)} - ${prettyStr(start + duration)})`
+                        }
+                        report += `\n`
+                    }
+                }
+                console.log(report)
+            }
+            perfReportLogged = true
+        }
+        (function () {
+            init()
+            recordMilestone("first JS running")
+        })()
+    }
+
     export function initAnalyticsAsync() {
-        if (isNativeApp()) {
+        if (isNativeApp() || shouldHideCookieBanner()) {
             initializeAppInsightsInternal(true);
             return;
         }
 
-        if (isSandboxMode()) {
+        if ((window as any).pxtSkipAnalyticsCookie) {
             initializeAppInsightsInternal(false);
             return;
         }
 
-        getCookieBannerAsync(document.domain, detectLocale(), (bannerErr, info) => {
-            if (bannerErr || info.Error) {
-                // Start app insights, just don't drop any cookies
-                initializeAppInsightsInternal(false);
-                return;
-            }
-
-            // Clear the cookies if the consent is too old, mscc won't do it automatically
-            if (isConsentExpired(info.CookieName, info.MinimumConsentDate)) {
-                const definitelyThePast = new Date(0).toUTCString();
-                document.cookie = `ai_user=; expires=${definitelyThePast}`;
-                document.cookie = `ai_session=; expires=${definitelyThePast}`;
-                document.cookie = `${info.CookieName}=0; expires=${definitelyThePast}`;
-            }
-
-            let bannerDiv = document.getElementById("cookiebanner");
-            if (!bannerDiv) {
-                bannerDiv = document.createElement("div");
-                document.body.insertBefore(bannerDiv, document.body.firstChild);
-            }
-
-            // The markup is trusted because it's from our backend, so it shouldn't need to be scrubbed
-            /* tslint:disable:no-inner-html */
-            bannerDiv.innerHTML = info.Markup;
-            /* tslint:enable:no-inner-html */
-
-            if (info.Css && info.Css.length) {
-                info.Css.forEach(injectStylesheet)
-            }
-
-            all(info.Js || [], injectScriptAsync, msccError => {
-                if (!msccError && typeof mscc !== "undefined") {
-                    if (mscc.hasConsent()) {
-                        initializeAppInsightsInternal(true)
-                    }
-                    else {
-                        mscc.on("consent", () => initializeAppInsightsInternal(true));
-                    }
-                }
-            });
-        });
+        initializeAppInsightsInternal(true);
     }
 
     export function aiTrackEvent(id: string, data?: any, measures?: any) {
@@ -138,128 +166,56 @@ namespace pxt {
         exceptionLogger.track(err, kind, props);
     }
 
-    function detectLocale() {
-        // Intentionally ignoring the default locale in the target settings and the language cookie
-        // Warning: app.tsx overwrites the hash after reading the language so this needs
-        // to be called before that happens
-        const mlang = /(live)?lang=([a-z]{2,}(-[A-Z]+)?)/i.exec(window.location.href);
-        return mlang ? mlang[2] : ((navigator as any).userLanguage || navigator.language);
-    }
-
-    function getCookieBannerAsync(domain: string, locale: string, cb: Callback<CookieBannerInfo>) {
-        httpGetAsync(`https://makecode.com/api/mscc/${domain}/${locale}`, function (err, resp) {
-            if (err) {
-                cb(err);
-                return;
-            }
-
-            if (resp.status === 200) {
-                try {
-                    const info = JSON.parse(resp.body);
-                    cb(undefined, info as CookieBannerInfo);
-                    return;
-                }
-                catch (e) {
-                    cb(new Error("Bad response from server: " + resp.body))
-                    return;
-                }
-            }
-            cb(new Error("didn't get 200 response: " + resp.status + " " + resp.body));
-        });
-    }
-
-    function isConsentExpired(cookieName: string, minimumConsentDate: string) {
-        const minDate = Date.parse(minimumConsentDate);
-
-        if (!isNaN(minDate)) {
-            if (document && document.cookie) {
-                const cookies = document.cookie.split(";");
-                for (let cookie of cookies) {
-                    cookie = cookie.trim();
-                    if (cookie.indexOf("=") == cookieName.length && cookie.substr(0, cookieName.length) == cookieName) {
-                        const value = parseInt(cookie.substr(cookieName.length + 1));
-                        if (!isNaN(value)) {
-                            // The cookie value is the consent date in seconds since the epoch
-                            return value < Math.floor(minDate / 1e3);
-                        }
-                        return true;
-                    }
-                }
-            }
-        }
-
-        return true;
-    }
-
     export function initializeAppInsightsInternal(includeCookie = false) {
         // loadAppInsights is defined in docfiles/tracking.html
         const loadAI = (window as any).loadAppInsights;
         if (loadAI) {
-            loadAI(includeCookie);
+            isProduction = loadAI(includeCookie, telemetryInitializer);
             analyticsLoaded = true;
             queues.forEach(a => a.flush());
         }
     }
 
-    function httpGetAsync(url: string, cb: Callback<HttpResponse>) {
-        try {
-            let client: XMLHttpRequest;
-            let resolved = false
-            client = new XMLHttpRequest();
-            client.onreadystatechange = () => {
-                if (resolved) return // Safari/iOS likes to call this thing more than once
+    function telemetryInitializer(envelope: any) {
+        const pxtConfig = (window as any).pxtConfig;
 
-                if (client.readyState == 4) {
-                    resolved = true
-                    let res: HttpResponse = {
-                        status: client.status,
-                        body: client.responseText
-                    }
-                    cb(undefined, res);
-                }
-            }
+        if (typeof pxtConfig === "undefined" || !pxtConfig) return;
 
-            client.open("GET", url);
-            client.send();
+        const telemetryItem = envelope.data.baseData;
+        telemetryItem.properties = telemetryItem.properties || {};
+        telemetryItem.properties["target"] = pxtConfig.targetId;
+        telemetryItem.properties["stage"] = (pxtConfig.relprefix || "/--").replace(/[^a-z]/ig, '')
+
+        if (typeof Windows !== "undefined")
+            telemetryItem.properties["WindowsApp"] = 1;
+        const userAgent = navigator.userAgent.toLowerCase();
+        const userAgentRegexResult = /\belectron\/(\d+\.\d+\.\d+.*?)(?: |$)/i.exec(userAgent); // Example navigator.userAgent: "Mozilla/5.0 Chrome/61.0.3163.100 Electron/2.0.0 Safari/537.36"
+        if (userAgentRegexResult) {
+            telemetryItem.properties["Electron"] = 1;
+            telemetryItem.properties["ElectronVersion"] = userAgentRegexResult[1];
         }
-        catch (e) {
-            cb(e);
+
+        const pxtElectron = (window as any).pxtElectron;
+        if (typeof pxtElectron !== "undefined") {
+            telemetryItem.properties["PxtElectron"] = 1;
+            telemetryItem.properties["ElectronVersion"] = pxtElectron.versions.electronVersion;
+            telemetryItem.properties["ChromiumVersion"] = pxtElectron.versions.chromiumVersion;
+            telemetryItem.properties["NodeVersion"] = pxtElectron.versions.nodeVersion;
+            telemetryItem.properties["PxtElectronVersion"] = pxtElectron.versions.pxtElectronVersion;
+            telemetryItem.properties["PxtCoreVersion"] = pxtElectron.versions.pxtCoreVersion;
+            telemetryItem.properties["PxtTargetVersion"] = pxtElectron.versions.pxtTargetVersion;
+            telemetryItem.properties["PxtElectronIsProd"] = pxtElectron.versions.isProd;
         }
+
+        // "cookie" does not actually correspond to whether or not we drop the cookie because we recently
+        // switched to immediately dropping it rather than waiting. Instead, we maintain the legacy behavior
+        // of only setting it to true for production sites where interactive consent has been obtained
+        // so that we don't break legacy queries
+        telemetryItem.properties["cookie"] = interactiveConsent && isProduction;
     }
 
-    function injectStylesheet(href: string) {
-        if (document.head) {
-            const link = document.createElement("link");
-            link.setAttribute("rel", "stylesheet");
-            link.setAttribute("href", href);
-            link.setAttribute("type", "text/css");
-            document.head.appendChild(link);
-        }
-    }
-
-    function injectScriptAsync(src: string, cb: Callback<void>) {
-        let resolved = false;
-        if (document.body) {
-            const script = document.createElement("script");
-            script.setAttribute("type", "text/javascript");
-            script.onload = function (ev) {
-                if (!resolved) {
-                    cb();
-                    resolved = true;
-                }
-            };
-            script.onerror = function (err) {
-                if (!resolved) {
-                    cb(err);
-                    resolved = true;
-                }
-            }
-            document.body.appendChild(script);
-            script.setAttribute("src", src);
-        }
-        else {
-            throw new Error("Bad call to injectScriptAsync")
-        }
+    export function setInteractiveConsent(enabled: boolean) {
+        interactiveConsent = enabled;
     }
 
     /**
@@ -273,6 +229,21 @@ namespace pxt {
         return isUwp || isPxtElectron || isCC;
     }
     /**
+     * Checks whether we should hide the cookie banner
+     */
+    function shouldHideCookieBanner(): boolean {
+        //We don't want a cookie notification when embedded in editor controllers, we'll use the url to determine that
+        const noCookieBanner = isIFrame() && /nocookiebanner=1/i.test(window.location.href)
+        return noCookieBanner;
+    }
+    function isIFrame(): boolean {
+        try {
+            return window && window.self !== window.top;
+        } catch (e) {
+            return false;
+        }
+    }
+    /**
      * checks for sandbox
      */
     function isSandboxMode(): boolean {
@@ -280,30 +251,5 @@ namespace pxt {
         //We don't want cookie notification in the share page
         const sandbox = /sandbox=1|#sandbox|#sandboxproject/i.test(window.location.href)
         return sandbox;
-    }
-
-    // No promises, so here we are
-    function all<T, U>(values: T[], func: (value: T, innerCb: Callback<U>) => void, cb: Callback<U[]>) {
-        let index = 0;
-        let res: U[] = [];
-
-        let doNext = () => {
-            if (index >= values.length) {
-                cb(undefined, res);
-            }
-            else {
-                func(values[index++], (err, val) => {
-                    if (err) {
-                        cb(err);
-                    }
-                    else {
-                        res.push(val);
-                        doNext();
-                    }
-                });
-            }
-        };
-
-        doNext();
     }
 }

@@ -1,6 +1,6 @@
 # Accessibility
 
-**Microsoft MakeCode** includes some core features which promote greater accessibilty for everyone. The menus, the JavaScript editor and the documentation are accessible with the keyboard, assistive technologies, and a high contrast color mode. These improve the visibility of the UI elements and the navigation between them. The block editor is not accessible yet, so, accessible coding is done using just the [JavaScript editor](#javascript-editor).
+**Microsoft MakeCode** includes some core features which promote greater accessibility for everyone. The menus, the JavaScript editor and the documentation are accessible with the keyboard, assistive technologies, and a high contrast color mode. These improve the visibility of the UI elements and the navigation between them. The block editor is not accessible yet, so, accessible coding is done using just the [JavaScript editor](#javascript-editor).
 
 Here are the accessible features and how to enable and use them.
 
@@ -26,7 +26,7 @@ To close a dialog, navigate to the close button (shown as an **X** at the top ri
 These keyboard shortcuts are used in the [JavaScript editor](#javascript-editor):
 
 * By default, pressing ``Tab`` in the editor will insert the tab character.
-* Toggle this behavior by pressing ``Control+M`` on **Windows** or ``⌘+M`` on **Mac**.
+* Toggle this behavior by pressing ``Control+M`` on **Windows** or ``Control+Shift+M`` on **Mac**.
 * In order to jump to the toolbox from the editor. Press ``Control+Alt+T`` on **Windows** or ``⌘+Alt+T`` on **Mac**.
 
 ### Drop-down menu
@@ -49,6 +49,24 @@ Some menu items are cascading (a hierarchical view is shown with an arrow on the
 ![](/static/images/accessibility/accessibility-documentation-treeview.png)
 
 Use the ``Left`` or ``Right`` arrow keys to expand or collapse menu items.
+
+## Immersive reader
+
+Some MakeCode editors will have an option to use the [Microsoft Immersive Reader](https://education.microsoft.com/en-us/resource/9b010288) when certain text is displayed. The Immersive Reader is a tool to help with reading comprehension. It adds the ability to change colors, themes, font size, spacing, and highlight parts of speech. Along with its other capabilities, it will also read the text aloud. When available, the **Immersive Reader** icon appears near instructions or other information it will read.
+
+![Immersive reader button](/static/images/accessibility/immersive-reader-button.jpg)
+
+The Immersive Reader opens in a separate window to show and read the text.
+
+![Immersive reader window](/static/images/accessibility/immersive-reader.jpg)
+
+### ~reminder
+
+#### MakeCode Arcade and the Immersive Reader
+
+The [MakeCode Arcade](https://arcade.makecode.com) editor has the Immersive Reader available when displaying tutorial instructions.
+
+### ~ 
 
 ## Assistive technologies
 
@@ -92,4 +110,4 @@ The high contrast mode in the editor is available even when the operating system
 
 ## JavaScript editor
 
-Read more about accessibility for the **JavaScript editor** (keyboard navigation, screen readers and high contrast) in the [Monaco Editor Accessibility Guide](https://github.com/Microsoft/monaco-editor/wiki/Monaco-Editor-Accessibility-Guide).
+Read more about accessibility for the **JavaScript editor** (keyboard navigation, screen readers and high contrast) in the [Monaco Editor Accessibility Guide](https://github.com/microsoft/monaco-editor/wiki/Monaco-Editor-Accessibility-Guide).

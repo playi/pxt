@@ -11,16 +11,10 @@ These release tests apply to an editor that supports GitHub extensions.
 pxt testghpkgs
 ```
 
-If you get throttled:
+## Prerequisites
 
-* Login with your PXT token from https://makecode.com/oauth/get-token:
-
-```
-pxt login pxt TOKEN
-```
-
-* Login with a GitHub token:
+* Login with your PXT token from https://makecode.com/oauth/get-token by setting the following environment variable:
 
 ```
-pxt login github TOKEN
+set PXT_ACCESS_TOKEN=<token>
 ```

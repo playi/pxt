@@ -20,10 +20,11 @@ namespace ts.pxtc {
         "numops::orrs": "_numops_orrs",
         "numops::eors": "_numops_eors",
         "numops::ands": "_numops_ands",
+        "numops::lsls": "_numops_lsls",
+        "numops::asrs": "_numops_asrs",
+        "numops::lsrs": "_numops_lsrs",
         "pxt::toInt": "_numops_toInt",
         "pxt::fromInt": "_numops_fromInt",
-        "pxt::incr": "_pxt_incr",
-        "pxt::decr": "_pxt_decr",
     }
 
     // snippets for ARM Thumb assembly
@@ -32,11 +33,12 @@ namespace ts.pxtc {
             return target.stackAlign && target.stackAlign > 1
         }
         pushLR() {
-            if (this.stackAligned()) return "push {lr, r6}  ; r6 for align"
+            // r5 should contain GC-able value
+            if (this.stackAligned()) return "push {lr, r5}  ; r5 for align"
             else return "push {lr}"
         }
         popPC() {
-            if (this.stackAligned()) return "pop {pc, r6}  ; r6 for align"
+            if (this.stackAligned()) return "pop {pc, r5}  ; r5 for align"
             else return "pop {pc}"
         }
         nop() { return "nop" }
@@ -52,7 +54,7 @@ namespace ts.pxtc {
         push_fixed(regs: string[]) { return "push {" + regs.join(", ") + "}" }
         pop_fixed(regs: string[]) { return "pop {" + regs.join(", ") + "}" }
         proc_setup(numlocals: number, main?: boolean) {
-            let r = "push {lr}\n"
+            let r = ""
             if (numlocals > 0) {
                 r += "    movs r0, #0\n"
                 for (let i = 0; i < numlocals; ++i)
@@ -63,6 +65,7 @@ namespace ts.pxtc {
         proc_return() { return "pop {pc}" }
 
         debugger_stmt(lbl: string) {
+            oops()
             return `
     @stackempty locals
     ldr r0, [r6, #0] ; debugger
@@ -73,6 +76,7 @@ ${lbl}:
         }
 
         debugger_bkpt(lbl: string) {
+            oops()
             return `
     @stackempty locals
     ldr r0, [r6, #0] ; brk
@@ -82,6 +86,7 @@ ${lbl}:
         }
 
         debugger_proc(lbl: string) {
+            oops()
             return `
     ldr r0, [r6, #0]  ; brk-entry
     ldr r0, [r0, #4]  ; brk-entry
@@ -121,44 +126,27 @@ ${lbl}:`
         rt_call(name: string, r0: string, r1: string) {
             return name + " " + r0 + ", " + r1;
         }
-        call_lbl(lbl: string) {
+        alignedCall(lbl: string, stackAlign: number) {
+            if (stackAlign)
+                return `${this.push_locals(stackAlign)}\nbl ${lbl}\n${this.pop_locals(stackAlign)}`
+            else
+                return "bl " + lbl;
+        }
+        call_lbl(lbl: string, saveStack?: boolean, stackAlign?: number) {
             let o = U.lookup(inlineArithmetic, lbl)
-            if (o) lbl = o
-            return "bl " + lbl;
+            if (o) {
+                lbl = o
+                saveStack = false
+            }
+            if (!saveStack && lbl.indexOf("::") > 0)
+                saveStack = true
+            if (saveStack)
+                return this.callCPP(lbl, stackAlign)
+            else
+                return this.alignedCall(lbl, stackAlign)
         }
         call_reg(reg: string) {
             return "blx " + reg;
-        }
-        // NOTE: 43 (in cmp instruction below) is magic number to distinguish
-        // NOTE: Map from RefRecord
-        vcall(mapMethod: string, isSet: boolean, vtableShift: number) {
-            return `
-    ldr r0, [sp, #0] ; ld-this
-    ldrh r3, [r0, #2] ; ld-vtable
-    lsls r3, r3, #${vtableShift}
-    ldr r3, [r3, #4] ; iface table
-    cmp r3, #43
-    beq .objlit
-.nonlit:
-    lsls r1, ${isSet ? "r2" : "r1"}, #2
-    ldr r0, [r3, r1] ; ld-method
-    bx r0
-.objlit:
-    ${isSet ? "ldr r2, [sp, #4]" : ""}
-    movs r3, #0 ; clear args on stack, so the outside decr() doesn't touch them
-    str r3, [sp, #0]
-    ${isSet ? "str r3, [sp, #4]" : ""}
-    ${this.pushLR()}
-    bl ${mapMethod}
-    ${this.popPC()}
-`;
-        }
-        prologue_vtable(arg_top_index: number, vtableShift: number) {
-            return `
-    ldr r0, [sp, #4*${arg_top_index}]  ; ld-this
-    ldrh r0, [r0, #2] ; ld-vtable
-    lsls r0, r0, #${vtableShift}
-    `;
         }
         helper_prologue() {
             return `
@@ -179,13 +167,8 @@ ${lbl}:`
 `
         }
 
-        load_ptr(lbl: string, reg: string) {
-            assert(!!lbl)
-            return `
-    movs ${reg}, ${lbl}@hi  ; ldptr
-    lsls ${reg}, ${reg}, #8
-    adds ${reg}, ${lbl}@lo
-`
+        load_vtable(trg: string, src: string) {
+            return `ldr ${trg}, [${src}, #0]`
         }
 
         lambda_init() {
@@ -198,17 +181,31 @@ ${lbl}:`
 `
         }
 
-        inline_decr(idx: number, stackSize: number) {
-            if (!this.stackAligned()) stackSize = 0
+        saveThreadStack() {
+            return "mov r7, sp\n    str r7, [r6, #4]\n"
+        }
+
+        restoreThreadStack() {
+            if (target.switches.gcDebug)
+                return "movs r7, #0\n    str r7, [r6, #4]\n"
+            else
+                return ""
+        }
+
+        callCPPPush(lbl: string) {
+            return this.pushLR() + "\n" + this.callCPP(lbl) + "\n" + this.popPC() + "\n"
+        }
+
+        callCPP(lbl: string, stackAlign?: number) {
+            return this.saveThreadStack() + this.alignedCall(lbl, stackAlign) + "\n" + this.restoreThreadStack()
+        }
+
+        inline_decr(idx: number) {
             // TODO optimize sequences of pops without decr into sub on sp
             return `
     lsls r1, r0, #30
     bne .tag${idx}
-    cmp r0, #0
-    beq .tag${idx}
-    ${stackSize & 1 ? "push {r0} ; align" : ""}
-    bl pxt::decr
-    ${stackSize & 1 ? "pop {r0} ; unalign" : ""}
+    bl _pxt_decr
 .tag${idx}:
 `
         }
@@ -216,7 +213,21 @@ ${lbl}:`
         arithmetic() {
             let r = ""
 
-            for (let op of ["adds", "subs", "ands", "orrs", "eors"]) {
+            const boxedOp = (op: string) => {
+                let r = ".boxed:\n"
+                r += `
+                    ${this.pushLR()}
+                    push {r0, r1}
+                    ${this.saveThreadStack()}
+                    ${op}
+                    ${this.restoreThreadStack()}
+                    add sp, #8
+                    ${this.popPC()}
+                `
+                return r
+            }
+
+            const checkInts = (op: string) => {
                 r += `
 _numops_${op}:
     @scope _numops_${op}
@@ -225,37 +236,73 @@ _numops_${op}:
     lsls r2, r1, #31
     beq .boxed
 `
-                if (op == "adds" || op == "subs")
-                    r += `
+            }
+
+            const finishOp = (op: string) => {
+                r += `    blx lr\n`
+                r += boxedOp(`bl numops::${op}`)
+            }
+
+            for (let op of ["adds", "subs"]) {
+                checkInts(op)
+                r += `
     subs r2, r1, #1
     ${op} r2, r0, r2
     bvs .boxed
     movs r0, r2
-    blx lr
+`
+                finishOp(op)
+            }
+
+            for (let op of ["ands", "orrs", "eors"]) {
+                checkInts(op)
+                r += `    ${op} r0, r1\n`
+                if (op == "eors")
+                    r += `    adds r0, r0, #1\n`
+                finishOp(op)
+            }
+
+            for (let op of ["lsls", "lsrs", "asrs"]) {
+                checkInts(op)
+                r += `
+    ; r3 := (r1 >> 1) & 0x1f
+    lsls r3, r1, #26
+    lsrs r3, r3, #27
+`
+                if (op == "asrs")
+                    r += `
+    asrs r0, r3
+    movs r2, #1
+    orrs r0, r2
 `
                 else {
-                    r += `    ${op} r0, r1\n`
-                    if (op == "eors")
-                        r += `    adds r0, r0, #1\n`
-                    r += `    blx lr\n`
+                    if (op == "lsrs")
+                        r += `
+    asrs r2, r0, #1
+    lsrs r2, r3
+    lsrs r3, r2, #30
+    bne .boxed
+`
+                    else
+                        r += `
+    asrs r2, r0, #1
+    lsls r2, r3
+    lsrs r3, r2, #30
+    beq .ok
+    cmp r3, #3
+    bne .boxed
+.ok:
+`
+                    r += `
+    lsls r0, r2, #1
+    adds r0, r0, #1
+`
                 }
 
-                r += `
-.boxed:
-    push {r4, lr}
-    push {r0, r1}
-    bl numops::${op}
-    movs r4, r0
-    pop {r0}
-    ${this.stackAligned() ? "push {r0} ; align" : ""}
-    bl _pxt_decr
-    ${this.stackAligned() ? "pop {r0} ; unalign" : ""}
-    pop {r0}
-    bl _pxt_decr
-    movs r0, r4
-    pop {r4, pc}
-`
+                finishOp(op)
             }
+
+
 
             r += `
 @scope _numops_toInt
@@ -264,10 +311,8 @@ _numops_toInt:
     bcc .over
     blx lr
 .over:
-    ${this.pushLR()}
     lsls r0, r0, #1
-    bl pxt::toInt
-    ${this.popPC()}
+    ${this.callCPPPush("pxt::toInt")}
 
 _numops_fromInt:
     lsls r2, r0, #1
@@ -277,64 +322,16 @@ _numops_fromInt:
     adds r0, r2, #1
     blx lr
 .over2:
-    ${this.pushLR()}
-    bl pxt::fromInt
-    ${this.popPC()}
+    ${this.callCPPPush("pxt::fromInt")}
 `
 
-            for (let op of ["incr", "decr"]) {
-                r += ".section code\n"
-                for (let off = 56; off >= 0; off -= 4) {
-                    r += `
-_pxt_${op}_${off}:
-    ldr r0, [sp, #${off}]
-    ${off == 0 ? '; ' : ''}b _pxt_${op}
-`
-                }
-                r += `
-_pxt_${op}:
-    lsls r3, r0, #30
-    beq .t0
-.skip:
-    bx lr
-.t0:
-    cmp r0, #0
-    beq .skip
-    ${this.pushLR()}
-    bl pxt::${op}
-    ${this.popPC()}
-`
-                for (let off = 56; off >= 0; off -= 4) {
-                    r += `
-_pxt_${op}_pushR0_${off}:
-    ldr r0, [sp, #${off}]
-    ${off == 0 ? '; ' : ''}b _pxt_${op}_pushR0
-`
-                }
-
-                r += `
-_pxt_${op}_pushR0:
-    push {r0}
-    @dummystack -1
-    lsls r3, r0, #30
-    beq .t2
-.skip2:
-    bx lr
-.t2:
-    cmp r0, #0
-    beq .skip2
-    push {lr}
-    bl pxt::${op}
-    pop {pc}
-`
-            }
 
             for (let op of Object.keys(thumbCmpMap)) {
                 op = op.replace(/.*::/, "")
                 // this make sure to set the Z flag correctly
                 r += `
+.section code
 _cmp_${op}:
-    @scope _cmp_${op}
     lsls r2, r0, #31
     beq .boxed
     lsls r2, r1, #31
@@ -347,21 +344,14 @@ _cmp_${op}:
 .true:
     movs r0, #1
     bx lr
-.boxed:
-    push {r4, lr}
-    push {r0, r1}
-    bl numops::${op}
-    bl numops::toBoolDecr
-    movs r4, r0
-    pop {r0}
-    ${this.stackAligned() ? "push {r0} ; align" : ""}
-    bl _pxt_decr
-    ${this.stackAligned() ? "pop {r0} ; unalign" : ""}
-    pop {r0}
-    bl _pxt_decr
-    movs r0, r4
-    pop {r4, pc}
 `
+                // the cmp isn't really needed, given how toBoolDecr() is compiled,
+                // but better not rely on it
+                // Also, cmp isn't needed when ref-counting (it ends with movs r0, r4)
+                r += boxedOp(`
+                        bl numops::${op}
+                        bl numops::toBoolDecr
+                        cmp r0, #0`)
             }
 
             return r

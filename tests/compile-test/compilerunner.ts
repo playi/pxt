@@ -8,51 +8,33 @@ import "mocha";
 import * as chai from "chai";
 
 import { TestHost } from "../common/testHost";
-
+import * as util from "../common/testUtils";
 
 const casesDir = path.join(process.cwd(), "tests", "compile-test", "lang-test0");
 const bareDir = path.relative(process.cwd(), path.join("tests", "compile-test", "bare"));
 
 function initGlobals() {
-    Promise = require("bluebird");
     let g = global as any
     g.pxt = pxt;
     g.ts = ts;
     g.pxtc = pxtc;
-    g.btoa = (str: string) => new Buffer(str, "binary").toString("base64");
-    g.atob = (str: string) => new Buffer(str, "base64").toString("binary");
+    g.btoa = (str: string) => Buffer.from(str, "binary").toString("base64");
+    g.atob = (str: string) => Buffer.from(str, "base64").toString("binary");
 }
 
 initGlobals();
 
 // Just needs to exist
-pxt.setAppTarget({
-    id: "core",
-    name: "Microsoft MakeCode",
-    title: "Microsoft MakeCode",
-    versions: undefined,
-    description: "A toolkit to build JavaScript Blocks editors.",
-    bundleddirs: [],
-    compile: {
-        isNative: false,
-        hasHex: false,
-        jsRefCounting: true,
-    },
-    bundledpkgs: {},
-    appTheme: {},
-    tsprj: undefined,
-    blocksprj: undefined,
-    corepkg: undefined
-});
+pxt.setAppTarget(util.testAppTarget);
 
-
+// TODO(dz): merge with CompileHost in testUtils.ts
 class CompileHost extends TestHost {
     private basename: string;
     private fileText: string;
     static langTestText: string;
 
     constructor(public filename: string) {
-        super("compile-test", "", [], true);
+        super("compile-test", { [pxt.MAIN_TS]: "" }, [], true);
         this.basename = path.basename(filename);
         this.fileText = fs.readFileSync(filename, "utf8");
 
@@ -65,16 +47,16 @@ class CompileHost extends TestHost {
         if (module.id === "this") {
             if (filename === "pxt.json") {
                 return JSON.stringify({
-                        "name": this.name,
-                        "dependencies": { "bare": "file:" + bareDir },
-                        "description": "",
-                        "files": [
-                            "lang-test0.ts",
-                            "main.ts",
-                        ]
-                    })
+                    "name": this.name,
+                    "dependencies": { "bare": "file:" + bareDir },
+                    "description": "",
+                    "files": [
+                        "lang-test0.ts",
+                        pxt.MAIN_TS,
+                    ]
+                })
             }
-            else if (filename === "main.ts") {
+            else if (filename === pxt.MAIN_TS) {
                 return this.fileText;
             }
             else if (filename === "lang-test0.ts") {
@@ -105,7 +87,7 @@ describe("ts compiler", () => {
 
     describe("with floating point", () => {
         filenames.forEach(filename => {
-            it("should compile and run " + path.basename(filename), function() {
+            it("should compile and run " + path.basename(filename), function () {
                 this.timeout(10000)
                 return compileTestAsync(filename)
             });

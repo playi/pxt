@@ -1,11 +1,13 @@
 import * as React from "react";
 import * as sui from "./sui";
 import * as data from "./data";
+import { fireClickOnEnter } from "./util";
 
 export interface ICarouselProps extends React.Props<Carousel> {
     // Percentage of child width to bleed over either edge of the page
     bleedPercent: number;
     selectedIndex?: number;
+    tickId?: string; // if set, collect usage analytics
 }
 
 export interface ICarouselState {
@@ -59,7 +61,7 @@ export class Carousel extends data.Component<ICarouselProps, ICarouselState> {
         this.onRightArrowClick = this.onRightArrowClick.bind(this);
     }
 
-    componentWillReceiveProps(nextProps: ICarouselProps) {
+    UNSAFE_componentWillReceiveProps(nextProps: ICarouselProps) {
         if (nextProps.selectedIndex != undefined) {
             this.setIndex(nextProps.selectedIndex);
         }
@@ -83,12 +85,13 @@ export class Carousel extends data.Component<ICarouselProps, ICarouselState> {
 
     public renderCore() {
         const { rightDisabled, leftDisabled } = this.state;
+        const isRTL = pxt.Util.isUserLanguageRtl();
 
         return <div className="ui carouselouter">
-            <span role="button" className={"carouselarrow left aligned" + (leftDisabled ? " arrowdisabled" : "")}
-                tabIndex={leftDisabled ? -1 : 0} onClick={this.onLeftArrowClick} onKeyDown={sui.fireClickOnEnter} ref={this.handleArrowRefs}>
-                <sui.Icon icon="circle angle left" />
-            </span>
+            {!leftDisabled && <span role="button" className={"carouselarrow left aligned"} tabIndex={0} title={lf("See previous")}
+                aria-label={lf("See previous")} onClick={this.onLeftArrowClick} onKeyDown={fireClickOnEnter} ref={this.handleArrowRefs}>
+                <sui.Icon icon={"circle angle " + (!isRTL ? "left" : "right")} />
+            </span>}
             <div className="carouselcontainer" ref={this.handleContainerRef}>
                 <div className="carouselbody" ref={this.handleDragSurfaceRef}>
                     {
@@ -99,10 +102,10 @@ export class Carousel extends data.Component<ICarouselProps, ICarouselState> {
                     }
                 </div>
             </div>
-            <span role="button" className={"carouselarrow right aligned" + (rightDisabled ? " arrowdisabled" : "")}
-                tabIndex={rightDisabled ? -1 : 0} onClick={this.onRightArrowClick} onKeyDown={sui.fireClickOnEnter} ref={this.handleArrowRefs}>
-                <sui.Icon icon="circle angle right" />
-            </span>
+            {!rightDisabled && <span role="button" className={"carouselarrow right aligned"} tabIndex={0} title={lf("See more")}
+                aria-label={lf("See more")} onClick={this.onRightArrowClick} onKeyDown={fireClickOnEnter} ref={this.handleArrowRefs}>
+                <sui.Icon icon={"circle angle " + (!pxt.Util.isUserLanguageRtl() ? "right" : "left")} />
+            </span>}
         </div>
     }
 
@@ -116,7 +119,17 @@ export class Carousel extends data.Component<ICarouselProps, ICarouselState> {
 
     private onArrowClick(left: boolean) {
         const prevIndex = this.index;
+        const prevScroll = this.container.scrollLeft;
         this.setIndex(left ? this.index - this.actualPageLength : this.index + this.actualPageLength);
+
+        const { tickId } = this.props;
+        if (tickId)
+            pxt.tickEvent("carousel.arrow.click", {
+                tickId,
+                index: this.index,
+                left: left ? -1 : 1
+            }, { interactiveConsent: true })
+
         if (left) {
             // Focus right most
             const prevElement = this.index + this.actualPageLength < prevIndex ? this.index + this.actualPageLength : prevIndex - 1;
@@ -126,21 +139,26 @@ export class Carousel extends data.Component<ICarouselProps, ICarouselState> {
             const nextElement = this.index > prevIndex + this.actualPageLength ? this.index : prevIndex + this.actualPageLength;
             if (this.childrenElements[nextElement]) (this.childrenElements[nextElement].firstChild as HTMLElement).focus();
         }
+
+        // Undo any scrolling caused by focus()
+        this.container.scrollLeft = prevScroll;
     }
 
     public componentDidMount() {
         this.initDragSurface();
         this.updateDimensions();
-        window.addEventListener("resize", (e) => {
-            this.updateDimensions();
-        })
+        window.addEventListener("resize", this.updateDimensions);
+    }
+
+    public componentWillUnmount() {
+        window.removeEventListener("resize", this.updateDimensions);
     }
 
     public componentDidUpdate() {
         this.updateDimensions();
     }
 
-    public updateDimensions() {
+    public updateDimensions = () => {
         if (this.container) {
             let shouldReposition = false;
             this.containerWidth = this.container.getBoundingClientRect().width;
@@ -409,7 +427,7 @@ function getX(event: MouseEvent | TouchEvent | PointerEvent) {
 
 function getY(event: MouseEvent | TouchEvent | PointerEvent) {
     if ("screenY" in event) {
-        return (event as MouseEvent).screenX;
+        return (event as MouseEvent).screenY;
     }
     else {
         return (event as TouchEvent).changedTouches[0].screenY

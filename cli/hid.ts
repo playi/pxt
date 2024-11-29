@@ -2,14 +2,31 @@ import HF2 = pxt.HF2
 import U = pxt.U
 import * as nodeutil from './nodeutil';
 
-let HID: any = undefined;
-function requireHID(install?: boolean): any {
-    if (HID) return HID;
-    return HID = nodeutil.lazyRequire("node-hid", install);
+const PXT_USE_HID = !!process.env["PXT_USE_HID"];
+
+function useWebUSB() {
+    return !!pxt.appTarget.compile.webUSB
 }
 
-export function isInstalled(info?: boolean): boolean {
-    return !!requireHID(!!info);
+let HID: any = undefined;
+function requireHID(install?: boolean): boolean {
+    if (!PXT_USE_HID) return false;
+    if (useWebUSB()) {
+        // in node.js, we need "webusb" package
+        if (pxt.Util.isNodeJS)
+            return !!nodeutil.lazyRequire("webusb", install);
+        // in the browser, check that USB is defined
+        return pxt.usb.isAvailable();
+    }
+    else {
+        if (!HID)
+            HID = nodeutil.lazyRequire("node-hid", install);
+        return !!HID;
+    }
+}
+
+export function isInstalled(install?: boolean): boolean {
+    return requireHID(!!install);
 }
 
 export interface HidDevice {
@@ -23,7 +40,7 @@ export interface HidDevice {
 }
 
 export function listAsync() {
-    if (!requireHID(true))
+    if (!isInstalled(true))
         return Promise.resolve();
     return getHF2DevicesAsync()
         .then(devices => {
@@ -33,7 +50,7 @@ export function listAsync() {
 }
 
 export function serialAsync() {
-    if (!requireHID(true))
+    if (!isInstalled(true))
         return Promise.resolve();
     return initAsync()
         .then(d => {
@@ -43,10 +60,11 @@ export function serialAsync() {
 }
 
 export function dmesgAsync() {
+    HF2.enableLog()
     return initAsync()
         .then(d => d.talkAsync(pxt.HF2.HF2_CMD_DMESG)
             .then(resp => {
-                console.log(U.fromUTF8(U.uint8ArrayToString(resp)))
+                console.log(U.fromUTF8Array(resp))
                 return d.disconnectAsync()
             }))
 }
@@ -60,9 +78,9 @@ export function deviceInfo(h: HidDevice) {
 }
 
 function getHF2Devices(): HidDevice[] {
-    const hid = requireHID(false);
-    if (!hid) return [];
-    let devices = hid.devices() as HidDevice[]
+    if (!isInstalled(false))
+        return [];
+    let devices = HID.devices() as HidDevice[]
     for (let d of devices) {
         pxt.debug(JSON.stringify(d))
     }
@@ -76,15 +94,59 @@ export function getHF2DevicesAsync(): Promise<HidDevice[]> {
     return Promise.resolve(getHF2Devices());
 }
 
+function handleDevicesFound(devices: any[], selectFn: any) {
+    if (devices.length > 1) {
+        let d42 = devices.filter(d => d.deviceVersionMajor == 42)
+        if (d42.length > 0)
+            devices = d42
+    }
+    devices.forEach((device: any) => {
+        console.log(`DEV: ${device.productName || device.serialNumber}`);
+    });
+    selectFn(devices[0])
+}
+
 export function hf2ConnectAsync(path: string, raw = false) {
-    if (!requireHID(true)) return Promise.resolve(undefined);
+    if (useWebUSB()) {
+        const g = global as any
+        if (!g.navigator)
+            g.navigator = {}
+        if (!g.navigator.usb) {
+            const webusb = nodeutil.lazyRequire("webusb", true)
+            const load = webusb.USBAdapter.prototype.loadDevice;
+            webusb.USBAdapter.prototype.loadDevice = function (device: any) {
+                // skip class 9 - USB HUB, as it causes SEGV on Windows
+                if (device.deviceDescriptor.bDeviceClass == 9)
+                    return Promise.resolve(null)
+                return load.apply(this, arguments)
+            }
+            const USB = webusb.USB
+            g.navigator.usb = new USB({
+                devicesFound: handleDevicesFound
+            })
+        }
+
+        return pxt.usb.pairAsync()
+            .then(() => pxt.usb.mkWebUSBHIDPacketIOAsync())
+            .then(io => new HF2.Wrapper(io))
+            .then(d => d.reconnectAsync().then(() => d))
+    }
+
+
+    if (!isInstalled(true)) return Promise.resolve(undefined);
     // in .then() to make sure we catch errors
     let h = new HF2.Wrapper(new HidIO(path))
     h.rawMode = raw
-    return h.reconnectAsync(true).then(() => h)
+    return h.reconnectAsync().then(() => h)
 }
 
-export function mkPacketIOAsync() {
+export function mkWebUSBOrHidPacketIOAsync(): Promise<pxt.packetio.PacketIO> {
+    if (useWebUSB()) {
+        pxt.debug(`packetio: mk cli webusb`)
+        return hf2ConnectAsync("")
+    }
+
+    pxt.debug(`packetio: mk cli hidio`)
     return Promise.resolve()
         .then(() => {
             // in .then() to make sure we catch errors
@@ -92,7 +154,7 @@ export function mkPacketIOAsync() {
         })
 }
 
-pxt.HF2.mkPacketIOAsync = mkPacketIOAsync
+pxt.packetio.mkPacketIOAsync = mkWebUSBOrHidPacketIOAsync;
 
 let hf2Dev: Promise<HF2.Wrapper>
 export function initAsync(path: string = null): Promise<HF2.Wrapper> {
@@ -104,10 +166,10 @@ export function initAsync(path: string = null): Promise<HF2.Wrapper> {
 
 export function connectSerial(w: HF2.Wrapper) {
     process.stdin.on("data", (buf: Buffer) => {
-        w.sendSerialAsync(new Uint8Array(buf)).done()
+        w.sendSerialAsync(new Uint8Array(buf))
     })
     w.onSerial = (arr, iserr) => {
-        let buf = new Buffer(arr)
+        let buf = Buffer.from(arr)
         if (iserr) process.stderr.write(buf)
         else process.stdout.write(buf)
     }
@@ -120,10 +182,13 @@ export class HIDError extends Error {
     }
 }
 
-export class HidIO implements HF2.PacketIO {
+export class HidIO implements pxt.packetio.PacketIO {
     dev: any;
     private path: string;
+    private connecting = false;
 
+    onDeviceConnectionChanged = (connect: boolean) => { };
+    onConnectionChanged = () => { };
     onData = (v: Uint8Array) => { };
     onEvent = (v: Uint8Array) => { };
     onError = (e: Error) => { };
@@ -132,27 +197,52 @@ export class HidIO implements HF2.PacketIO {
         this.connect()
     }
 
-    private connect() {
-        U.assert(requireHID(false))
-        if (this.requestedPath == null) {
-            let devs = getHF2Devices()
-            if (devs.length == 0)
-                throw new HIDError("no devices found")
-            this.path = devs[0].path
-        } else {
-            this.path = this.requestedPath
+    private setConnecting(v: boolean) {
+        if (v != this.connecting) {
+            this.connecting = v;
+            if (this.onConnectionChanged)
+                this.onConnectionChanged();
         }
+    }
 
-        this.dev = new HID.HID(this.path)
-        this.dev.on("data", (v: Buffer) => {
-            //console.log("got", v.toString("hex"))
-            this.onData(new Uint8Array(v))
-        })
-        this.dev.on("error", (v: Error) => this.onError(v))
+    private connect() {
+        U.assert(isInstalled(false))
+        this.setConnecting(true);
+        try {
+            if (this.requestedPath == null) {
+                let devs = getHF2Devices()
+                if (devs.length == 0)
+                    throw new HIDError("no devices found")
+                this.path = devs[0].path
+            } else {
+                this.path = this.requestedPath
+            }
+
+            this.dev = new HID.HID(this.path)
+            this.dev.on("data", (v: Buffer) => {
+                //console.log("got", v.toString("hex"))
+                this.onData(new Uint8Array(v))
+            })
+            this.dev.on("error", (v: Error) => this.onError(v))
+        } finally {
+            this.setConnecting(false);
+        }
+    }
+
+    disposeAsync(): Promise<void> {
+        return Promise.resolve();
+    }
+
+    isConnecting(): boolean {
+        return this.connecting;
+    }
+
+    isConnected(): boolean {
+        return !!this.dev;
     }
 
     sendPacketAsync(pkt: Uint8Array): Promise<void> {
-        //console.log("SEND: " + new Buffer(pkt).toString("hex"))
+        //console.log("SEND: " + Buffer.from(pkt).toString("hex"))
         return Promise.resolve()
             .then(() => {
                 let lst = [0]
@@ -174,14 +264,17 @@ export class HidIO implements HF2.PacketIO {
         // see https://github.com/node-hid/node-hid/issues/61
         this.dev.removeAllListeners("data");
         this.dev.removeAllListeners("error");
-        let pkt = new Uint8Array([0x48])
+        const pkt = new Uint8Array([0x48])
         this.sendPacketAsync(pkt).catch(e => { })
-        return Promise.delay(100)
+        return U.delay(100)
             .then(() => {
                 if (this.dev) {
-                    this.dev.close()
-                    this.dev = null
+                    const d = this.dev;
+                    delete this.dev;
+                    d.close()
                 }
+                if (this.onConnectionChanged)
+                    this.onConnectionChanged();
             })
     }
 
