@@ -287,10 +287,16 @@ namespace pxsim {
         }
 
         private getSimUrl(): URL {
+            console.log(this.options,'....this.options');
+            console.log(((window as any).pxtConfig || {}).simUrl,'.....simUrl');
+            console.log(location.origin,'...location.origin');
             const simUrl = this.options.simUrl || ((window as any).pxtConfig || {}).simUrl || `${location.origin}/sim/simulator.html`;
+            console.log(simUrl,'...simUrl');
             try {
+                console.log('try..');
                 return new URL(simUrl);
             } catch {
+                console.log('catch..');
                 // Failed to parse set url; try based off origin in case path defined as relative (e.g. /simulator.html)
                 return new URL(simUrl, location.origin);
             }
@@ -417,6 +423,9 @@ namespace pxsim {
             frame.setAttribute('sandbox', 'allow-same-origin allow-scripts');
             frame.className = 'no-select'
             const furl = (url || this.getSimUrl()) + '#' + frame.id;
+            console.log(furl,'...furl');
+            console.log(url,'....url');
+            console.log(this.getSimUrl(),'....getSimUrl()');
             frame.src = furl;
             frame.frameBorder = "0";
             frame.dataset['runid'] = this.runId;
