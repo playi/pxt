@@ -290,7 +290,9 @@ namespace pxsim {
             console.log(this.options,'....this.options');
             console.log(((window as any).pxtConfig || {}).simUrl,'.....simUrl');
             console.log(location,'...location.origin');
-            const simUrl = this.options.simUrl || ((window as any).pxtConfig || {}).simUrl || `${location.origin}/sim/simulator.html`;
+            let lastSlashIndex = location.href.lastIndexOf('/');
+            let baseUrl = location.href.substring(0, lastSlashIndex);
+            const simUrl = this.options.simUrl || ((window as any).pxtConfig || {}).simUrl || `${baseUrl}/sim/simulator.html`;
             console.log(simUrl,'...simUrl');
             try {
                 console.log('try..');
@@ -298,7 +300,7 @@ namespace pxsim {
             } catch {
                 console.log('catch..');
                 // Failed to parse set url; try based off origin in case path defined as relative (e.g. /simulator.html)
-                return new URL(simUrl, location.origin);
+                return new URL(simUrl, baseUrl);
             }
         }
 
