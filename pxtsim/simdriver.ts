@@ -290,8 +290,10 @@ namespace pxsim {
             console.log(this.options,'....this.options');
             console.log(((window as any).pxtConfig || {}).simUrl,'.....simUrl');
             console.log(location,'...location.origin');
+            // http://pxt.makewonder.com/pxt/1e96d4f1be82dcaa6f5af79f1949ee9af191525c/index.html#editor
             let lastSlashIndex = location.href.lastIndexOf('/');
             let baseUrl = location.href.substring(0, lastSlashIndex);
+            console.log(baseUrl,'...baseUrl');
             const simUrl = this.options.simUrl || ((window as any).pxtConfig || {}).simUrl || `${baseUrl}/sim/simulator.html`;
             console.log(simUrl,'...simUrl');
             try {
