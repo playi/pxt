@@ -289,7 +289,7 @@ namespace pxsim {
         private getSimUrl(): URL {
             console.log(this.options,'....this.options');
             console.log(((window as any).pxtConfig || {}).simUrl,'.....simUrl');
-            console.log(location.origin,'...location.origin');
+            console.log(location,'...location.origin');
             const simUrl = this.options.simUrl || ((window as any).pxtConfig || {}).simUrl || `${location.origin}/sim/simulator.html`;
             console.log(simUrl,'...simUrl');
             try {
