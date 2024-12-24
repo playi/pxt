@@ -409,7 +409,7 @@ namespace pxsim {
             let lastSlashIndex = location.href.lastIndexOf('/');
             let baseUrl = location.href.substring(0, lastSlashIndex);
             if(location.hostname == "localhost"){
-                return location.origin + '/sim/simulator.html#' + frame.id;
+                return  location.pathname.includes("/vendor/pxt/") ?  location.origin + '/vendor/pxt/simulator.html#' + frame.id :  location.origin + '/sim/simulator.html#' + frame.id;
             }
             return baseUrl + '/simulator.html#' + frame.id;
         }
