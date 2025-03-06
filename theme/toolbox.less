@@ -127,6 +127,25 @@ span.blocklyTreeLabel, text.blocklyText {
 }
 
 /*******************************
+        Toolbox Label
+*******************************/
+
+.toolbox-title {
+    font-weight: 700;
+    font-size: 1.2rem;
+    padding: .5rem 1rem;
+    border-bottom: 2px solid darken(desaturate(@editorToolsBackground, 60%), 10%);
+    user-select: none;
+}
+
+@media only screen and (max-width: @largestMobileScreen) {
+    .toolbox-title {
+        font-size: .75rem;
+        padding: 0 0.2rem;
+    }
+}
+
+/*******************************
         Toolbox search
 *******************************/
 
@@ -135,6 +154,13 @@ span.blocklyTreeLabel, text.blocklyText {
     border: 0 !important;
     border-radius: 0 !important;
 }
+
+@media only screen and (max-width: @largestMobileScreen) {
+    .blocklySearchInputField {
+        font-size: .75rem;
+    }
+}
+
 
 /*******************************
         Toolbox delete
@@ -189,6 +215,10 @@ span.blocklyTreeIcon {
     vertical-align: middle;
 }
 
+.blocklyTreeIcon.brandIcon {
+    font-family: 'brand-icons';
+}
+
 div.blocklyTreeIcon span {
     vertical-align: middle;
 }
@@ -198,6 +228,14 @@ div.blocklyTreeIcon span {
 }
 .blocklyFlyoutLabelIcon.blocklyFlyoutIconfunctions {
     font-family: xicon !important;
+}
+.blocklyTreeIcon.image-icon {
+    background-image: var(--image-icon-url);
+    width: 30px;
+    height: 100%;
+    background-size: 20px !important;
+    background-repeat: no-repeat !important;
+    background-position: 50% 50% !important;
 }
 
 /*******************************
@@ -227,6 +265,50 @@ div.blocklyTreeIcon span {
 
 .blocklyTreeRow:not(.blocklyTreeSelected):focus {
     background-color: #e4e4e4;
+}
+
+/*******************************
+    Inverted Toolbox
+*******************************/
+#root.hc .invertedToolbox {
+    div.blocklyTreeRow .blocklyTreeIcon {
+        color: var(--block-meta-color);
+    }
+
+    div.blocklyTreeRow.blocklyTreeSelected .blocklyTreeIcon {
+        color: #fff;
+    }
+}
+
+.invertedToolbox .blocklyTreeRoot {
+    div.blocklyTreeRow {
+        background-color: var(--block-meta-color);
+        color: #fff;
+    }
+
+    div.blocklyTreeRow.blocklyTreeSelected {
+        background-color: var(--block-meta-color);
+    }
+
+    div.blocklyTreeRow:hover {
+        background-color: var(--block-faded-color);
+        color: #fff;
+    }
+}
+
+/*******************************
+    Colored Toolbox
+*******************************/
+.coloredToolbox .blocklyTreeRoot {
+    div.blocklyTreeRow {
+        color: var(--block-meta-color);
+        border-left: 8px solid var(--block-meta-color);
+    }
+
+    div.blocklyTreeRow.blocklyTreeSelected {
+        background-color: var(--block-meta-color);
+        color: #fff;
+    }
 }
 
 /*******************************
@@ -359,7 +441,7 @@ div.blocklyTreeIcon span {
         font-size: 3rem;
     }
     /* Hide the blockly toolbox search */
-    #blocklySearchInput.ui.icon.input {
+    .blocklySearchInput.ui.icon.input {
         input {
             padding-right: 0 !important;
             padding-left: 0.2rem;

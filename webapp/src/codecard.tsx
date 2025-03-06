@@ -68,7 +68,6 @@ export class CodeCardView extends data.Component<CodeCardProps, CodeCardState> {
         const renderMd = (md: string) => md.replace(/`/g, '');
         const url = card.url ? /^[^:]+:\/\//.test(card.url) ? card.url : ('/' + card.url.replace(/^\.?\/?/, ''))
             : undefined;
-        const sideUrl = url && /^\//.test(url) ? "#doc:" + url : url;
         const className = card.className;
         const cardType = card.cardType;
         const tutorialDone = card.tutorialLength == card.tutorialStep + 1;
@@ -137,7 +136,7 @@ export class CodeCardView extends data.Component<CodeCardProps, CodeCardState> {
                     }
                 </div> : undefined}
             {card.time ? <div className="meta">
-                {card.tutorialLength ? <span className={`ui tutorial-progress ${tutorialDone ? "green" : "orange"} left floated label`}><i className={`${tutorialDone ? "trophy" : "circle"} icon`}></i>&nbsp;{lf("{0}/{1}", (card.tutorialStep || 0) + 1, card.tutorialLength)}</span> : undefined}
+                {card.tutorialLength ? <span className={`ui tutorial-progress ${tutorialDone ? "green" : "purple"} left floated label`}><i className={`${tutorialDone ? "trophy" : "circle"} icon`}></i>&nbsp;{lf("{0}/{1}", (card.tutorialStep || 0) + 1, card.tutorialLength)}</span> : undefined}
                 {!cloudStatus && card.time && <span key="date" className="date">{pxt.Util.timeSince(card.time)}</span>}
                 {cloudStatus && cloudShowTimestamp &&
                     <span key="date" className={`date ${card.tutorialLength ? "small-screen hide" : ""}`}>{pxt.Util.timeSince(lastCloudSave)}{cloudStatus.indicator}</span>
@@ -160,6 +159,7 @@ export class CodeCardView extends data.Component<CodeCardProps, CodeCardState> {
                         </a> : undefined}
                     {card.learnMoreUrl ?
                         <a className="learnmore right floated" href={card.learnMoreUrl}
+                            tabIndex={0}
                             aria-label={lf("Learn more")} target="_blank" rel="noopener noreferrer">
                             {lf("Learn more")}
                         </a> : undefined}
@@ -172,12 +172,7 @@ export class CodeCardView extends data.Component<CodeCardProps, CodeCardState> {
         </div>;
 
         if (!card.onClick && url) {
-            return (
-                <div>
-                    <a href={url} target="docs" className="ui widedesktop hide">{cardDiv}</a>
-                    <a href={sideUrl} className="ui widedesktop only">{cardDiv}</a>
-                </div>
-            )
+            return <a href={url}>{cardDiv}</a>;
         } else {
             return (cardDiv)
         }

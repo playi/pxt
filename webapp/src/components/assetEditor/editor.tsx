@@ -4,6 +4,7 @@ import * as React from "react";
 import * as pkg from "../../package";
 import * as compiler from "../../compiler";
 import * as blocklyFieldView from "../../blocklyFieldView";
+import * as pxtblockly from "../../../../pxtblocks";
 
 import { Provider } from 'react-redux';
 import store from './store/assetEditorStore'
@@ -31,7 +32,7 @@ export class AssetEditor extends Editor {
         return super.loadFileAsync(file, hc)
             .then(() => compiler.getBlocksAsync()) // make sure to load block definitions
             .then(info => {
-                pxt.blocks.initializeAndInject(info);
+                pxtblockly.initializeAndInject(info);
                 this.blocksInfo = info;
                 this.updateGalleryAssets();
             })
@@ -39,7 +40,7 @@ export class AssetEditor extends Editor {
             .then(() => {
                 this.parent.forceUpdate()
                 // Do Not Remove: This is used by the skillmap
-                if (this.parent.isTutorial()) this.parent.onTutorialLoaded();
+                this.parent.onEditorContentLoaded();
             });
     }
 
@@ -83,11 +84,16 @@ export class AssetEditor extends Editor {
     }
 
     display(): JSX.Element {
+        const updateProject = async () => {
+            await this.parent.reloadHeaderAsync();
+            this.parent.openAssets();
+        }
+
         // TODO: re-enable the create asset button in tutorials when we add
         // the ability to switch editors inside a tutorial
         return <Provider store={store}>
             <div className="asset-editor-outer">
-                <AssetSidebar showAssetFieldView={this.showAssetFieldView} />
+                <AssetSidebar showAssetFieldView={this.showAssetFieldView} updateProject={updateProject}/>
                 <AssetGallery showAssetFieldView={this.showAssetFieldView} disableCreateButton={this.parent.isTutorial()} />
             </div>
         </Provider>
@@ -167,6 +173,9 @@ export class AssetEditor extends Editor {
                     hideMyAssets: true,
                     blocksInfo: this.blocksInfo
                 });
+                break;
+            case pxt.AssetType.Song:
+                fieldView = pxt.react.getFieldEditorView("music-editor", asset as pxt.Song, {});
                 break;
             default:
                 break;

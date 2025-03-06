@@ -13,6 +13,8 @@ import { pushNotificationMessage } from "../../react-common/components/Notificat
 
 import Cloud = pxt.Cloud;
 import Util = pxt.Util;
+import { Milestones } from "./constants";
+import { sendUpdateFeedbackTheme } from "../../react-common/components/controls/Feedback/FeedbackEventListener";
 
 export type Component<S, T> = data.Component<S, T>;
 
@@ -21,11 +23,16 @@ export type Component<S, T> = data.Component<S, T>;
 ////////////       Loading spinner            /////////////
 ///////////////////////////////////////////////////////////
 
+interface LoadingSection {
+    displayText: string,
+    percentComplete?: number;
+}
+
 let dimmerInitialized = false;
 let loadingDimmer: coretsx.LoadingDimmer;
 
 let loadingQueue: string[] = [];
-let loadingQueueMsg: pxt.Map<string> = {};
+let loadingQueueMsg: pxt.Map<LoadingSection> = {};
 
 export function isLoading() {
     return loadingDimmer && loadingDimmer.isVisible();
@@ -33,7 +40,7 @@ export function isLoading() {
 
 export function hideLoading(id: string) {
     pxt.debug("hideloading: " + id);
-    pxt.perf.recordMilestone(`loading done #${id}`)
+    pxt.perf.recordMilestone(Milestones.LoadingDone, { id })
     if (loadingQueueMsg[id] != undefined) {
         // loading exists, remove from queue
         const index = loadingQueue.indexOf(id);
@@ -64,22 +71,45 @@ export function killLoadingQueue() {
     }
 }
 
-export function showLoading(id: string, msg: string) {
+export function showLoading(id: string, msg: string, percentComplete?: number) {
     pxt.debug("showloading: " + id);
     if (loadingQueueMsg[id]) return; // already loading?
-    pxt.perf.recordMilestone(`loading started #${id}`)
+    pxt.perf.recordMilestone(Milestones.LoadingStarted, { id })
     initializeDimmer();
-    loadingDimmer.show(lf("Please wait"));
+    loadingDimmer.show(
+        "initializing-loader",
+        lf("Please wait"),
+    );
     loadingQueue.push(id);
-    loadingQueueMsg[id] = msg;
+    loadingQueueMsg[id] = {
+        displayText: msg,
+        percentComplete,
+    };
     displayNextLoading();
+}
+
+export function updateLoadingCompletion(id: string, percentComplete: number) {
+    const msg = loadingQueueMsg[id];
+    if (!msg) {
+        pxt.debug("Loading not in queue, disregard: " + id);
+        return;
+    }
+
+    msg.percentComplete = percentComplete;
+    if (loadingDimmer?.currentlyLoading() === id) {
+        loadingDimmer.setPercentLoaded(percentComplete);
+    }
 }
 
 function displayNextLoading() {
     if (!loadingQueue.length) return;
     const id = loadingQueue[loadingQueue.length - 1]; // get last item
     const msg = loadingQueueMsg[id];
-    loadingDimmer.show(msg);
+    loadingDimmer.show(
+        id,
+        msg.displayText,
+        msg.percentComplete,
+    );
 }
 
 function initializeDimmer() {
@@ -309,12 +339,14 @@ export function toggleHighContrast() {
     setHighContrast(!getHighContrastOnce())
 }
 export async function setHighContrast(on: boolean) {
+    sendUpdateFeedbackTheme(on);
     await auth.setHighContrastPrefAsync(on);
 }
 
 export async function setLanguage(lang: string) {
     pxt.BrowserUtils.setCookieLang(lang);
-    await auth.setLangaugePrefAsync(lang);
+    pxt.Util.setUserLanguage(lang);
+    await auth.setLanguagePrefAsync(lang);
 }
 
 export function resetFocus() {
@@ -338,7 +370,7 @@ export function navigateInWindow(url: string) {
 }
 
 export function findChild(c: React.Component<any, any>, selector: string): Element[] {
-    let self = ReactDOM.findDOMNode(c);
+    let self = ReactDOM.findDOMNode(c) as Element;
     if (!selector) return [self]
     return pxt.Util.toArray(self.querySelectorAll(selector));
 }
@@ -367,13 +399,13 @@ export function apiAsync(path: string, data?: any) {
         Cloud.privatePostAsync(path, data) :
         Cloud.privateGetAsync(path))
         .then(resp => {
-            console.log("*")
-            console.log("*******", path, "--->")
-            console.log("*")
-            console.log(resp)
-            console.log("*")
+            pxt.log("*")
+            pxt.log("*******", path, "--->")
+            pxt.log("*")
+            pxt.log(resp)
+            pxt.log("*")
             return resp
         }, err => {
-            console.log(err.message)
+            pxt.log(err.message)
         })
 }

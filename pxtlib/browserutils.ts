@@ -1,4 +1,10 @@
+/// <reference path="../localtypings/dom.d.ts" />
+
 namespace pxt.BrowserUtils {
+
+    export function isDocumentVisible() {
+        return typeof window !== "undefined" && document.visibilityState === 'visible'
+    }
 
     export function isIFrame(): boolean {
         try {
@@ -52,11 +58,6 @@ namespace pxt.BrowserUtils {
     // Detects if we are running on ARM (Raspberry pi)
     export function isARM(): boolean {
         return hasNavigator() && /arm/i.test(navigator.platform);
-    }
-
-    // Detects if we are running inside the UWP runtime (Microsoft Edge)
-    export function isUwpEdge(): boolean {
-        return typeof window !== "undefined" && !!(<any>window).Windows;
     }
 
     /*
@@ -142,13 +143,13 @@ namespace pxt.BrowserUtils {
         return isPxtElectron() || isIpcRenderer();
     }
 
-    // this function gets overriden when loading pxtwinrt.js
-    export let isWinRT = () => false;
+    declare let Windows: any;
+    export let isWinRT = () => typeof (Windows as any) !== "undefined";
 
     export function isLocalHost(ignoreFlags?: boolean): boolean {
         try {
             return typeof window !== "undefined"
-                && /^http:\/\/(localhost|127\.0\.0\.1):\d+\//.test(window.location.href)
+                && /^http:\/\/(?:localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|[a-zA-Z0-9.-]+\.local):\d+\/?/.test(window.location.href)
                 && (ignoreFlags || !/nolocalhost=1/.test(window.location.href))
                 && !(pxt?.webConfig?.isStatic);
         } catch (e) { return false; }
@@ -165,13 +166,24 @@ namespace pxt.BrowserUtils {
     }
 
     export function isTabletSize(): boolean {
-        return window?.innerWidth < pxt.BREAKPOINT_TABLET;
+        return window?.innerWidth <= pxt.BREAKPOINT_TABLET;
     }
 
     export function isComputerSize(): boolean {
-        return window?.innerWidth >= pxt.BREAKPOINT_TABLET;
+        return window?.innerWidth > pxt.BREAKPOINT_TABLET;
     }
 
+    export function isInGame(): boolean {
+        const inGame = /inGame=1/i.exec(window.location.href);
+        return !!inGame;
+    }
+
+    export function hasFileAccess(): boolean {
+        const disableForMacIos = pxt.appTarget.appTheme.disableFileAccessinMaciOs && (pxt.BrowserUtils.isMac() || pxt.BrowserUtils.isIOS());
+        const disableForAndroid = pxt.appTarget.appTheme.disableFileAccessinAndroid && pxt.BrowserUtils.isAndroid();
+        return !disableForMacIos && !disableForAndroid;
+
+    }
     export function noSharedLocalStorage(): boolean {
         try {
             return /nosharedlocalstorage/i.test(window.location.href);
@@ -179,6 +191,7 @@ namespace pxt.BrowserUtils {
     }
 
     export function useOldTutorialLayout(): boolean {
+        if (pxt.appTarget?.appTheme?.legacyTutorial) return true;
         try {
             return (/tutorialview=old/.test(window.location.href));
         } catch (e) { return false; }
@@ -186,10 +199,6 @@ namespace pxt.BrowserUtils {
 
     export function hasPointerEvents(): boolean {
         return typeof window != "undefined" && !!(window as any).PointerEvent;
-    }
-
-    export function hasSaveAs(): boolean {
-        return isEdge() || isIE() || isFirefox();
     }
 
     export function os(): string {
@@ -468,29 +477,37 @@ namespace pxt.BrowserUtils {
     }
 
     export function scaleImageData(img: ImageData, scale: number): ImageData {
-        const cvs = document.createElement("canvas");
-        cvs.width = img.width * scale;
-        cvs.height = img.height * scale;
-        const ctx = cvs.getContext("2d")
+        const inputCanvas = document.createElement("canvas");
+        const outputCanvas = document.createElement("canvas");
+        inputCanvas.width = img.width;
+        inputCanvas.height = img.height;
+        outputCanvas.width = img.width * scale;
+        outputCanvas.height = img.height * scale;
+        const ctx = inputCanvas.getContext("2d");
+        const outCtx = outputCanvas.getContext("2d");
         ctx.putImageData(img, 0, 0);
-        ctx.imageSmoothingEnabled = false;
-        ctx.scale(scale, scale);
-        ctx.drawImage(cvs, 0, 0);
-        return ctx.getImageData(0, 0, img.width * scale, img.height * scale);
+        outCtx.imageSmoothingEnabled = false;
+        outCtx.scale(scale, scale);
+        outCtx.drawImage(inputCanvas, 0, 0);
+        return outCtx.getImageData(0, 0, img.width * scale, img.height * scale);
     }
 
     export function imageDataToPNG(img: ImageData, scale = 1): string {
         if (!img) return undefined;
 
-        const canvas = document.createElement("canvas")
-        canvas.width = img.width * scale
-        canvas.height = img.height * scale
-        const ctx = canvas.getContext("2d")
+        const inputCanvas = document.createElement("canvas");
+        const outputCanvas = document.createElement("canvas");
+        inputCanvas.width = img.width;
+        inputCanvas.height = img.height;
+        outputCanvas.width = img.width * scale;
+        outputCanvas.height = img.height * scale;
+        const ctx = inputCanvas.getContext("2d");
+        const outCtx = outputCanvas.getContext("2d");
         ctx.putImageData(img, 0, 0);
-        ctx.imageSmoothingEnabled = false;
-        ctx.scale(scale, scale);
-        ctx.drawImage(canvas, 0, 0);
-        return canvas.toDataURL("image/png");
+        outCtx.imageSmoothingEnabled = false;
+        outCtx.scale(scale, scale);
+        outCtx.drawImage(inputCanvas, 0, 0);
+        return outputCanvas.toDataURL("image/png");
     }
 
     const MAX_SCREENSHOT_SIZE = 1e6; // max 1Mb
@@ -631,9 +648,6 @@ namespace pxt.BrowserUtils {
         if (!loadBlocklyPromise) {
             pxt.debug(`blockly: delay load`);
             let p = pxt.BrowserUtils.loadStyleAsync("blockly.css", ts.pxtc.Util.isUserLanguageRtl());
-            // js not loaded yet?
-            if (typeof Blockly === "undefined")
-                p = p.then(() => pxt.BrowserUtils.loadScriptAsync("pxtblockly.js"));
             p = p.then(() => {
                 pxt.debug(`blockly: loaded`)
             });
@@ -767,10 +781,10 @@ namespace pxt.BrowserUtils {
         let md = "...";
         for (let i = 0; i < 16; ++i)
             md += md + Math.random();
-        console.log(`adding entry ${md.length * 2} bytes`);
+        pxt.log(`adding entry ${md.length * 2} bytes`);
         return U.delay(1)
             .then(() => translationDbAsync())
-            .then(db => db.setAsync("foobar", Math.random().toString(), "", null, undefined, md))
+            .then(db => db.setAsync("foobar", Math.random().toString(), null, undefined, md))
             .then(() => pxt.BrowserUtils.storageEstimateAsync())
             .then(estimate => !estimate.quota || estimate.usage / estimate.quota < 0.8 ? stressTranslationsAsync() : Promise.resolve());
     }
@@ -784,33 +798,33 @@ namespace pxt.BrowserUtils {
     }
 
     export interface ITranslationDb {
-        getAsync(lang: string, filename: string, branch: string): Promise<ITranslationDbEntry>;
-        setAsync(lang: string, filename: string, branch: string, etag: string, strings?: pxt.Map<string>, md?: string): Promise<void>;
+        getAsync(lang: string, filename: string): Promise<ITranslationDbEntry>;
+        setAsync(lang: string, filename: string, etag: string, strings?: pxt.Map<string>, md?: string): Promise<void>;
         // delete all
         clearAsync(): Promise<void>;
     }
 
     class MemTranslationDb implements ITranslationDb {
         translations: pxt.Map<ITranslationDbEntry> = {};
-        key(lang: string, filename: string, branch: string) {
-            return `${lang}|${filename}|${branch || "master"}`;
+        key(lang: string, filename: string) {
+            return `${lang}|${filename}|master`;
         }
-        get(lang: string, filename: string, branch: string): ITranslationDbEntry {
-            return this.translations[this.key(lang, filename, branch)];
+        get(lang: string, filename: string): ITranslationDbEntry {
+            return this.translations[this.key(lang, filename)];
         }
-        getAsync(lang: string, filename: string, branch: string): Promise<ITranslationDbEntry> {
-            return Promise.resolve(this.get(lang, filename, branch));
+        getAsync(lang: string, filename: string): Promise<ITranslationDbEntry> {
+            return Promise.resolve(this.get(lang, filename));
         }
-        set(lang: string, filename: string, branch: string, etag: string, time: number, strings?: pxt.Map<string>, md?: string) {
-            this.translations[this.key(lang, filename, branch)] = {
+        set(lang: string, filename: string, etag: string, time: number, strings?: pxt.Map<string>, md?: string) {
+            this.translations[this.key(lang, filename)] = {
                 etag,
                 time,
                 strings,
                 md
             }
         }
-        setAsync(lang: string, filename: string, branch: string, etag: string, strings?: pxt.Map<string>, md?: string): Promise<void> {
-            this.set(lang, filename, branch, etag, Util.now(), strings);
+        setAsync(lang: string, filename: string, etag: string, strings?: pxt.Map<string>, md?: string): Promise<void> {
+            this.set(lang, filename, etag, Util.now(), strings);
             return Promise.resolve();
         }
         clearAsync() {
@@ -829,7 +843,8 @@ namespace pxt.BrowserUtils {
             private name: string,
             private version: number,
             private upgradeHandler?: IDBUpgradeHandler,
-            private quotaExceededHandler?: () => void) {
+            private quotaExceededHandler?: () => void,
+            private skipErrorLog = false) {
         }
 
         private throwIfNotOpened(): void {
@@ -839,7 +854,11 @@ namespace pxt.BrowserUtils {
         }
 
         private errorHandler(err: Error, op: string, reject: (err: Error) => void): void {
-            console.error(new Error(`${this.name} IDBWrapper error for ${op}: ${err.message}`));
+            if (this.skipErrorLog) {
+                reject(err);
+                return;
+            }
+            pxt.error(new Error(`${this.name} IDBWrapper error for ${op}: ${err.message}`));
             reject(err);
             // special case for quota exceeded
             if (err.name == "QuotaExceededError") {
@@ -939,6 +958,34 @@ namespace pxt.BrowserUtils {
                 request.onerror = () => this.errorHandler(request.error, "deleteAll", reject);
             });
         }
+
+        public getObjectStoreWrapper<T>(storeName: string): IDBObjectStoreWrapper<T> {
+            return new IDBObjectStoreWrapper(this, storeName);
+        }
+    }
+
+    export class IDBObjectStoreWrapper<T> {
+        constructor(protected db: IDBWrapper, protected storeName: string) {}
+
+        public getAsync(id: string): Promise<T> {
+            return this.db.getAsync(this.storeName, id);
+        }
+
+        public getAllAsync(): Promise<T[]> {
+            return this.db.getAllAsync(this.storeName);
+        }
+
+        public setAsync(data: T): Promise<void> {
+            return this.db.setAsync(this.storeName, data);
+        }
+
+        public async deleteAsync(id: string): Promise<void> {
+            await this.db.deleteAsync(this.storeName, id);
+        }
+
+        public async deleteAllAsync(): Promise<void> {
+            await this.db.deleteAllAsync(this.storeName);
+        }
     }
 
     class IndexedDbTranslationDb implements ITranslationDb {
@@ -963,7 +1010,7 @@ namespace pxt.BrowserUtils {
             }
             return openAsync()
                 .catch(e => {
-                    console.log(`db: failed to open database, try delete entire store...`)
+                    pxt.log(`db: failed to open database, try delete entire store...`)
                     return IDBWrapper.deleteDatabaseAsync(IndexedDbTranslationDb.dbName())
                         .then(() => openAsync());
                 })
@@ -975,17 +1022,17 @@ namespace pxt.BrowserUtils {
             this.db = db;
             this.mem = new MemTranslationDb();
         }
-        getAsync(lang: string, filename: string, branch: string): Promise<ITranslationDbEntry> {
+        getAsync(lang: string, filename: string): Promise<ITranslationDbEntry> {
             lang = (lang || "en-US").toLowerCase(); // normalize locale
-            const id = this.mem.key(lang, filename, branch);
-            const r = this.mem.get(lang, filename, branch);
+            const id = this.mem.key(lang, filename);
+            const r = this.mem.get(lang, filename);
             if (r) return Promise.resolve(r);
 
             return this.db.getAsync<ITranslationDbEntry>(IndexedDbTranslationDb.TABLE, id)
                 .then((res) => {
                     if (res) {
                         // store in-memory so that we don't try to download again
-                        this.mem.set(lang, filename, branch, res.etag, res.time, res.strings);
+                        this.mem.set(lang, filename, res.etag, res.time, res.strings);
                         return Promise.resolve(res);
                     }
                     return Promise.resolve(undefined);
@@ -994,11 +1041,11 @@ namespace pxt.BrowserUtils {
                     return Promise.resolve(undefined);
                 });
         }
-        setAsync(lang: string, filename: string, branch: string, etag: string, strings?: pxt.Map<string>, md?: string): Promise<void> {
+        setAsync(lang: string, filename: string, etag: string, strings?: pxt.Map<string>, md?: string): Promise<void> {
             lang = (lang || "en-US").toLowerCase(); // normalize locale
-            const id = this.mem.key(lang, filename, branch);
+            const id = this.mem.key(lang, filename);
             let time = Util.now();
-            this.mem.set(lang, filename, branch, etag, time, strings, md);
+            this.mem.set(lang, filename, etag, time, strings, md);
 
             if (strings) {
                 Object.keys(strings).filter(k => !strings[k]).forEach(k => delete strings[k]);
@@ -1014,16 +1061,16 @@ namespace pxt.BrowserUtils {
             return this.db.setAsync(IndexedDbTranslationDb.TABLE, entry)
                 .finally(() => scheduleStorageCleanup()) // schedule a cleanpu
                 .catch((e) => {
-                    console.log(`db: set failed (${e.message}), recycling...`)
+                    pxt.log(`db: set failed (${e.message}), recycling...`)
                     return this.clearAsync();
                 });
         }
 
         clearAsync(): Promise<void> {
             return this.db.deleteAllAsync(IndexedDbTranslationDb.TABLE)
-                .then(() => console.debug(`db: all clean`))
+                .then(() => pxt.debug(`db: all clean`))
                 .catch(e => {
-                    console.error('db: failed to delete all');
+                    pxt.error('db: failed to delete all');
                 })
         }
     }
@@ -1077,11 +1124,13 @@ namespace pxt.BrowserUtils {
         hash: string;
         blocks: Map<number>;
         snippets: Map<Map<number>>;
+        highlightBlocks: Map<Map<number>>;
+        validateBlocks: Map<Map<string[]>>;
     }
 
     export interface ITutorialInfoDb {
         getAsync(filename: string, code: string[], branch?: string): Promise<TutorialInfoIndexedDbEntry>;
-        setAsync(filename: string, snippets: Map<Map<number>>, code: string[], branch?: string): Promise<void>;
+        setAsync(filename: string, snippets: Map<Map<number>>, code: string[], highlights: Map<Map<number>>, codeValidationMap: Map<Map<string[]>>, branch?: string): Promise<void>;
         clearAsync(): Promise<void>;
     }
 
@@ -1107,7 +1156,7 @@ namespace pxt.BrowserUtils {
             }
             return openAsync()
                 .catch(e => {
-                    console.log(`db: failed to open tutorial info database, try delete entire store...`)
+                    pxt.log(`db: failed to open tutorial info database, try delete entire store...`)
                     return pxt.BrowserUtils.IDBWrapper.deleteDatabaseAsync(TutorialInfoIndexedDb.dbName())
                         .then(() => openAsync());
                 })
@@ -1132,15 +1181,15 @@ namespace pxt.BrowserUtils {
                 });
         }
 
-        setAsync(filename: string, snippets: Map<Map<number>>, code: string[], branch?: string): Promise<void> {
-            pxt.perf.measureStart("tutorial info db setAsync")
+        setAsync(filename: string, snippets: Map<Map<number>>, code: string[], highlights: Map<Map<number>>, codeValidationMap: Map<Map<string[]>>, branch?: string): Promise<void> {
+            pxt.perf.measureStart(Measurements.TutorialInfoDbSetAsync)
             const key = getTutorialInfoKey(filename, branch);
             const hash = getTutorialCodeHash(code);
-            return this.setWithHashAsync(filename, snippets, hash);
+            return this.setWithHashAsync(filename, snippets, hash, highlights, codeValidationMap);
         }
 
-        setWithHashAsync(filename: string, snippets: Map<Map<number>>, hash: string, branch?: string): Promise<void> {
-            pxt.perf.measureStart("tutorial info db setAsync")
+        setWithHashAsync(filename: string, snippets: Map<Map<number>>, hash: string, highlights: Map<Map<number>>, codeValidationMap: Map<Map<string[]>>, branch?: string): Promise<void> {
+            pxt.perf.measureStart(Measurements.TutorialInfoDbSetAsync)
             const key = getTutorialInfoKey(filename, branch);
             const blocks: Map<number> = {};
             Object.keys(snippets).forEach(hash => {
@@ -1154,20 +1203,22 @@ namespace pxt.BrowserUtils {
                 time: Util.now(),
                 hash,
                 snippets,
-                blocks
+                blocks,
+                highlightBlocks: highlights,
+                validateBlocks: codeValidationMap
             };
 
             return this.db.setAsync(TutorialInfoIndexedDb.TABLE, entry)
                 .then(() => {
-                    pxt.perf.measureEnd("tutorial info db setAsync")
+                    pxt.perf.measureEnd(Measurements.TutorialInfoDbSetAsync)
                 })
         }
 
         clearAsync(): Promise<void> {
             return this.db.deleteAllAsync(TutorialInfoIndexedDb.TABLE)
-                .then(() => console.debug(`db: all clean`))
+                .then(() => pxt.debug(`db: all clean`))
                 .catch(e => {
-                    console.error('db: failed to delete all');
+                    pxt.error('db: failed to delete all');
                 })
         }
     }
@@ -1280,7 +1331,10 @@ namespace pxt.BrowserUtils {
             const left = ((width / 2) - (popUpWidth / 2)) + winLeft;
             const top = ((height / 2) - (popUpHeight / 2)) + winTop;
 
-            const popupWindow = window.open(url, title, "width=" + popUpWidth + ", height=" + popUpHeight + ", top=" + top + ", left=" + left);
+            const features = "width=" + popUpWidth + ", height=" + popUpHeight + ", top=" + top + ", left=" + left;
+
+            // Current CEF version does not like when features parameter is passed and just immediately rejects.
+            const popupWindow = window.open(url, title, !pxt.BrowserUtils.isIpcRenderer() ? features : undefined);
             if (popupWindow.focus) {
                 popupWindow.focus();
             }
@@ -1288,7 +1342,7 @@ namespace pxt.BrowserUtils {
             return popupWindow;
         } catch (e) {
             // Error opening popup
-            pxt.tickEvent('pxt.popupError', { url: url, msg: e.message });
+            pxt.tickEvent('pxt.popupError', { msg: e.message });
             return null;
         }
     }
@@ -1364,5 +1418,60 @@ namespace pxt.BrowserUtils {
         if (!url) return url;
         if (/[?&]rnd=/.test(url)) return url; // already busted
         return `${url}${url.indexOf('?') > 0 ? "&" : "?"}rnd=${Math.random()}`
+    }
+
+    export function appendUrlQueryParams(url: string, params: URLSearchParams) {
+        const entries: string[] = [];
+        for (const [key, value] of params.entries()) {
+            entries.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
+        }
+
+        if (entries.length) {
+            if (url.indexOf("?") !== -1) {
+                url += "&" + entries.join("&");
+            }
+            else {
+                url += "?" + entries.join("&");
+            }
+        }
+
+        return url;
+    }
+
+    export function legacyCopyText(element: HTMLInputElement | HTMLTextAreaElement) {
+        element.focus();
+        element.setSelectionRange(0, 9999);
+
+        try {
+            const success = document.execCommand("copy");
+            pxt.debug('copy: ' + success);
+            return !!success;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
+     * Sets the theme of the application by adding a class to the body. Themes
+     * are defined in CSS variable packs. The default theme is defined in
+     * `themes/themepacks.less`, in the `:root` pseudoclass. `highcontrast` is
+     * also defined there. Target-specific themes are defined in the target
+     * repo's `theme/themepack.less`.
+     */
+    export function setApplicationTheme(theme: string | undefined) {
+        const body = document.body;
+        const classes = body.classList;
+        for (let i = 0; i < classes.length; i++) {
+            if (/^theme-/.test(classes[i])) {
+                body.classList.remove(classes[i]);
+            }
+        }
+        if (theme) {
+            body.classList.add(`theme-${theme}`);
+        }
+    }
+
+    export function isElement(node: Node): node is Element {
+        return node.nodeType === Node.ELEMENT_NODE;
     }
 }

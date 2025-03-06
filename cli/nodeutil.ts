@@ -63,6 +63,8 @@ export function readResAsync(g: events.EventEmitter) {
 
 export function spawnAsync(opts: SpawnOptions) {
     opts.pipe = false
+    // https://nodejs.org/en/blog/vulnerability/april-2024-security-releases-2
+    if (os.platform() === "win32" && typeof opts.shell === "undefined") opts.shell = true
     return spawnWithPipeAsync(opts)
         .then(() => { })
 }
@@ -344,7 +346,7 @@ export function mkdirP(thePath: string) {
 
 export function cpR(src: string, dst: string, maxDepth = 8) {
     src = path.resolve(src)
-    let files = allFiles(src, maxDepth)
+    let files = allFiles(src, { maxDepth })
     let dirs: pxt.Map<boolean> = {}
     for (let f of files) {
         let bn = f.slice(src.length)
@@ -366,11 +368,29 @@ export function cp(srcFile: string, destDirectory: string, destName?: string) {
     fs.writeFileSync(dest, buf);
 }
 
-export function allFiles(top: string, maxDepth = 8, allowMissing = false, includeDirs = false, ignoredFileMarker: string = undefined): string[] {
+interface AllFilesOpts {
+    maxDepth?: number;
+    allowMissing?: boolean;
+    includeDirs?: boolean;
+    ignoredFileMarker?: string;
+    includeHiddenFiles?: boolean;
+}
+export function allFiles(top: string, opts: AllFilesOpts = {}) {
+    const {
+        maxDepth,
+        allowMissing,
+        includeDirs,
+        ignoredFileMarker,
+        includeHiddenFiles
+    } = {
+        maxDepth: 8,
+        ...opts
+    };
+
     let res: string[] = []
     if (allowMissing && !existsDirSync(top)) return res
     for (const p of fs.readdirSync(top)) {
-        if (p[0] == ".") continue;
+        if (p[0] == "." && !includeHiddenFiles) continue;
         const inner = path.join(top, p)
         const st = fs.statSync(inner)
         if (st.isDirectory()) {
@@ -378,7 +398,7 @@ export function allFiles(top: string, maxDepth = 8, allowMissing = false, includ
             if (ignoredFileMarker && fs.existsSync(path.join(inner, ignoredFileMarker)))
                 continue;
             if (maxDepth > 1)
-                Util.pushRange(res, allFiles(inner, maxDepth - 1))
+                Util.pushRange(res, allFiles(inner, { ...opts, maxDepth: maxDepth - 1 }))
             if (includeDirs)
                 res.push(inner);
         } else {

@@ -12,8 +12,9 @@ import * as pkg from "./package";
 import * as projects from "./projects";
 import * as tutorial from "./tutorial";
 
-type ISettingsProps = pxt.editor.ISettingsProps;
-type HeaderBarView = "home" | "editor" | "tutorial" | "tutorial-tab" | "debugging" | "sandbox";
+import ISettingsProps = pxt.editor.ISettingsProps;
+
+type HeaderBarView = "home" | "editor" | "tutorial" | "tutorial-tab" | "debugging" | "sandbox" | "time-machine";
 const LONGPRESS_DURATION = 750;
 
 export class HeaderBar extends data.Component<ISettingsProps, {}> {
@@ -75,16 +76,24 @@ export class HeaderBar extends data.Component<ISettingsProps, {}> {
         clearTimeout(this.longpressTimer);
     }
 
+    onPlayWithFriendsClick = (evt: any) => {
+        evt.preventDefault();
+        pxt.tickEvent("menu.playwithfriends", undefined, { interactiveConsent: true });
+        window.open(pxt.multiplayer.SHORT_LINK(), "_blank");
+    }
+
     protected getView = (): HeaderBarView => {
         const { home, debugging, tutorialOptions } = this.props.parent.state;
         if (home) {
             return "home";
         } else if (pxt.shell.isSandboxMode()) {
             return "sandbox";
+        } else if (pxt.shell.isTimeMachineEmbed()) {
+            return "time-machine";
         } else if (debugging) {
             return "debugging";
         } else if (!pxt.BrowserUtils.useOldTutorialLayout() && !!tutorialOptions?.tutorial) {
-            return "tutorial-tab"
+            return "tutorial-tab";
         } else if (!!tutorialOptions?.tutorial) {
             return "tutorial";
         } else {
@@ -93,7 +102,10 @@ export class HeaderBar extends data.Component<ISettingsProps, {}> {
     }
 
     getOrganizationLogo(targetTheme: pxt.AppTheme, highContrast?: boolean, view?: string) {
-        return <div className="ui item logo organization">
+        if (view === "time-machine") {
+            return <></>;
+        }
+        return <div className="ui item logo organization" role="menuitem">
             {targetTheme.organizationWideLogo || targetTheme.organizationLogo
                 ? <img className={`ui logo ${view !== "home" ? "mobile hide" : ""}`} src={targetTheme.organizationWideLogo || targetTheme.organizationLogo} alt={lf("{0} Logo", targetTheme.organization)} />
                 : <span className="name">{targetTheme.organization}</span>}
@@ -102,6 +114,9 @@ export class HeaderBar extends data.Component<ISettingsProps, {}> {
     }
 
     getTargetLogo(targetTheme: pxt.AppTheme, highContrast?: boolean, view?: string) {
+        if (view === "time-machine") {
+            return <></>;
+        }
         // TODO: "sandbox" view components are temporary share page layout
         return <div aria-label={lf("{0} Logo", targetTheme.boardName)} role="menuitem" className={`ui item logo brand ${view !== "sandbox" && view !== "home" ? "mobile hide" : ""}`} onClick={this.brandIconClick}>
             {targetTheme.useTextLogo
@@ -131,11 +146,27 @@ export class HeaderBar extends data.Component<ISettingsProps, {}> {
                 if (!hideIteration) return <tutorial.TutorialMenu parent={this.props.parent} />
                 break;
             case "tutorial-tab":
-                return <div />
+                if (tutorialOptions && (pxt.appTarget?.appTheme?.tutorialSimSidebarLayout || pxt.BrowserUtils.isTabletSize())) {
+                    const currentStep = tutorialOptions.tutorialStep ? tutorialOptions.tutorialStep + 1 : undefined;
+                    const totalSteps = tutorialOptions.tutorialStepInfo ? tutorialOptions.tutorialStepInfo?.length : undefined;
+                    return (
+                        <div className="tutorial-header-label">
+                            <div className="ui item tutorial-header-name-label">{tutorialOptions.tutorialName}</div>
+                            {currentStep && totalSteps && (
+                                <>
+                                    <div className="ui item tutorial-header-step-label">{" - "}</div> { /* Keeping this separate helps simplify spacing */ }
+                                    <div className="ui item tutorial-header-step-label">{lf("Step {0} of {1}", currentStep, totalSteps, totalSteps)}</div>
+                                </>
+                            )}
+                        </div>
+                    );
+                }
+                return <div />;
             case "debugging":
                 return  <sui.MenuItem className="centered" icon="large bug" name="Debug Mode" />
             case "sandbox":
             case "editor":
+            case "time-machine":
                 if (hideToggle) {
                     // Label for single language
                     switch (languageRestriction) {
@@ -147,7 +178,7 @@ export class HeaderBar extends data.Component<ISettingsProps, {}> {
                             break;
                     }
                 } else {
-                    return <div className="ui item link editor-menuitem">
+                    return <div className="ui item link editor-menuitem" role="menuitem">
                         <container.EditorSelector parent={this.props.parent} sandbox={view === "sandbox"} python={targetTheme.python} languageRestriction={languageRestriction} headless={pxt.appTarget.simulator?.headless} />
                     </div>
                 }
@@ -194,7 +225,7 @@ export class HeaderBar extends data.Component<ISettingsProps, {}> {
                 return <projects.ProjectSettingsMenu parent={this.props.parent} />
             case "tutorial-tab":
             case "editor":
-                return <container.SettingsMenu parent={this.props.parent} greenScreen={greenScreen} accessibleBlocks={accessibleBlocks} showShare={!!header} />
+                return <container.SettingsMenu parent={this.props.parent} greenScreen={greenScreen} accessibleBlocks={accessibleBlocks} showShare={!!header} inBlocks={this.props.parent.isBlocksActive()} />
             default:
                 return <div />
         }
@@ -213,7 +244,7 @@ export class HeaderBar extends data.Component<ISettingsProps, {}> {
             : (this.props.parent.isJavaScriptActive() ? "JavaScript" : "Blocks");
 
         const showHomeButton = (view === "editor" || view === "tutorial-tab") && !targetTheme.lockedEditor && !isController;
-        const showShareButton = view === "editor" && header && pxt.appTarget.cloud?.sharing && !isController;
+        const showShareButton = (view === "editor" || view === "tutorial-tab") && header && pxt.appTarget.cloud?.sharing && !isController;
         const showHelpButton = view === "editor" && targetTheme.docMenu?.length;
 
         // Approximate each tutorial step to be 22 px

@@ -16,6 +16,8 @@
         "newLine": "LF",
         "sourceMap": false,
         "moduleResolution": "node",
-        "incremental": false
+        "incremental": false,
+        "skipLibCheck": true,
+        "resolveJsonModule": true
     }
 }

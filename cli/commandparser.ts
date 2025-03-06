@@ -13,6 +13,7 @@ export interface CommandFlag {
     aliases?: string[];
     possibleValues?: string[];
     deprecated?: boolean;
+    hidden?: boolean;
 
 }
 
@@ -108,7 +109,9 @@ export class CommandParser {
                 const debugFlag = flagName || match[2];
                 if (debugFlag == "debug" || debugFlag == "d" || debugFlag == "dbg") {
                     pxt.options.debug = true;
-                    pxt.debug = console.log;
+                    if (pxt.options.debug) {
+                        pxt.setLogLevel(pxt.LogLevel.Debug);
+                    }
                     pxt.log(`debug mode`);
                     if (!flagName)
                         continue;
@@ -197,6 +200,8 @@ export class CommandParser {
         if (c.flags) {
             for (const flag in c.flags) {
                 const def = c.flags[flag];
+                if (def.hidden) continue;
+
                 if (def.possibleValues && def.possibleValues.length) {
                     usage += ` [${dash(flag)} ${def.possibleValues.join("|")}]`
                 }
@@ -227,7 +232,7 @@ export class CommandParser {
         let maxWidth = 0;
         for (const flag in c.flags) {
             const def = c.flags[flag];
-            if (def.deprecated) continue;
+            if (def.deprecated || def.hidden) continue;
             let usage = dash(flag);
             if (def.aliases && def.aliases.length) {
                 usage += " " + def.aliases.map(dash).join(" ");

@@ -5,7 +5,7 @@ import * as auth from "./auth";
 import * as data from "./data";
 import * as sui from "./sui";
 
-type ISettingsProps = pxt.editor.ISettingsProps;
+import ISettingsProps = pxt.editor.ISettingsProps;
 
 export interface EditorAccessibilityMenuProps extends ISettingsProps {
     highContrast?: boolean;
@@ -104,9 +104,11 @@ export class HomeAccessibilityMenu extends data.Component<HomeAccessibilityMenuP
         this.toggleHighContrast = this.toggleHighContrast.bind(this);
     }
 
-    newProject() {
+    async newProject(): Promise<void> {
         pxt.tickEvent("accmenu.home.new", undefined, { interactiveConsent: true });
-        this.props.parent.newProject();
+        const headers = this.getData(`headers:`);
+        const firstProject = (!headers || headers?.length == 0);
+        return this.props.parent.newUserCreatedProject(firstProject)
     }
 
     importProjectDialog() {

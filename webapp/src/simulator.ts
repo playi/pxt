@@ -3,16 +3,23 @@
 
 import * as core from "./core";
 import * as coretsx from "./coretsx";
+import * as data from "./data";
 import U = pxt.U
+import { postHostMessageAsync, shouldPostHostMessages } from "../../pxteditor";
+import { Milestones } from "./constants";
+
+
 
 interface SimulatorConfig {
     // return true if a visible breakpoint was found
     orphanException(brk: pxsim.DebuggerBreakpointMessage): void;
     highlightStatement(stmt: pxtc.LocationInfo, brk?: pxsim.DebuggerBreakpointMessage): boolean;
     restartSimulator(): void;
+    singleSimulator(): void;
     onStateChanged(state: pxsim.SimulatorState): void;
     onSimulatorReady(): void;
     setState(key: string, value: any): void;
+    onMuteButtonStateChange(state: pxt.editor.MuteState): void;
     editor: string;
 }
 
@@ -32,7 +39,7 @@ export function setTranslations(translations: pxt.Map<string>) {
     }
 }
 
-export function init(root: HTMLElement, cfg: SimulatorConfig) {
+export async function initAsync(root: HTMLElement, cfg: SimulatorConfig) {
     if (!root) return;
     pxsim.U.clear(root);
     const simulatorsDiv = document.createElement('div');
@@ -44,7 +51,10 @@ export function init(root: HTMLElement, cfg: SimulatorConfig) {
     debuggerDiv.className = 'ui item landscape only';
     root.appendChild(debuggerDiv);
 
+    const trgConfig = await data.getAsync<pxt.TargetConfig>("target-config:")
+
     const nestedEditorSim = /nestededitorsim=1/i.test(window.location.href);
+    const mpRole = /[\&\?]mp=(server|client)/i.exec(window.location.href)?.[1]?.toLowerCase();
     let parentOrigin: string = null;
     if (window.parent !== window) {
         const searchParams = new URLSearchParams(window.location.search);
@@ -56,10 +66,32 @@ export function init(root: HTMLElement, cfg: SimulatorConfig) {
                 const originUrl = new URL(origin);
                 parentOrigin = originUrl.origin
             } catch (e) {
-                console.error(`Invalid parent origin: ${origin}`)
+                pxt.error(`Invalid parent origin: ${origin}`)
             }
         }
     }
+
+    // Map simulator extensions from approved repos
+    const simulatorExtensions: pxt.Map<pxt.SimulatorExtensionConfig> = {};
+    Object.entries(trgConfig?.packages?.approvedRepoLib || {})
+        .map(([k, v]) => ({ k: k, v: v.simx }))
+        .filter(x => !!x.v)
+        .forEach(x => simulatorExtensions[x.k] = {
+            index: "index.html", // default to index.html
+            aspectRatio: pxt.appTarget.simulator.aspectRatio || 1.22, // fallback to 1.22
+            permanent: true, // default to true
+            ...x.v
+        });
+    // Add in test simulator extensions
+    Object.entries(pxt.appTarget?.simulator?.testSimulatorExtensions || {})
+        .map(([k, v]) => ({ k: k, v: v as pxt.SimulatorExtensionConfig }))
+        .filter(x => !!x.v)
+        .forEach(x => simulatorExtensions[x.k] = {
+            index: "index.html", // default to index.html
+            aspectRatio: pxt.appTarget.simulator.aspectRatio || 1.22, // fallback to 1.22
+            permanent: true, // default to true
+            ...x.v
+        });
 
     let options: pxsim.SimulatorDriverOptions = {
         restart: () => cfg.restartSimulator(),
@@ -180,10 +212,8 @@ export function init(root: HTMLElement, cfg: SimulatorConfig) {
             cfg.onStateChanged(state);
         },
         onSimulatorReady: function () {
-            pxt.perf.recordMilestone("simulator ready")
-            if (!pxt.perf.perfReportLogged) {
-                pxt.perf.report()
-            }
+            pxt.perf.recordMilestone(Milestones.SimulatorReady)
+            cfg.onSimulatorReady();
         },
         onSimulatorCommand: (msg: pxsim.SimulatorCommandMessage): void => {
             switch (msg.command) {
@@ -192,6 +222,9 @@ export function init(root: HTMLElement, cfg: SimulatorConfig) {
                     break
                 case "restart":
                     cfg.restartSimulator();
+                    break;
+                case "single":
+                    cfg.singleSimulator();
                     break;
                 case "reload":
                     stop(true);
@@ -231,19 +264,23 @@ export function init(root: HTMLElement, cfg: SimulatorConfig) {
         onTopLevelCodeEnd: () => {
             postSimEditorEvent("toplevelfinished");
         },
+        onMuteButtonStateChange: cfg.onMuteButtonStateChange,
         stoppedClass: pxt.appTarget.simulator && pxt.appTarget.simulator.stoppedClass,
         invalidatedClass: pxt.appTarget.simulator && pxt.appTarget.simulator.invalidatedClass,
-        nestedEditorSim: nestedEditorSim,
-        parentOrigin: parentOrigin,
-        messageSimulators: pxt.appTarget?.simulator?.messageSimulators
+        nestedEditorSim,
+        parentOrigin,
+        mpRole,
+        messageSimulators: pxt.appTarget?.simulator?.messageSimulators,
+        simulatorExtensions,
+        userLanguage: pxt.Util.userLanguage()
     };
     driver = new pxsim.SimulatorDriver(document.getElementById('simulators'), options);
     config = cfg
 }
 
 function postSimEditorEvent(subtype: string, exception?: string) {
-    if (pxt.editor.shouldPostHostMessages()) {
-        pxt.editor.postHostMessageAsync({
+    if (shouldPostHostMessages()) {
+        postHostMessageAsync({
             type: "pxthost",
             action: "simevent",
             subtype: subtype as any,
@@ -287,11 +324,25 @@ export function run(pkg: pxt.MainPackage, debug: boolean,
         fnArgs,
         parts,
         usedBuiltinParts,
+        allParts
     } = pxtc.buildSimJsInfo(res);
     lastCompileResult = res;
     const { mute, highContrast, light, clickTrigger, storedState, autoRun } = options;
     const isIpcRenderer = pxt.BrowserUtils.isIpcRenderer() || undefined;
-    const dependencies = pkg.dependencies()
+    const dependencies: pxt.Map<string> = {}
+    for (const dep of pkg.sortedDeps())
+        dependencies[dep.id] = dep.version()
+
+    const playerNumber = allParts && allParts.indexOf("multiplayer") >= 0 ? 1 : undefined;
+    if (playerNumber) {
+        const root = document.getElementById("root");
+        for (let i = 1; i <= 4; i++) {
+            const cssVar = `--multiplayer-presence-icon-${i}`;
+            root?.style?.removeProperty(cssVar);
+        }
+    }
+
+    const theme = pkg.config.theme || (pxt.appTarget.appTheme.matchWebUSBDeviceInSim && pxt.packetio.isConnected() && pxt.packetio.deviceVariant());
 
     const opts: pxsim.SimulatorRunOptions = {
         boardDefinition: boardDefinition,
@@ -314,7 +365,9 @@ export function run(pkg: pxt.MainPackage, debug: boolean,
         storedState: storedState,
         autoRun,
         ipc: isIpcRenderer,
-        dependencies
+        dependencies,
+        activePlayer: playerNumber,
+        theme: theme,
     }
     //if (pxt.options.debug)
     //    pxt.debug(JSON.stringify(opts, null, 2))
@@ -330,7 +383,6 @@ export function mute(mute: boolean) {
 
 export function stop(unload?: boolean, starting?: boolean) {
     if (!driver) return;
-    driver.stopSound();
     driver.stop(unload, starting);
 }
 

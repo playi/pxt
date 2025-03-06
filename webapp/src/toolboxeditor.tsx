@@ -2,6 +2,7 @@
 import * as srceditor from "./srceditor";
 import * as toolbox from "./toolbox";
 import * as compiler from "./compiler";
+import { getProjectToolboxFilters } from "./package";
 
 export abstract class ToolboxEditor extends srceditor.Editor {
 
@@ -17,11 +18,32 @@ export abstract class ToolboxEditor extends srceditor.Editor {
     abstract getBlocksForCategory(ns: string, subns?: string): toolbox.BlockDefinition[];
 
     protected shouldShowBlock(blockId: string, ns: string, shadow?: boolean) {
-        const filters = this.parent.state.editorState && this.parent.state.editorState.filters;
+        let filters = this.parent.state.editorState && this.parent.state.editorState.filters;
+
+        const projectFilter = getProjectToolboxFilters();
+
+        if (projectFilter) {
+            if (filters) {
+                // tutorial filters override project filters
+                pxt.U.jsonMergeFrom(projectFilter, filters);
+            }
+
+            filters = projectFilter;
+        }
+
+
         if (filters) {
-            // block-level filters should not apply to shadow blocks (nested)
-            const blockFilter = filters.blocks && (filters.blocks[blockId] || (this.blockIdMap && this.blockIdMap[blockId]?.some(id => filters.blocks[id])));
+            let blockFilter: pxt.editor.FilterState | boolean;
+            if (filters.blocks) {
+                if (filters.blocks[blockId] !== undefined) {
+                    blockFilter = filters.blocks[blockId];
+                }
+                else {
+                    blockFilter = this.blockIdMap && this.blockIdMap[blockId]?.some(id => filters.blocks[id]);
+                }
+            }
             const categoryFilter = filters.namespaces && filters.namespaces[ns];
+            // block-level filters should not apply to shadow blocks (nested)
             // First try block filters
             if (blockFilter != undefined && blockFilter == pxt.editor.FilterState.Hidden && !shadow) return false;
             if (blockFilter != undefined) return true;
@@ -46,6 +68,7 @@ export abstract class ToolboxEditor extends srceditor.Editor {
                 return true;
             } else if (ns === "functions" && (!filters.blocks ||
                 filters.blocks["function_definition"] ||
+                filters.blocks["function_call"] ||
                 filters.blocks["procedures_defnoreturn"] ||
                 filters.blocks["procedures_callnoreturn"]) &&
                 (!filters.namespaces || filters.namespaces["functions"] !== pxt.editor.FilterState.Disabled)) {
@@ -151,6 +174,13 @@ export abstract class ToolboxEditor extends srceditor.Editor {
             }).filter(subns => !!subns);
         }
 
+        function isTopLevelExtension(ns: string, md: pxtc.CommentAttrs) {
+            //TODO check if this extension is top level and allow delete for the same.
+            return false;
+            //const nsAttr = getBlocksEditor().extensionsMap[ns];
+            //return nsAttr.isExtension;
+        }
+
         function createCategories(names: [string, pxtc.CommentAttrs][], isAdvanced?: boolean): toolbox.ToolboxCategory[] {
             return names
                 .sort(([, md1], [, md2]) => {
@@ -204,11 +234,16 @@ export abstract class ToolboxEditor extends srceditor.Editor {
                             || md.icon : pxt.toolbox.getNamespaceIcon(ns);
                         category.groups = builtInCategory.groups || md.groups;
                         category.customClick = builtInCategory.customClick;
+                        category.onlyTriggerOnClick = builtInCategory.onlyTriggerOnClick;
+                    } else if (isTopLevelExtension(ns, md)) {
+                        category.allowDelete = true;
                     }
                     return category;
                 }).filter(cat => !!cat);
         }
-        return createCategories(namespaces, isAdvanced);
+
+        const cat = createCategories(namespaces, isAdvanced);
+        return cat;
     }
 
     abstract showFlyout(treeRow: toolbox.ToolboxCategory): void;
@@ -348,5 +383,11 @@ export abstract class ToolboxEditor extends srceditor.Editor {
         }
 
         return this.blockGroupsCache[ns];
+    }
+
+    override focusToolbox(itemToFocus?: string) {
+        if (this.toolbox) {
+            this.toolbox.focus(itemToFocus);
+        }
     }
 }

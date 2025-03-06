@@ -13,6 +13,7 @@
 @highlightLineClassColor: #007f00;
 @highlightLineKeywordColor: #0000ff;
 @tutorialCardHeight: 8rem;
+@tutorialCardMaxHeight: 20rem;
 @seeMoreButtonHeight: 4rem;
 @avatarSize: 4.5rem;
 @avatarMargin: @avatarSize + 0.5rem;
@@ -88,7 +89,7 @@
 }
 
 .tutorial.tutorialExpanded #tutorialcard {
-    max-height: 20rem;
+    max-height: @tutorialCardMaxHeight;
 }
 
 #root.dimmable.dimmed #tutorialcard.tutorialReady {
@@ -141,6 +142,10 @@ body#docs.tutorial {
     padding: 0.5rem;
 }
 
+#tutorialcard.stepExpanded {
+    height: auto;
+}
+
 .tutorial #tutorialcard .ui.buttons {
     width: 100%;
     height: calc(@tutorialCardHeight - 1rem);
@@ -148,6 +153,7 @@ body#docs.tutorial {
 
 .tutorial.tutorialExpanded #tutorialcard .ui.buttons {
     height: 100%;
+    max-height: calc(@tutorialCardMaxHeight - 1rem);
 }
 
 #tutorialcard .ui.tutorialsegment {
@@ -221,6 +227,14 @@ body#docs.tutorial {
     width: 100%;
 }
 
+.ui.modal {
+    .ams-embed, .yt-embed {
+        height: 30rem;
+        width: 80%;
+        max-height: 50vh;
+    }
+}
+
 @media only screen and (min-height: 400px) {
     .hintdialog .ui.segment .blocklyPreview,
     .tutorialhint .ui.segment .blocklyPreview,
@@ -250,12 +264,43 @@ span.docs.inlinebutton {
 
 span.docs.inlineblock {
     padding: 0.05rem .2rem;
-    border-radius: .2rem;
-    white-space: nowrap;
-    background-color: @inlineBlockColor;
-    color: @white;
+    padding-bottom: 0.1rem;
+    white-space: break-spaces;
+    border-radius: 0;
+    border-bottom: 3px solid var(--inline-namespace-color);
+    color: black;
+    font-weight: 600;
+    background-color: transparent;
     font-family: @blocklyFont !important;
     font-size: 1em !important;
+
+    i {
+        font-family: 'Icons';
+        color: var(--inline-namespace-color);
+        font-style: normal;
+        margin-right: 6px;
+    }
+
+    span.image-icon {
+        background-image: var(--image-icon-url);
+        width: 20px;
+        height: 17px;
+        background-size: contain !important;
+        background-repeat: no-repeat !important;
+        display: inline-block;
+    }
+
+    &.clickable {
+        cursor: pointer;
+
+        &:hover, &:focus {
+            opacity: .8;
+        }
+    }
+}
+
+.hc span.docs.inlineblock {
+    color: @white;
 }
 
 code.lang-filterblocks {
@@ -279,16 +324,6 @@ code.lang-filterblocks {
         > i, > span, > i.orange {
             color: @black !important;
         }
-    }
-}
-
-#tutorialcard .isValidated {
-    background: @tutorialCodeValidationCorrectBackground;
-    > i, > span, > i.nextbutton {
-        color: @tutorialCodeValidationCorrectTextColor !important;
-    }
-    i.large.icon, i.large.icons{
-        font-size: 1.7em;
     }
 }
 
@@ -390,10 +425,11 @@ code.lang-filterblocks {
     transform: rotateZ(-135deg);
 }
 
-.tutorialhint > div,
-.tutorial-callout > div {
+.tutorialhint > .hint-content,
+.tutorial-callout > .hint-content {
     max-height: 60vh;
     overflow: auto;
+    padding-right: 2rem;
 }
 
 .tutorialhint.hidden,
@@ -462,21 +498,21 @@ code.lang-filterblocks {
 /*******************************
         See More Button
 *******************************/
-#tutorialcard.seemore {
-    .tutorialsegment > button {
-        flex-grow: 0;
-        position: relative;
-        width: auto;
-        margin: auto;
-        margin-top: -0.75rem;
-        padding: 0.5rem 0.8rem;
-    }
+#tutorialcard.seemore .tutorialsegment > button {
+    flex-grow: 0;
+    position: relative;
+    width: auto;
+    margin: auto;
+    margin-top: -0.5rem;
+    padding: 0.5rem 0.8rem;
 }
 
-.editorlang-text {
-    #tutorialcard.seemore .tutorialsegment > button {
-        margin-right: 1rem;
-    }
+.editorlang-text:not(.hideToolbox) #tutorialcard.seemore .tutorialsegment > button {
+    margin-right: 1rem;
+}
+
+.editorlang-text.hideToolbox #tutorialcard.seemore .tutorialsegment > button {
+    margin-left: 1rem;
 }
 
 /*******************************
@@ -506,8 +542,8 @@ code.lang-filterblocks {
 ******************************/
 // TODO (shakao) remove #mainmenu items when cleaning up
 // old tutorial code
-#editorSidebar .immersive-reader-button.ui.item,
-#editorSidebar .immersive-reader-button.ui.item:focus,
+#simulator .editor-sidebar .immersive-reader-button.ui.item,
+#simulator .editor-sidebar .immersive-reader-button.ui.item:focus,
 #mainmenu .immersive-reader-button.ui.item,
 #mainmenu .immersive-reader-button.ui.item:focus {
     width: 2rem;
@@ -521,8 +557,8 @@ code.lang-filterblocks {
 #mainmenu .immersive-reader-button.ui.item:focus {
     background-image: @immersiveReaderLightIcon;
 }
-#editorSidebar .immersive-reader-button.ui.item,
-#editorSidebar .immersive-reader-button.ui.item:focus{
+#simulator .editor-sidebar .immersive-reader-button.ui.item,
+#simulator .editor-sidebar .immersive-reader-button.ui.item:focus{
     background-image: @immersiveReaderIcon;
 }
 
@@ -621,6 +657,10 @@ code.lang-filterblocks {
     }
 }
 
+.hideToolbox #headers #flyoutHeader {
+    display: none;
+}
+
 /*******************************
         Sidebar Tutorial
 *******************************/
@@ -685,7 +725,7 @@ code.lang-filterblocks {
  * CSS for embedded tutorial used in the skills map
  */
 .tutorial.tutorial-embed {
-    #editorSidebar, #maineditor, &.sideDocs #sidedocs, .simView #simulators {
+    #simulator .editor-sidebar, #maineditor, &.sideDocs #sidedocs, .simView #simulators {
         top: @tutorialEmbedMenuHeight;
     }
     .simView #boardview {
@@ -827,7 +867,7 @@ code.lang-filterblocks {
     * CSS for embedded tutorial used in the skills map
     */
     .tutorial.tutorial-embed {
-        #editorSidebar {
+        #simulator .editor-sidebar {
             top: unset;
         }
     }

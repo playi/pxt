@@ -72,7 +72,7 @@
 .asset-editor-gallery-tab {
     height: 3rem;
     background-color: @assetUnselected;
-    color: @grey;
+    color: darken(@grey, 20%);
     padding: .7em 2em .85em;
     font-size: 1rem;
     font-weight: 600;
@@ -160,19 +160,16 @@
     }
 }
 
-.asset-editor-sidebar-controls > .common-list-item {
-    display: flex;
+.asset-editor-sidebar-controls {
+    margin: 0 .75rem;
+    .common-list-item {
+        display: flex;
+    }
 }
 
 .asset-editor-button {
     flex: 1;
     box-shadow: inset 0 0 0 1px rgba(34,36,38,.15), inset 0 -0.3em 0 0 rgba(34,36,38,.15);
-}
-
-.delete-asset.common-button {
-    flex: 1;
-    background: none transparent;
-    border: none;
 }
 
 .create-new.common-button {
@@ -229,8 +226,79 @@
         margin: 1rem;
     }
 
+    .common-button-flex {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
 }
 
 .image-editor-open #tutorialcard {
     z-index: @blocklyDropdownDivZIndex + 1
+}
+
+.asset-palette-button.common-button {
+    margin-top: 1rem;
+    flex: 1;
+    box-shadow: inset 0 0 0 1px rgba(34,36,38,.15), inset 0 -0.3em 0 0 rgba(34,36,38,.15);
+}
+
+i.fa-palette {
+    transform: rotate(90deg);
+}
+
+.palette-transparent-button.common-button {
+    background: none;
+    border: none;
+    &.disabled {
+        background: none;
+        border: none;
+        color: @grey;
+    }
+}
+
+.palette-actions {
+    .common-button {
+        background: none;
+        border: none;
+        padding: .5rem;
+        font-size: 18px;
+        margin: 0;
+        &.disabled {
+            background: none;
+            border: none;
+            color: @grey;
+            &:focus::after {
+                outline: none;
+            }
+        }
+        .xicon.rename {
+            margin-right: 0.5rem;
+        }
+    }
+}
+
+.palette-delete-modal,
+.palette-exit-modal,
+.palette-name-modal {
+    .common-modal {
+        width: 35%;
+    }
+    .common-palette-swatch-name {
+        padding: 1rem .5rem 0 0;
+        flex-grow: 0;
+    }
+    .common-palette-color-list {
+        padding-top: 1rem;
+    }
+}
+
+.palette-apply-button.common-button.disabled.green,
+.palette-done-button.common-button.disabled.teal {
+    background-color: @grey;
+    color: @white;
+}
+
+.invalid-palette-name {
+    color: @red;
 }

@@ -36,17 +36,98 @@ the namespace name separated with a ``:``.
 ``||loops:repeat 4 times||``
 ```
 
+If the user clicks on the resulting button, it will toggle the toolbox for the given namespace.
+
+If you have a need for a button to appear one color but open a different category,
+you can add the namespace it should open in parentheses after the normal one
+
+```
+``||variables(sprites):set mySprite to||``
+```
+
+This will appear in tutorials as the `variables` category, but clicking it will toggle the `sprites` category.
+
+### validate-exists
+
+The ``@validate-exists`` tag marks the code block following it as subject to validation. This means that, when [code validation](/writing-docs/tutorials/basics.md#code-validation-validationlocal-and-validationglobal-sections) is enabled in a tutorial, the user is warned that their code isn't matching a block that the tutorial intended.
+
+ Use `// @validate-exists` in blocks and TypeScript, and `# @validate-exists`
+in Python.
+
+````
+```blocks
+// @validate-exists
+basic.showString("HELLO!")
+```
+````
+
 ### highlight
 
-Although used in snippets, the renderer will higlight the next line of code or block following a comment containing
+When used in snippets, the renderer will higlight the next line of code or block following a comment containing
 **@highlight**. Use `// @highlight` in blocks and TypeScript, and `# @highlight`
 in Python.
+
+Another feature of **@highlight**, like with **@validate-exists**, is that the highlighted block is also validated when [code validation](/writing-docs/tutorials/basics.md#code-validation-validationlocal-and-validationglobal-sections) is enabled.
 
 ````
 ```blocks
 console.log(":)")
 // @highlight
 console.log(":(")
+```
+````
+
+### hide
+
+When used in snippets that produce an image of blocks, the renderer will remove the code or block following the a
+comment containing **@hide**. Use `// @hide` in blocks and TypeScript, and `# @hide` in Python.
+
+This will most often be useful when hiding set up code - e.g. a variable or function declaration.
+
+````
+```blocks
+// @hide
+function myCoolFunction() {
+
+}
+
+// @hide
+let mySprite = sprites.create(img`1`);
+
+mySprite.x += 50;
+myCoolFunction();
+```
+````
+
+### collapsed
+
+When used in snippets, the following function or event will show up collapsed in the hint. This
+can also be used in template code in order to have code start off collapsed in the user's workspace,
+in case there is code that should exist but not be focused on immediately, or that you will call out in subsequent steps.
+
+````
+```blocks
+// @collapsed
+function myCoolFunction() {
+    console.log("this");
+    console.log("is");
+    console.log("a");
+    console.log("really");
+    console.log("long");
+    console.log("function");
+}
+
+// @collapsed
+game.onUpdate(() => {
+    console.log("this");
+    console.log("is");
+    console.log("a");
+    console.log("really");
+    console.log("long");
+    console.log("event");
+})
+
+myCoolFunction();
 ```
 ````
 
@@ -306,7 +387,7 @@ names using the ``package`` macro. Note, the name **package** is still used even
 though these are now called **extensions**.
 
 The package setting listed last in the example below uses a special format to reference
-its location in a separate GitHub repository. You can find this _package specification_ 
+its location in a separate GitHub repository. You can find this _package specification_
 in the ``Project Settings`` / ``pxt.json`` file, listed under ``dependencies``. Notice
 that it lists the exact version to use; this isn't required (that is, you can leave off
 the `#v0.6.12`), but it is highly recommended you include this so that future changes to
@@ -465,7 +546,7 @@ The project is specified by its share URL.
 ### sig
 
 The **sig** snippet displays a signature of the first function call in the snippet,
-rendering it in blocks, JavaScript, and Python. 
+rendering it in blocks, JavaScript, and Python.
 
     ```sig
     basic.showNumber(5)

@@ -1,8 +1,9 @@
-import React = require("react");
-import ReactDOM = require("react-dom");
+import * as React from "react";
+import * as ReactDOM from "react-dom";
 import { classList, ContainerProps } from "../util";
 import { Button } from "./Button";
 import { FocusTrap } from "./FocusTrap";
+import { Link } from "./Link";
 
 export interface ModalAction {
     label: string;
@@ -10,6 +11,7 @@ export interface ModalAction {
     disabled?: boolean;
     icon?: string;
     xicon?: boolean;
+    leftIcon?: string;
     onClick: () => void;
     url?: string;
 
@@ -20,11 +22,14 @@ export interface ModalAction {
 
 export interface ModalProps extends ContainerProps {
     title: string;
+    leftIcon?: string;
+    helpUrl?: string
     ariaDescribedBy?: string;
     actions?: ModalAction[];
     onClose?: () => void;
     fullscreen?: boolean;
     parentElement?: Element;
+    hideDismissButton?: boolean;
 }
 
 export const Modal = (props: ModalProps) => {
@@ -37,10 +42,13 @@ export const Modal = (props: ModalProps) => {
         ariaDescribedBy,
         role,
         title,
+        leftIcon,
+        helpUrl,
         actions,
         onClose,
         parentElement,
-        fullscreen
+        fullscreen,
+        hideDismissButton,
     } = props;
 
     const closeClickHandler = (e?: React.MouseEvent<HTMLButtonElement>) => {
@@ -62,7 +70,7 @@ export const Modal = (props: ModalProps) => {
             aria-describedby={ariaDescribedBy}
             aria-labelledby="modal-title">
             <div className="common-modal-header">
-                {fullscreen &&
+                {fullscreen && !hideDismissButton &&
                     <div className="common-modal-back">
                         <Button
                             className="menu-button"
@@ -74,12 +82,27 @@ export const Modal = (props: ModalProps) => {
                     </div>
                 }
                 <div id="modal-title" className="common-modal-title">
+                    {leftIcon && <i className={leftIcon} aria-hidden={true}/>}
                     {title}
                 </div>
-                {!fullscreen &&
+                {fullscreen && helpUrl &&
+                    <div className="common-modal-help">
+                        <Link
+                            className="common-button menu-button"
+                            title={lf("Help on {0} dialog", title)}
+                            href={props.helpUrl}
+                            target="_blank"
+                        >
+                            <span className="common-button-flex">
+                                <i className="fas fa-question" aria-hidden={true}/>
+                            </span>
+                        </Link>
+                    </div>
+                }
+                {!fullscreen && !hideDismissButton &&
                     <div className="common-modal-close">
                         <Button
-                            className="menu-button"
+                            className="menu-button inverted"
                             onClick={closeClickHandler}
                             title={lf("Close")}
                             rightIcon="fas fa-times-circle"
@@ -95,17 +118,18 @@ export const Modal = (props: ModalProps) => {
                     { actions.map((action, index) =>
                         <Button
                             key={index}
-                            className="primary inverted"
+                            className={action.className ?? "primary inverted"}
                             disabled={action.disabled}
                             onClick={action.onClick}
                             href={action.url}
                             label={action.label}
                             title={action.label}
                             rightIcon={(action.xicon ? "xicon " : "") + action.icon}
+                            leftIcon={action.leftIcon}
                         />
                     )}
                 </div>
             }
         </div>
-    </FocusTrap>, parentElement || document.body)
+    </FocusTrap>, parentElement || document.getElementById("root") || document.body)
 }

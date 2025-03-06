@@ -1,4 +1,5 @@
 /// <reference path="./lib/skillMap.d.ts" />
+/// <reference path="../../localtypings/pxteditor.d.ts" />
 
 import React from 'react';
 import { connect } from 'react-redux';
@@ -21,7 +22,8 @@ import {
     dispatchSetPageBackgroundImageUrl,
     dispatchSetPageBannerImageUrl,
     dispatchSetPageTheme,
-    dispatchSetUserPreferences
+    dispatchSetUserPreferences,
+    dispatchCloseSelectLanguage
 } from './actions/dispatch';
 import { PageSourceStatus, SkillMapState } from './store/reducer';
 import { HeaderBar } from './components/HeaderBar';
@@ -38,6 +40,7 @@ import { getLocalUserStateAsync, getUserStateAsync, saveUserStateAsync } from '.
 import { Unsubscribe } from 'redux';
 import { UserProfile } from './components/UserProfile';
 import { ReadyResources, ReadyPromise } from './lib/readyResources';
+import { LanguageSelector } from '../../react-common/components/language/LanguageSelector';
 
 /* eslint-disable import/no-unassigned-import */
 import './App.css';
@@ -54,6 +57,7 @@ interface AppProps {
     signedIn: boolean;
     activityId: string;
     highContrast?: boolean;
+    showSelectLanguage: boolean;
     dispatchAddSkillMap: (map: SkillMap) => void;
     dispatchChangeSelectedItem: (mapId?: string, activityId?: string) => void;
     dispatchClearSkillMaps: () => void;
@@ -68,6 +72,7 @@ interface AppProps {
     dispatchSetPageAlternateUrls: (urls: string[]) => void;
     dispatchSetPageTheme: (theme: SkillGraphTheme) => void;
     dispatchSetUserPreferences: (prefs: pxt.auth.UserPreferences) => void;
+    dispatchCloseSelectLanguage: () => void;
 }
 
 interface AppState {
@@ -75,6 +80,7 @@ interface AppState {
     cloudSyncCheckHasFinished: boolean;
     badgeSyncLock: boolean;
     showingSyncLoader?: boolean;
+    forcelang?: string;
 }
 
 class AppImpl extends React.Component<AppProps, AppState> {
@@ -85,6 +91,8 @@ class AppImpl extends React.Component<AppProps, AppState> {
 
     constructor(props: any) {
         super(props);
+        this.changeLanguage = this.changeLanguage.bind(this);
+
         this.state = {
             cloudSyncCheckHasFinished: false,
             badgeSyncLock: false
@@ -150,8 +158,6 @@ class AppImpl extends React.Component<AppProps, AppState> {
         // TODO: include the pxt webconfig so that we can get the commitcdnurl (and not always pass live=true)
         const baseUrl = "";
         const targetId = pxt.appTarget.id;
-        const pxtBranch = pxt.appTarget.versions.pxtCrowdinBranch;
-        const targetBranch = pxt.appTarget.versions.targetCrowdinBranch;
 
         const langLowerCase = useLang?.toLocaleLowerCase();
         const localDevServe = pxt.BrowserUtils.isLocalHostDev()
@@ -167,19 +173,22 @@ class AppImpl extends React.Component<AppProps, AppState> {
             targetId: targetId,
             baseUrl: baseUrl,
             code: useLang!,
-            pxtBranch: pxtBranch!,
-            targetBranch: targetBranch!,
             force: force,
         });
 
         if (pxt.Util.isLocaleEnabled(useLang!)) {
             pxt.BrowserUtils.setCookieLang(useLang!);
             pxt.Util.setUserLanguage(useLang!);
+            pxt.analytics?.addDefaultProperties({lang: useLang!}); //set the new language in analytics
+        }
+
+        if (force && useLang) {
+            this.setState({ forcelang: useLang });
         }
     }
 
     protected async fetchAndParseSkillMaps(source: MarkdownSource, url: string) {
-        const result = await getMarkdownAsync(source, url);
+        const result = await getMarkdownAsync(source, url, this.state.forcelang);
 
         const md = result?.text;
         const fetched = result?.identifier;
@@ -221,7 +230,7 @@ class AppImpl extends React.Component<AppProps, AppState> {
 
                 this.setState({ error: undefined });
             } catch (err) {
-                this.handleError(err);
+                this.handleError(err as any);
             }
         } else {
             this.setState({ error: lf("No content loaded.") })
@@ -361,6 +370,19 @@ class AppImpl extends React.Component<AppProps, AppState> {
         }
     }
 
+    componentDidUpdate() {
+        const { highContrast } = this.props;
+
+        const bodyIsHighContrast = document.body.classList.contains("high-contrast");
+
+        if (highContrast) {
+            if (!bodyIsHighContrast) document.body.classList.add("high-contrast");
+        }
+        else if (bodyIsHighContrast) {
+            document.body.classList.remove("high-contrast");
+        }
+    }
+
     componentWillUnmount() {
         window.removeEventListener("hashchange", this.handleHashChange);
         if (this.unsubscribeChangeListener) {
@@ -368,11 +390,17 @@ class AppImpl extends React.Component<AppProps, AppState> {
         }
     }
 
+    changeLanguage(langId: string) {
+        pxt.tickEvent(`skillmap.menu.lang.changelang`, { lang: langId });
+        pxt.BrowserUtils.setCookieLang(langId);
+        authClient.setLanguagePreference(langId).then(() => location.reload());
+    }
+
     render() {
-        const { skillMaps, activityOpen, backgroundImageUrl, theme, highContrast } = this.props;
-        const { error, showingSyncLoader } = this.state;
+        const { skillMaps, activityOpen, backgroundImageUrl, theme } = this.props;
+        const { error, showingSyncLoader, forcelang } = this.state;
         const maps = Object.keys(skillMaps).map((id: string) => skillMaps[id]);
-        return (<div className={`app-container ${pxt.appTarget.id} ${highContrast ? "high-contrast" : ""}`}>
+        return (<div className={`app-container ${pxt.appTarget.id}`}>
                 <HeaderBar />
                 {showingSyncLoader && <div className={"makecode-frame-loader"}>
                     <img src={resolvePath("assets/logo.svg")} alt={lf("MakeCode Logo")} />
@@ -381,13 +409,17 @@ class AppImpl extends React.Component<AppProps, AppState> {
                 <div className={`skill-map-container ${activityOpen ? "hidden" : ""}`} style={{ backgroundColor: theme.backgroundColor }}>
                     { error
                         ? <div className="skill-map-error">{error}</div>
-                        : <SkillGraphContainer maps={maps} backgroundImageUrl={backgroundImageUrl} />
+                        : <SkillGraphContainer maps={maps} backgroundImageUrl={backgroundImageUrl} backgroundColor={theme.backgroundColor} strokeColor={theme.strokeColor} />
                     }
                     { !error && <InfoPanel onFocusEscape={this.focusCurrentActivity} />}
                 </div>
-                <MakeCodeFrame onWorkspaceReady={this.onMakeCodeFrameLoaded}/>
+                <MakeCodeFrame forcelang={forcelang} onWorkspaceReady={this.onMakeCodeFrameLoaded}/>
                 <AppModal />
                 <UserProfile />
+                {this.props.showSelectLanguage && <LanguageSelector
+                    onLanguageChanged={this.changeLanguage}
+                    onClose={this.props.dispatchCloseSelectLanguage}
+                />}
             </div>);
     }
 
@@ -500,15 +532,14 @@ function mapStateToProps(state: SkillMapState, ownProps: any) {
         theme: state.theme,
         signedIn: state.auth.signedIn,
         activityId: state.selectedItem?.activityId,
-        highContrast: state.auth.preferences?.highContrast
+        highContrast: state.auth.preferences?.highContrast,
+        showSelectLanguage: state.showSelectLanguage
     };
 }
 interface LocalizationUpdateOptions {
     targetId: string;
     baseUrl: string;
     code: string;
-    pxtBranch: string;
-    targetBranch: string;
     force?: boolean;
 }
 
@@ -516,8 +547,6 @@ async function updateLocalizationAsync(opts: LocalizationUpdateOptions): Promise
     const {
         targetId,
         baseUrl,
-        pxtBranch,
-        targetBranch,
         force,
     } = opts;
     let { code } = opts;
@@ -526,8 +555,6 @@ async function updateLocalizationAsync(opts: LocalizationUpdateOptions): Promise
         targetId,
         baseUrl,
         code,
-        pxtBranch,
-        targetBranch,
         pxt.Util.liveLocalizationEnabled(),
         ts.pxtc.Util.TranslationsKind.SkillMap
     );
@@ -551,7 +578,8 @@ const mapDispatchToProps = {
     dispatchSetPageBannerImageUrl,
     dispatchSetPageTheme,
     dispatchSetUserPreferences,
-    dispatchChangeSelectedItem
+    dispatchChangeSelectedItem,
+    dispatchCloseSelectLanguage
 };
 
 const App = connect(mapStateToProps, mapDispatchToProps)(AppImpl);

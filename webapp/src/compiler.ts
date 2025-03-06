@@ -1,8 +1,12 @@
 import * as pkg from "./package";
 import * as core from "./core";
 import * as workspace from "./workspace";
+import * as Blockly from "blockly";
+import * as pxtblockly from "../../pxtblocks";
 
 import U = pxt.Util;
+import { postHostMessageAsync, shouldPostHostMessages } from "../../pxteditor";
+import { Measurements } from "./constants";
 
 function setDiagnostics(operation: "compile" | "decompile" | "typecheck", diagnostics: pxtc.KsDiagnostic[], sourceMap?: pxtc.SourceInterval[]) {
     let mainPkg = pkg.mainEditorPkg();
@@ -62,8 +66,8 @@ function setDiagnostics(operation: "compile" | "decompile" | "typecheck", diagno
     reportDiagnosticErrors(errors);
 
     // send message to editor controller if any
-    if (pxt.editor.shouldPostHostMessages()) {
-        pxt.editor.postHostMessageAsync({
+    if (shouldPostHostMessages()) {
+        postHostMessageAsync({
             type: "pxthost",
             action: "workspacediagnostics",
             operation,
@@ -169,6 +173,7 @@ export function compileAsync(options: CompileOptions = {}): Promise<pxtc.Compile
                 opts.trace = true;
             }
             opts.computeUsedSymbols = true;
+            opts.computeUsedParts = true;
             if (options.forceEmit)
                 opts.forceEmit = true;
             if (/test=1/i.test(window.location.href))
@@ -181,9 +186,10 @@ export function compileAsync(options: CompileOptions = {}): Promise<pxtc.Compile
 
             // keep the assembly file - it is only generated when user hits "Download"
             // and is usually overwritten by the autorun very quickly, so it's impossible to see it
-            let prevasm = outpkg.files[pxtc.BINARY_ASM]
-            if (prevasm && !resp.outfiles[pxtc.BINARY_ASM]) {
-                resp.outfiles[pxtc.BINARY_ASM] = prevasm.content
+            for (const file of Object.keys(outpkg.files)) {
+                if (file.endsWith(".asm") && !resp.outfiles[file]) {
+                    resp.outfiles[file] = outpkg.files[file].content;
+                }
             }
 
             // add metadata about current build
@@ -282,7 +288,7 @@ export function decompileAsync(fileName: string, blockInfo?: ts.pxtc.BlocksInfo,
         .then(resp => {
             // try to patch event locations
             if (resp.success && blockInfo && oldWorkspace && blockFile) {
-                const newXml = pxt.blocks.layout.patchBlocksFromOldWorkspace(blockInfo, oldWorkspace, resp.outfiles[blockFile]);
+                const newXml = pxtblockly.patchBlocksFromOldWorkspace(blockInfo, oldWorkspace, resp.outfiles[blockFile]);
                 resp.outfiles[blockFile] = newXml;
             }
             pkg.mainEditorPkg().outputPkg.setFiles(resp.outfiles)
@@ -292,13 +298,17 @@ export function decompileAsync(fileName: string, blockInfo?: ts.pxtc.BlocksInfo,
 }
 
 // TS -> blocks, load blocs before calling this api
-export function decompileBlocksSnippetAsync(code: string, blockInfo?: ts.pxtc.BlocksInfo, dopts?: { snippetMode?: boolean }): Promise<pxtc.CompileResult> {
+export function decompileBlocksSnippetAsync(code: string, blockInfo?: ts.pxtc.BlocksInfo, dopts?: {
+    snippetMode?: boolean,
+    generateSourceMap?: boolean
+}): Promise<pxtc.CompileResult> {
     const trg = pkg.mainPkg.getTargetOptions()
     return pkg.mainPkg.getCompileOptionsAsync(trg)
         .then(opts => {
             opts.fileSystem[pxt.MAIN_TS] = code;
             opts.fileSystem[pxt.MAIN_BLOCKS] = "";
             opts.snippetMode = (dopts && dopts.snippetMode) || false;
+            opts.generateSourceMap = dopts?.generateSourceMap;
 
             if (opts.sourceFiles.indexOf(pxt.MAIN_TS) === -1) {
                 opts.sourceFiles.push(pxt.MAIN_TS);
@@ -462,7 +472,7 @@ export function workerOpAsync<T extends keyof pxtc.service.ServiceOps>(op: T, ar
             if (pxt.appTarget.compile.switches.time) {
                 pxt.log(`Worker perf: ${op} ${Date.now() - startTm}ms`)
                 if (res.times)
-                    console.log(res.times)
+                    pxt.log(res.times)
             }
             pxt.debug("worker op done: " + op)
             return res
@@ -496,19 +506,18 @@ export function refreshLanguageServiceApisInfo() {
     refreshApis = true;
 }
 
-export function apiSearchAsync(searchFor: pxtc.service.SearchOptions) {
-    return ensureApisInfoAsync()
-        .then(() => {
-            searchFor.localizedApis = cachedApis;
-            searchFor.localizedStrings = pxt.Util.getLocalizedStrings();
-            return workerOpAsync("apiSearch", {
-                search: searchFor,
-                blocks: blocksOptions()
-            });
-        });
+export async function apiSearchAsync(searchFor: pxtc.service.SearchOptions): Promise<pxtc.service.SearchInfo[]> {
+    await waitForFirstTypecheckAsync();
+    await ensureApisInfoAsync();
+    searchFor.localizedApis = cachedApis;
+    searchFor.localizedStrings = pxt.Util.getLocalizedStrings();
+    return workerOpAsync("apiSearch", {
+        search: searchFor,
+        blocks: blocksOptions()
+    });
 }
 
-export function projectSearchAsync(searchFor: pxtc.service.ProjectSearchOptions) {
+export function projectSearchAsync(searchFor: pxtc.service.ProjectSearchOptions): Promise<pxtc.service.ProjectSearchInfo[]> {
     return ensureApisInfoAsync()
         .then(() => {
             return workerOpAsync("projectSearch", { projectSearch: searchFor });
@@ -541,6 +550,7 @@ export function snippetAsync(qName: string, python?: boolean): Promise<string> {
 
 export function typecheckAsync() {
     const epkg = pkg.mainEditorPkg();
+    const isFirstTypeCheck = !firstTypecheck;
     let p = epkg.buildAssetsAsync()
         .then(() => pkg.mainPkg.getCompileOptionsAsync())
         .then(opts => {
@@ -549,9 +559,14 @@ export function typecheckAsync() {
         })
         .then(() => workerOpAsync("allDiags", {}) as Promise<pxtc.CompileResult>)
         .then(r => setDiagnostics("typecheck", r.diagnostics, r.sourceMap))
-        .then(ensureApisInfoAsync)
+        .then(() => {
+            if (isFirstTypeCheck) {
+                refreshLanguageServiceApisInfo();
+            }
+            return ensureApisInfoAsync();
+        })
         .catch(catchUserErrorAndSetDiags(null))
-    if (!firstTypecheck) firstTypecheck = p;
+    if (isFirstTypeCheck) firstTypecheck = p;
     return p;
 }
 
@@ -665,7 +680,7 @@ async function getCachedApiInfoAsync(project: pkg.EditorPackage, bundled: pxt.Ma
         }
         catch (e) {
             // Don't fail if the indexeddb fails, but log it
-            console.log("Unable to open API info cache DB");
+            pxt.log("Unable to open API info cache DB");
             return null;
         }
 
@@ -824,7 +839,12 @@ export function applyUpgradesAsync(): Promise<UpgradeResult> {
         });
     }
 
-    const upgradeOp = epkg.header.editor !== pxt.BLOCKS_PROJECT_NAME ? upgradeFromTSAsync : upgradeFromBlocksAsync;
+    const upgradeOp =
+      epkg.header.editor !== pxt.BLOCKS_PROJECT_NAME
+        ? epkg.header.editor !== pxt.PYTHON_PROJECT_NAME
+          ? upgradeFromTSAsync
+          : upgradeFromPythonAsync
+        : upgradeFromBlocksAsync;
 
     let projectNeverCompiled = false;
 
@@ -860,6 +880,7 @@ export function applyUpgradesAsync(): Promise<UpgradeResult> {
 }
 
 function upgradeFromBlocksAsync(): Promise<UpgradeResult> {
+    pxtblockly.cleanBlocks();
     const mainPkg = pkg.mainPkg;
     const project = pkg.getEditorPkg(mainPkg);
     const targetVersion = project.header.targetVersion;
@@ -874,15 +895,14 @@ function upgradeFromBlocksAsync(): Promise<UpgradeResult> {
         .then(() => getBlocksAsync())
         .then(info => {
             ws = new Blockly.Workspace();
-            const text = pxt.blocks.importXml(targetVersion, fileText, info, true);
+            const text = pxtblockly.importXml(targetVersion, fileText, info, true);
 
-            const xml = Blockly.Xml.textToDom(text);
-            pxt.blocks.domToWorkspaceNoEvents(xml, ws);
-            pxtblockly.upgradeTilemapsInWorkspace(ws, pxt.react.getTilemapProject());
-            const upgradedXml = Blockly.Xml.workspaceToDom(ws);
+            const xml = Blockly.utils.xml.textToDom(text);
+            pxtblockly.domToWorkspaceNoEvents(xml, ws);
+            const upgradedXml = pxtblockly.workspaceToDom(ws);
             patchedFiles[pxt.MAIN_BLOCKS] = Blockly.Xml.domToText(upgradedXml);
 
-            return pxt.blocks.compileAsync(ws, info)
+            return pxtblockly.compileAsync(ws, info)
         })
         .then(res => {
             patchedFiles[pxt.MAIN_TS] = res.source;
@@ -905,13 +925,14 @@ function upgradeFromBlocksAsync(): Promise<UpgradeResult> {
                 patchedFiles
             };
         })
-        .catch(() => {
+        .catch(e => {
+            pxt.log(e)
             pxt.debug("Block upgrade failed, falling back to TS");
             return upgradeFromTSAsync();
         });
 }
 
-function upgradeFromTSAsync(): Promise<UpgradeResult> {
+async function upgradeFromTSAsync(): Promise<UpgradeResult> {
     const mainPkg = pkg.mainPkg;
     const project = pkg.getEditorPkg(mainPkg);
     const targetVersion = project.header.targetVersion;
@@ -926,20 +947,49 @@ function upgradeFromTSAsync(): Promise<UpgradeResult> {
 
     pxt.debug("Applying upgrades to TypeScript")
 
-    return checkPatchAsync(patchedFiles)
-        .then(() => {
-            return {
-                success: true,
-                editor: pxt.JAVASCRIPT_PROJECT_NAME,
-                patchedFiles
-            };
-        })
-        .catch(e => {
-            return {
-                success: false,
-                errorCodes: e.errorCodes
-            };
-        });
+    try {
+        await checkPatchAsync(patchedFiles)
+        return {
+            success: true,
+            editor: pxt.JAVASCRIPT_PROJECT_NAME,
+            patchedFiles
+        };
+    } catch (e) {
+        return {
+            success: false,
+            errorCodes: e.errorCodes
+        };
+    };
+}
+
+async function upgradeFromPythonAsync(): Promise<UpgradeResult> {
+    const mainPkg = pkg.mainPkg;
+    const project = pkg.getEditorPkg(mainPkg);
+    const targetVersion = project.header.targetVersion;
+
+    const patchedFiles: pxt.Map<string> = {};
+    pxt.Util.values(project.files).filter(isPyFile).forEach(file => {
+        const patched = pxt.patching.patchPython(targetVersion, file.content);
+        if (patched != file.content) {
+            patchedFiles[file.name] = patched;
+        }
+    });
+
+    pxt.debug("Applying upgrades to Python")
+
+    try {
+        await checkPatchAsync(patchedFiles);
+        return {
+            success: true,
+            editor: pxt.PYTHON_PROJECT_NAME,
+            patchedFiles
+        };
+    } catch (e) {
+        return {
+            success: false,
+            errorCodes: e.errorCodes
+        };
+    }
 }
 
 interface UpgradeError extends Error {
@@ -987,6 +1037,10 @@ function patchProjectFilesAsync(project: pkg.EditorPackage, patchedFiles: pxt.Ma
 
 function isTsFile(file: pkg.File) {
     return pxt.Util.endsWith(file.getName(), ".ts");
+}
+
+function isPyFile(file: pkg.File) {
+    return pxt.Util.endsWith(file.getName(), ".py");
 }
 
 export function updatePackagesAsync(packages: pkg.EditorPackage[], token?: pxt.Util.CancellationToken): Promise<boolean> {
@@ -1122,7 +1176,7 @@ class ApiInfoIndexedDb {
         }
         return openAsync()
             .catch(e => {
-                console.log(`db: failed to open api database, try delete entire store...`)
+                pxt.log(`db: failed to open api database, try delete entire store...`)
                 return pxt.BrowserUtils.IDBWrapper.deleteDatabaseAsync(ApiInfoIndexedDb.dbName())
                     .then(() => openAsync());
             })
@@ -1145,7 +1199,7 @@ class ApiInfoIndexedDb {
     }
 
     setAsync(pack: pkg.EditorPackage, apis: pxt.PackageApiInfo): Promise<void> {
-        pxt.perf.measureStart("compiler db setAsync")
+        pxt.perf.measureStart(Measurements.CompilerDbSetAsync)
         const key = getPackageKey(pack);
         const hash = getPackageHash(pack);
 
@@ -1157,15 +1211,15 @@ class ApiInfoIndexedDb {
 
         return this.db.setAsync(ApiInfoIndexedDb.TABLE, entry)
             .then(() => {
-                pxt.perf.measureEnd("compiler db setAsync")
+                pxt.perf.measureEnd(Measurements.CompilerDbSetAsync)
             })
     }
 
     clearAsync(): Promise<void> {
         return this.db.deleteAllAsync(ApiInfoIndexedDb.TABLE)
-            .then(() => console.debug(`db: all clean`))
+            .then(() => pxt.debug(`db: all clean`))
             .catch(e => {
-                console.error('db: failed to delete all');
+                pxt.error('db: failed to delete all');
             })
     }
 }

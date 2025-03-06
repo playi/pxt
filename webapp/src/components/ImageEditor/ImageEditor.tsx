@@ -1,6 +1,7 @@
 import * as React from 'react';
 
-import { Provider, Store } from 'react-redux';
+import { Store } from 'redux';
+import { Provider } from 'react-redux';
 import { mainStore, tileEditorStore } from './store/imageStore'
 import { SideBar } from './SideBar';
 import { BottomBar } from './BottomBar';
@@ -16,6 +17,8 @@ import { EditorState, AnimationState, TilemapState, GalleryTile, ImageEditorStor
 import { imageStateToBitmap, imageStateToTilemap, applyBitmapData } from './util';
 import { Unsubscribe, Action } from 'redux';
 import { createNewImageAsset, getNewInternalID } from '../../assets';
+import { AssetEditorCore } from '../ImageFieldEditor';
+import { classList } from '../../../../react-common/components/util';
 
 export const LIGHT_MODE_TRANSPARENT = "#dedede";
 
@@ -33,6 +36,8 @@ export interface ImageEditorProps {
     onTileEditorOpenClose?: (open: boolean) => void;
     nested?: boolean;
     lightMode?: boolean;
+    hideDoneButton?: boolean;
+    hideAssetName?: boolean;
 }
 
 export interface ImageEditorState {
@@ -42,7 +47,7 @@ export interface ImageEditorState {
     alert?: AlertInfo;
 }
 
-export class ImageEditor extends React.Component<ImageEditorProps, ImageEditorState> {
+export class ImageEditor extends React.Component<ImageEditorProps, ImageEditorState> implements AssetEditorCore {
     protected unsubscribeChangeListener: Unsubscribe;
 
     constructor(props: ImageEditorProps) {
@@ -72,7 +77,7 @@ export class ImageEditor extends React.Component<ImageEditorProps, ImageEditorSt
     }
 
     render(): JSX.Element {
-        const { singleFrame, lightMode } = this.props;
+        const { singleFrame, lightMode, hideDoneButton, hideAssetName } = this.props;
         const instanceStore = this.getStore();
 
         const { tileToEdit, editingTile, alert } = this.state;
@@ -81,18 +86,28 @@ export class ImageEditor extends React.Component<ImageEditorProps, ImageEditorSt
 
         return <div className="image-editor-outer">
             <Provider store={instanceStore}>
-                <div className={`image-editor ${editingTile ? "editing-tile" : ""}`}>
+                <div className={classList("image-editor", editingTile && "editing-tile", hideDoneButton && "hide-done-button")}>
                     <TopBar singleFrame={singleFrame} />
                     <div className="image-editor-content">
                         <SideBar lightMode={lightMode} />
                         <ImageCanvas suppressShortcuts={editingTile} lightMode={lightMode} />
                         {isAnimationEditor && !singleFrame ? <Timeline /> : undefined}
                     </div>
-                    <BottomBar singleFrame={singleFrame} onDoneClick={this.onDoneClick} />
+                    <BottomBar singleFrame={singleFrame} onDoneClick={this.onDoneClick} hideDoneButton={!!hideDoneButton} hideAssetName={!!hideAssetName} />
                     {alert && alert.title && <Alert title={alert.title} text={alert.text} options={alert.options} />}
                 </div>
             </Provider>
-            {editingTile && <ImageEditor store={tileEditorStore} ref="nested-image-editor" onDoneClicked={this.onTileEditorFinished} asset={tileToEdit} singleFrame={true} nested={true} />}
+            {editingTile &&
+                <ImageEditor
+                    store={tileEditorStore}
+                    ref="nested-image-editor"
+                    onDoneClicked={this.onTileEditorFinished}
+                    asset={tileToEdit}
+                    singleFrame={true}
+                    nested={true}
+                    hideAssetName={hideAssetName}
+                />
+            }
         </div>
     }
 
@@ -217,7 +232,7 @@ export class ImageEditor extends React.Component<ImageEditorProps, ImageEditorSt
         const state = this.getStore().getState();
         const tilemapState = state.store.present as TilemapState;
         const { floating, overlayLayers, layerOffsetX, layerOffsetY } = tilemapState.tilemap;
-        const layers = applyBitmapData(overlayLayers[0], floating && floating.overlayLayers && floating.overlayLayers[0], layerOffsetX, layerOffsetY);
+        const layers = applyBitmapData(pxt.sprite.Bitmap.fromData(overlayLayers[0]).copy().data(), floating && floating.overlayLayers && floating.overlayLayers[0], layerOffsetX, layerOffsetY);
 
         const out = new pxt.sprite.TilemapData(imageStateToTilemap(tilemapState.tilemap), tilemapState.tileset, layers);
         out.deletedTiles = state.editor.deletedTiles;
@@ -281,6 +296,23 @@ export class ImageEditor extends React.Component<ImageEditorProps, ImageEditorSt
     closeNestedEditor() {
         if (this.state.editingTile) {
             (this.refs["nested-image-editor"] as ImageEditor)?.onDoneClick();
+        }
+    }
+
+    getJres() {
+        if (this.props.singleFrame) {
+            const bitmapData = this.getCurrentFrame().data();
+            return pxt.sprite.base64EncodeBitmap(bitmapData);
+        }
+        return "";
+    }
+
+    loadJres(value: string): void {
+        if (value) {
+            try {
+                this.setCurrentFrame(pxt.sprite.getBitmapFromJResURL(value), true);
+            } catch (e) {
+            }
         }
     }
 

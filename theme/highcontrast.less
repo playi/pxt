@@ -137,6 +137,11 @@
         }
     }
 
+    .toolbox-title {
+        background-color: @HCbackground;
+        color: @HCtextColor;
+    }
+
     #monacoEditor .monacoDraggableBlock {
         background: none !important;
 
@@ -209,7 +214,7 @@
     #root {
         background: @HCRootBackground !important;
     }
-    #editorSidebar {
+    #simulator .editor-sidebar {
         background: @HCsimulatorBackground !important;
 
         #boardview {
@@ -473,7 +478,7 @@
         }
     }
 
-    #homescreen .ui.home .tutorial-progress.orange {
+    #homescreen .ui.home .tutorial-progress {
         border-color: @HCtextColor !important;
         background-color: @HCbackground !important;
         color: @HCtextColor !important;
@@ -574,7 +579,7 @@
     }
 
     /* Cards */
-    .card {
+    .card:not(.icon) {
         background: @HCbackground !important;
         border: 2px solid @HCtextColor !important;
         border-radius: initial !important;
@@ -670,6 +675,19 @@
     .ui.button.labeled.icon.editorBack {
         background: @HCtextColor !important;
     }
+
+    // Serial csv
+    #serialArea #serialCsv {
+        background-color: @HCbackground !important;
+        tr {
+            background-color: @HCbackground !important;
+        }
+        td, th {
+            border-color: @HCtextColor !important;
+            color: @HCtextColor !important;
+        }
+    }
+
 
     /* Asset Editor */
     #assetEditor {
@@ -825,6 +843,14 @@
         background-color: @HCbackground;
         color: @HCtextColor;
 
+        .hint-title {
+            margin: 0;
+            > span {
+                background-color: @HCbackground;
+                color: @HCtextColor;
+            }
+        }
+
         &:before {
             border-right-color: @HCtextColor;
         }
@@ -832,18 +858,34 @@
 
     /* Tabbed tutorial */
 
-    .tab-tutorial.tab-content { background-color: @HCbackground; }
+    .tutorial-container-outer { background-color: @HCbackground; }
+    .tutorial-content-bkg { background-color: @HCbackground; }
+    .tutorial-step-counter { background-color: @HCbackground; }
     .tutorial-scroll-gradient { display: none; }
     .tutorial-title { color: @HCtextColor; }
 
+    .tutorial-step-counter {
+        border-color: @HCtextColor;
+    }
     .tutorial-step-bar {
         background-color: @HCbackground;
         border: 1px solid @HCtextColor;
     }
     .tutorial-step-label { color: @HCtextColor; }
     .tutorial-step-bar-fill { background-color: @HCtextColor; }
+    .tutorial-step-bubbles > button {
+        border: 1px solid @HCtextColor;
+    }
 
-    #editorSidebar .tab-navigation {
+    #simulator .editor-sidebar:not(.topInstructions) {
+        border-right: 1px solid @HCtextColor;
+    }
+
+    #simulator .topInstructionsWrapper .editor-sidebar {
+        border-bottom: 1px solid @HCtextColor;
+    }
+
+    #simulator .editor-sidebar .tab-navigation {
         color: @HCtextColor;
         background-color: @HCbackground;
         border-bottom: 2px solid @HCtextColor;
@@ -856,6 +898,12 @@
         .tab-badge {
             display: none;
         }
+    }
+
+    &.tabTutorial details {
+        background-color: @HCbackground !important;
+        border: 2px solid @HCtextColor !important;
+        color: @HCtextColor !important;
     }
 
     .ui.label {
@@ -878,6 +926,12 @@
         }
     }
 
+    // Tutorial tablet mode
+    @media only screen and (max-width: @largestTabletScreen) {
+        .editor-sidebar {
+            border-bottom: 1px solid @HCtextColor;
+        }
+    }
 
     /* Modals */
     .ui.modal {
@@ -926,7 +980,7 @@
     /* immersive reader */
     .modals .ui.button.immersive-reader-button,
     #mainmenu .immersive-reader-button.ui.item,
-    #editorSidebar .immersive-reader-button.ui.item {
+    #simulator .editor-sidebar .immersive-reader-button.ui.item {
         border: 1px solid #fff!important;
         background-image: @immersiveReaderLightIcon !important;
         background-repeat: no-repeat !important;
@@ -938,8 +992,8 @@
     .modals .ui.button.immersive-reader-button:hover,
     #mainmenu .immersive-reader-button.ui.item:focus,
     #mainmenu .immersive-reader-button.ui.item:hover,
-    #editorSidebar .immersive-reader-button.ui.item:focus,
-    #editorSidebar .immersive-reader-button.ui.item:hover {
+    #simulator .editor-sidebar .immersive-reader-button.ui.item:focus,
+    #simulator .editor-sidebar .immersive-reader-button.ui.item:hover {
         background-color: white !important;
         background-image: @immersiveReaderIcon !important;
         background-repeat: no-repeat !important;

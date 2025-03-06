@@ -11,9 +11,10 @@ import * as electron from "./electron";
 import * as workspace from "./workspace";
 import { SearchInput } from "./components/searchInput";
 
-type ISettingsProps = pxt.editor.ISettingsProps;
-
 import Cloud = pxt.Cloud;
+import { experiments } from "../../pxteditor";
+
+import ISettingsProps = pxt.editor.ISettingsProps;
 
 export enum ScriptSearchMode {
     Extensions,
@@ -59,7 +60,7 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
         if (back === true) this.props.parent.openPreviousEditor();
         // something changed?
         if (this.state.mode == ScriptSearchMode.Experiments &&
-            this.state.experimentsState !== pxt.editor.experiments.state())
+            this.state.experimentsState !== experiments.state())
             this.props.parent.reloadEditor();
     }
 
@@ -104,7 +105,7 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
             searchFor: '',
             mode: ScriptSearchMode.Experiments,
             closeIcon: true,
-            experimentsState: pxt.editor.experiments.state(),
+            experimentsState: experiments.state(),
             features: undefined,
             resolve: undefined
         });
@@ -148,8 +149,11 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
             const trgConfigFetch = this.getDataWithStatus("target-config:");
             const trgConfig = trgConfigFetch.data as pxt.TargetConfig;
 
-            if (trgConfigFetch.status === data.FetchStatus.Complete && trgConfig && trgConfig.packages && trgConfig.packages.preferredRepos) {
-                searchFor = trgConfig.packages.preferredRepos.join("|");
+            if (trgConfigFetch.status === data.FetchStatus.Complete && trgConfig?.packages?.approvedRepoLib) {
+                const approvedRepoLib = trgConfig?.packages?.approvedRepoLib;
+                const preferredRepos = approvedRepoLib && Object.keys(approvedRepoLib).filter(el => !!approvedRepoLib[el].preferred);
+                if (preferredRepos)
+                    searchFor = preferredRepos.join("|");
             }
         }
 
@@ -200,9 +204,9 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
 
     }
 
-    fetchExperiments(): pxt.editor.experiments.Experiment[] {
+    fetchExperiments(): pxt.editor.Experiment[] {
         if (this.state.mode != ScriptSearchMode.Experiments) return [];
-        return pxt.editor.experiments.all();
+        return experiments.all();
     }
 
     shouldComponentUpdate(nextProps: ISettingsProps, nextState: ScriptSearchState, nextContext: any): boolean {
@@ -219,7 +223,7 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
     }
 
     handleSearch(str: string) {
-        // Hidden navigation, used to test /beta or other versions inside released UWP apps
+        // Hidden navigation, used to test /beta or other versions inside released apps
         // Secret prefix is /@, e.g.: /@beta
         const urlPathExec = /^\/@(.*)$/.exec(str);
         let urlPath = urlPathExec && urlPathExec[1];
@@ -234,10 +238,7 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
                     homeUrl += "/";
                 }
                 urlPath = urlPath.replace(/^\//, "");
-                pxt.winrt.releaseAllDevicesAsync()
-                    .then(() => {
-                        window.location.href = homeUrl + urlPath;
-                    });
+                window.location.href = homeUrl + urlPath;
             }
         }
         else {
@@ -272,12 +273,18 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
     }
 
     async installGh(scr: pxt.github.GitRepo) {
-        pxt.tickEvent("packages.github", { name: scr.fullName });
+        const parsed = pxt.github.parseRepoId(scr.fullName);
+        pxt.tickEvent("packages.github", {
+            name: scr.fullName,
+            slug: scr.slug.toLowerCase(),
+            tag: scr.tag,
+            fileName: parsed.fileName
+        });
         this.hide(null, this.backOnHide());
         let r: { version: string, config: pxt.PackageConfig };
         try {
             core.showLoading("downloadingpackage", lf("downloading extension..."));
-            r = await pxt.github.downloadLatestPackageAsync(scr);
+            r = await pxt.github.downloadLatestPackageAsync(scr, true /* use proxy */);
         }
         catch (e) {
             core.handleNetworkError(e);
@@ -290,7 +297,7 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
     async addDepIfNoConflict(config: pxt.PackageConfig, version: string) {
         try {
             this.hide(null, this.backOnHide());
-            core.showLoading("installingextension", lf("installing extension..."))
+            core.showLoading("installingextension", lf("Adding extension..."))
             const added = await pkg.mainEditorPkg()
                 .addDependencyAsync(config, version, this.state.mode == ScriptSearchMode.Boards)
             if (added)  //async
@@ -302,9 +309,9 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
         }
     }
 
-    toggleExperiment(experiment: pxt.editor.experiments.Experiment) {
-        pxt.editor.experiments.toggle(experiment);
-        pxt.tickEvent(`experiments.toggle`, { "experiment": experiment.id, "enabled": pxt.editor.experiments.isEnabled(experiment) ? 1 : 0 }, { interactiveConsent: true })
+    toggleExperiment(experiment: pxt.editor.Experiment) {
+        experiments.toggle(experiment);
+        pxt.tickEvent(`experiments.toggle`, { "experiment": experiment.id, "enabled": experiments.isEnabled(experiment) ? 1 : 0 }, { interactiveConsent: true })
         this.forceUpdate();
     }
 
@@ -327,7 +334,7 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
         const ghdata = this.fetchGhData();
         const urldata = this.fetchUrlData();
         const local = this.fetchLocalRepositories();
-        const experiments = this.fetchExperiments();
+        const currentExperiments = this.fetchExperiments();
         const isSearching = searchFor && (ghdata.status === data.FetchStatus.Pending || urldata.status === data.FetchStatus.Pending);
         const disableFileAccessinMaciOs = pxt.appTarget.appTheme.disableFileAccessinMaciOs && (pxt.BrowserUtils.isIOS() || pxt.BrowserUtils.isMac());
         const disableFileAccessinAndroid = pxt.appTarget.appTheme.disableFileAccessinAndroid && pxt.BrowserUtils.isAndroid();
@@ -382,7 +389,7 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
                 : "/extensions";
 
         const experimentsChanged = mode == ScriptSearchMode.Experiments
-            && experimentsState != pxt.editor.experiments.state();
+            && experimentsState != experiments.state();
 
         const classes = this.props.parent.createModalClasses("searchdialog");
 
@@ -490,7 +497,7 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
                                     learnMoreUrl={`/pkg/${scr.fullName}`}
                                 />
                             )}
-                            {experiments.map(experiment =>
+                            {currentExperiments.map(experiment =>
                                 <ScriptSearchCodeCard
                                     name={experiment.name}
                                     scr={experiment}
@@ -498,8 +505,8 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
                                     description={experiment.description}
                                     key={'exp' + experiment.id}
                                     role="button"
-                                    label={pxt.editor.experiments.isEnabled(experiment) ? lf("Enabled") : lf("Disabled")}
-                                    labelClass={pxt.editor.experiments.isEnabled(experiment) ? "green right ribbon" : "grey right ribbon"}
+                                    label={experiment.onClick ? undefined : (experiments.isEnabled(experiment) ? lf("Enabled") : lf("Disabled"))}
+                                    labelClass={experiments.isEnabled(experiment) ? "green right ribbon" : "grey right ribbon"}
                                     onCardClick={this.toggleExperiment}
                                     feedbackUrl={experiment.feedbackUrl}
                                 />
@@ -518,6 +525,7 @@ export class ScriptSearch extends data.Component<ISettingsProps, ScriptSearchSta
                                 ariaLabel={lf("Open the next version of the editor")}
                                 role="button"
                                 key={'beta'}
+                                className="beta"
                                 icon="lab ui cardimage"
                                 iconColor="secondary"
                                 name={lf("Beta Editor")}

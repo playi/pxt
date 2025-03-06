@@ -75,6 +75,23 @@ namespace pxt.github {
         user: User;
     }
 
+    export interface GHTutorialResponse {
+        path: string;
+        markdown: string | { filename: string, repo: GHTutorialRepoInfo };
+        dependencies: GHTutorialRepoInfo[];
+    }
+
+    export interface GHTutorialRepoInfo {
+        repo: string;
+        files: pxt.Map<string>;
+        sha: string;
+        fileHash: string;
+
+        subPath?: string;
+        version?: string;
+        latestVersion?: string;
+    }
+
     export let forceProxy = false;
 
     function hasProxy() {
@@ -105,8 +122,11 @@ namespace pxt.github {
 
     // caching
     export interface IGithubDb {
+        latestVersionAsync(repopath: string, config: PackagesConfig): Promise<string>;
         loadConfigAsync(repopath: string, tag: string): Promise<pxt.PackageConfig>;
         loadPackageAsync(repopath: string, tag: string): Promise<CachedPackage>;
+        loadTutorialMarkdown(repopath: string, tag?: string): Promise<CachedPackage>;
+        cacheReposAsync(response: GHTutorialResponse): Promise<void>;
     }
 
     function ghRequestAsync(options: U.HttpRequestOptions) {
@@ -163,6 +183,7 @@ namespace pxt.github {
     }
 
     export class MemoryGithubDb implements IGithubDb {
+        private latestVersions: pxt.Map<string> = {};
         private configs: pxt.Map<pxt.PackageConfig> = {};
         private packages: pxt.Map<CachedPackage> = {};
 
@@ -188,7 +209,10 @@ namespace pxt.github {
         }
 
         async loadConfigAsync(repopath: string, tag: string): Promise<pxt.PackageConfig> {
-            if (!tag) tag = "master";
+            if (!tag) {
+                pxt.debug(`dep: default to master branch`)
+                tag = "master";
+            }
 
             // cache lookup
             const key = `${repopath}/${tag}`;
@@ -213,8 +237,20 @@ namespace pxt.github {
             return this.cacheConfig(key, cfg);
         }
 
+        async latestVersionAsync(repopath: string, config: PackagesConfig): Promise<string> {
+            let resolved = this.latestVersions[repopath]
+            if (!resolved) {
+                pxt.debug(`dep: resolve latest version of ${repopath}`)
+                this.latestVersions[repopath] = resolved = await pxt.github.latestVersionAsync(repopath, config, true, false)
+            }
+            return resolved
+        }
+
         async loadPackageAsync(repopath: string, tag: string): Promise<CachedPackage> {
-            if (!tag) tag = "master";
+            if (!tag) {
+                pxt.debug(`load pkg: default to master branch`)
+                tag = "master";
+            }
 
             // try using github proxy first
             if (hasProxy()) {
@@ -262,6 +298,59 @@ namespace pxt.github {
                         })
                 })
         }
+
+        async loadTutorialMarkdown(repopath: string, tag?: string) {
+            repopath = normalizeTutorialPath(repopath);
+            const tutorialResponse = (await downloadMarkdownTutorialInfoAsync(repopath, tag)).resp;
+
+            const repo = tutorialResponse.markdown as { filename: string, repo: GHTutorialRepoInfo };
+
+            pxt.Util.assert(typeof repo === "object");
+
+            await this.cacheReposAsync(tutorialResponse);
+
+            return repo.repo;
+        }
+
+        async cacheReposAsync(resp: GHTutorialResponse) {
+            if (typeof resp.markdown === "object") {
+                const repo = resp.markdown as { filename: string, repo: GHTutorialRepoInfo };
+
+                this.cacheRepo(repo.repo);
+            }
+            for (const dep of resp.dependencies) {
+                this.cacheRepo(dep);
+            }
+        }
+
+        private cacheRepo(repo: GHTutorialRepoInfo) {
+            let repopath = repo.repo;
+
+            if (repo.subPath) {
+                repopath += "/" + repo.subPath;
+            }
+            let key = repopath
+            key += "/" + repo.sha;
+            this.packages[key] = {
+                files: repo.files
+            };
+
+            if (repo.latestVersion) {
+                this.cacheLatestVersion(repopath, repo.latestVersion);
+            }
+
+            const config = repo.files["pxt.json"];
+
+            if (config) {
+                const alternateConfigKey = key + "/" + (repo.version || "master");
+                this.cacheConfig(key, config);
+                this.cacheConfig(alternateConfigKey, config);
+            }
+        }
+
+        private cacheLatestVersion(repopath: string, version: string) {
+            this.latestVersions[repopath] = version;
+        }
     }
 
     function fallbackDownloadTextAsync(parsed: ParsedRepo, commitid: string, filepath: string) {
@@ -272,10 +361,11 @@ namespace pxt.github {
             const f = resp.json as FileContent
             isPrivateRepoCache[parsed.slug] = true
             // if they give us content, just return it
-            if (f && f.encoding == "base64" && f.content != null)
-                return atob(f.content)
+            if (f && f.encoding == "base64" && f.content != null) {
+                return Util.fromUTF8(atob(f.content));
+            }
             // otherwise, go to download URL
-            return U.httpGetTextAsync(f.download_url)
+            return U.httpGetTextAsync(f.download_url);
         })
     }
 
@@ -295,6 +385,51 @@ namespace pxt.github {
                 return resp.text
             return fallbackDownloadTextAsync(parsed, commitid, filepath)
         })
+    }
+
+    export async function downloadMarkdownTutorialInfoAsync(repopath: string, tag?: string, noCache?: boolean, etag?: string): Promise<{ resp?: GHTutorialResponse, etag?: string }> {
+        let request = pxt.Cloud.apiRequestWithCdnAsync;
+        const queryParams = new URLSearchParams();
+        if (tag) {
+            queryParams.set("ref", tag);
+        }
+        if (noCache) {
+            queryParams.set("noCache", "1");
+            request = pxt.Cloud.privateRequestAsync;
+        }
+
+        let url = `ghtutorial/${repopath}`;
+        url = pxt.BrowserUtils.appendUrlQueryParams(url, queryParams);
+
+        const headers: pxt.Map<string> = etag ? { "If-None-Match": etag } : undefined;
+
+        const resp = await request(
+            {
+                url,
+                method: "GET",
+                headers
+            }
+        );
+
+        let body: GHTutorialResponse;
+
+        if (resp.statusCode === 304) {
+            body = undefined;
+        }
+        else {
+            body = resp.json;
+        }
+
+        return (
+            {
+                resp: body,
+                etag: resp.headers["etag"] as string
+            }
+        );
+    }
+
+    export async function downloadTutorialMarkdownAsync(repopath: string, tag?: string) {
+        return db.loadTutorialMarkdown(repopath, tag);
     }
 
     // overriden by client
@@ -563,47 +698,51 @@ namespace pxt.github {
                     .then(resolveRefAsync))
     }
 
-    export function pkgConfigAsync(repopath: string, tag = "master") {
-        return db.loadConfigAsync(repopath, tag)
+    export async function pkgConfigAsync(repopath: string, tag: string, config: pxt.PackagesConfig) {
+        if (!tag)
+            tag = await db.latestVersionAsync(repopath, config)
+        return await db.loadConfigAsync(repopath, tag)
     }
 
-    export function downloadPackageAsync(repoWithTag: string, config: pxt.PackagesConfig): Promise<CachedPackage> {
+    export async function downloadPackageAsync(repoWithTag: string, config: pxt.PackagesConfig): Promise<CachedPackage> {
         const p = parseRepoId(repoWithTag)
         if (!p) {
             pxt.log('Unknown GitHub syntax');
-            return Promise.resolve<CachedPackage>(undefined);
+            return undefined
         }
 
         if (isRepoBanned(p, config)) {
             pxt.tickEvent("github.download.banned");
             pxt.log('Github repo is banned');
-            return Promise.resolve<CachedPackage>(undefined);
+            return undefined;
         }
 
-        return db.loadPackageAsync(p.fullName, p.tag)
-            .then(cached => {
-                const dv = upgradedDisablesVariants(config, repoWithTag)
-                if (dv) {
-                    const cfg = Package.parseAndValidConfig(cached.files[pxt.CONFIG_NAME])
-                    if (cfg) {
-                        pxt.log(`auto-disable ${dv.join(",")} due to targetconfig entry for ${repoWithTag}`)
-                        cfg.disablesVariants = dv
-                        cached.files[pxt.CONFIG_NAME] = Package.stringifyConfig(cfg)
-                    }
-                }
-                return cached
-            })
+        // always try to upgrade unbound versions
+        if (!p.tag) {
+            p.tag = await db.latestVersionAsync(p.slug, config)
+        }
+        const cached = await db.loadPackageAsync(p.fullName, p.tag)
+        const dv = upgradedDisablesVariants(config, repoWithTag)
+        if (dv) {
+            const cfg = Package.parseAndValidConfig(cached.files[pxt.CONFIG_NAME])
+            if (cfg) {
+                pxt.log(`auto-disable ${dv.join(",")} due to targetconfig entry for ${repoWithTag}`)
+                cfg.disablesVariants = dv
+                cached.files[pxt.CONFIG_NAME] = Package.stringifyConfig(cfg)
+            }
+        }
+        return cached
     }
 
-    export async function downloadLatestPackageAsync(repo: ParsedRepo): Promise<{ version: string, config: pxt.PackageConfig }> {
+    export async function downloadLatestPackageAsync(repo: ParsedRepo, useProxy?: boolean, noCache?: boolean): Promise<{ version: string, config: pxt.PackageConfig }> {
         const packageConfig = await pxt.packagesConfigAsync()
-        const tag = await pxt.github.latestVersionAsync(repo.slug, packageConfig)
+        const tag = await pxt.github.latestVersionAsync(repo.slug, packageConfig, useProxy, noCache)
         // download package into cache
         const repoWithTag = `${repo.fullName}#${tag}`;
         await pxt.github.downloadPackageAsync(repoWithTag, packageConfig)
 
         // return config
-        const config = await pkgConfigAsync(repo.fullName, tag)
+        const config = await pkgConfigAsync(repo.fullName, tag, packageConfig)
         const version = `github:${repoWithTag}`
 
         return { version, config };
@@ -662,7 +801,7 @@ namespace pxt.github {
         forks: number;
         open_issues: number;
         watchers: number;
-        default_branch: string; // "master",
+        default_branch: string; // "main", "master",
         score: number; // 6.7371006
 
         // non-github, added to track search request
@@ -701,6 +840,12 @@ namespace pxt.github {
         fork?: boolean;
     }
 
+    export function isDefaultBranch(branch: string, repo?: GitRepo) {
+        if (repo && repo.defaultBranch)
+            return branch === repo.defaultBranch;
+        return /^(main|master)$/.test(branch);
+    }
+
     export function listUserReposAsync(): Promise<GitRepo[]> {
         const q = `{
   viewer {
@@ -718,12 +863,12 @@ namespace pxt.github {
         defaultBranchRef {
           name
         }
-        pxtjson: object(expression: "master:pxt.json") {
+        pxtjson: object(expression: "HEAD:pxt.json") {
           ... on Blob {
             text
           }
         }
-        readme: object(expression: "master:README.md") {
+        readme: object(expression: "HEAD:README.md") {
           ... on Blob {
             text
           }
@@ -865,9 +1010,12 @@ namespace pxt.github {
         if (isOrgBanned(repo, config))
             return true;
         if (!config) return false; // don't know
-        if (!repo || !repo.fullName) return true;
+        if (!repo) return true;
+        const repoFull = repo.fullName?.toLowerCase();
+        const repoSlug = repo.slug?.toLowerCase();
+
         if (config.bannedRepos
-            && config.bannedRepos.some(fn => fn.toLowerCase() == repo.fullName.toLowerCase()))
+            && config.bannedRepos.some(fn => fn && (fn.toLowerCase() == repoFull || fn.toLowerCase() == repoSlug)))
             return true;
         return false;
     }
@@ -885,10 +1033,11 @@ namespace pxt.github {
         if (isOrgApproved(repo, config))
             return true;
 
-        if (!repo || !config) return false;
-        if (repo.fullName
-            && config.approvedRepos
-            && config.approvedRepos.some(fn => fn.toLowerCase() == repo.fullName.toLowerCase()))
+        const repoFull = repo?.fullName?.toLowerCase();
+        const repoSlug = repo?.slug?.toLowerCase();
+        if (!config?.approvedRepoLib || !(repoFull || repoSlug)) return false;
+        if (config.approvedRepoLib[repoFull]
+            || config.approvedRepoLib[repoSlug])
             return true;
         return false;
     }
@@ -1011,14 +1160,15 @@ namespace pxt.github {
         return id.slice(0, 7) == "github:"
     }
 
-    export function stringifyRepo(p: ParsedRepo) {
-        return p ? "github:" + p.fullName.toLowerCase() + "#" + (p.tag || "master") : undefined;
+    export function stringifyRepo(p: ParsedRepo, ignoreCase = false) {
+        return p ? "github:" + (ignoreCase ? p.fullName : p.fullName.toLowerCase()) + (p.tag ? `#${p.tag}` : '') : undefined;
     }
 
-    export function normalizeRepoId(id: string) {
+    export function normalizeRepoId(id: string, defaultTag?: string) {
         const gid = parseRepoId(id);
         if (!gid) return undefined;
-        gid.tag = gid.tag || "master";
+        if (!gid.tag && defaultTag)
+            gid.tag = defaultTag
         return stringifyRepo(gid);
     }
 
@@ -1026,49 +1176,59 @@ namespace pxt.github {
         return parts.filter(p => !!p).join('/');
     }
 
-    function upgradeRule(cfg: PackagesConfig, id: string) {
-        if (!cfg || !cfg.upgrades)
+    function upgradeRules(cfg: PackagesConfig, id: string) {
+        if (!cfg)
             return null
         const parsed = parseRepoId(id)
         if (!parsed) return null
-        return U.lookup(cfg.upgrades, parsed.fullName.toLowerCase())
+        const repoData = cfg.approvedRepoLib
+        // lookup base repo for upgrade rules
+        // (since nested repoes share the same version number)
+        return cfg.approvedRepoLib && U.lookup(cfg.approvedRepoLib, parsed.slug.toLowerCase())?.upgrades;
     }
 
     function upgradedDisablesVariants(cfg: PackagesConfig, id: string) {
-        const upgr = upgradeRule(cfg, id)
-        const m = /^dv:(.*)/.exec(upgr)
-        if (m) {
-            const disabled = m[1].split(/,/)
-            if (disabled.some(d => !/^\w+$/.test(d)))
-                return null
-            return disabled
+        const rules = upgradeRules(cfg, id) || [];
+        if (!rules)
+            return null;
+
+        for (const upgr of rules) {
+            const m = /^dv:(.*)/.exec(upgr)
+            if (m) {
+                const disabled = m[1].split(/,/)
+                if (disabled.some(d => !/^\w+$/.test(d)))
+                    return null
+                return disabled
+            }
         }
         return null
     }
 
     export function upgradedPackageReference(cfg: PackagesConfig, id: string) {
-        const upgr = upgradeRule(cfg, id)
-        if (!upgr)
+        const rules = upgradeRules(cfg, id)
+        if (!rules)
             return null
 
-        const m = /^min:(.*)/.exec(upgr)
-        const minV = m && pxt.semver.tryParse(m[1]);
-        if (minV) {
-            const parsed = parseRepoId(id)
-            const currV = pxt.semver.tryParse(parsed.tag)
-            if (currV && pxt.semver.cmp(currV, minV) < 0) {
-                parsed.tag = m[1]
-                pxt.debug(`upgrading ${id} to ${m[1]}`)
-                return stringifyRepo(parsed)
+        for (const upgr of rules) {
+            const m = /^min:(.*)/.exec(upgr)
+            const minV = m && pxt.semver.tryParse(m[1]);
+            if (minV) {
+                const parsed = parseRepoId(id)
+                const currV = pxt.semver.tryParse(parsed.tag)
+                if (currV && pxt.semver.cmp(currV, minV) < 0) {
+                    parsed.tag = m[1]
+                    pxt.debug(`upgrading ${id} to ${m[1]}`)
+                    return stringifyRepo(parsed)
+                } else {
+                    if (!currV)
+                        pxt.log(`not upgrading ${id} - cannot parse version`)
+                    return null
+                }
             } else {
-                if (!currV)
-                    pxt.log(`not upgrading ${id} - cannot parse version`)
-                return null
+                // check if the rule looks valid at all
+                if (!upgradedDisablesVariants(cfg, id))
+                    pxt.log(`invalid upgrade rule: ${id} -> ${upgr}`)
             }
-        } else {
-            // check if the rule looks valid at all
-            if (!upgradedDisablesVariants(cfg, id))
-                pxt.log(`invalid upgrade rule: ${id} -> ${upgr}`)
         }
 
         return id
@@ -1281,5 +1441,35 @@ namespace pxt.github {
             .catch(e => ({
                 status: null
             }))
+    }
+
+    export function normalizeTutorialPath(repopath: string) {
+        // repopath will be one of these three formats:
+        //     1. owner/repo/path/to/file
+        //     2. github:owner/repo/path/to/file
+        //     3. https://github.com/owner/repo/path/to/file
+        //
+        // That third format is not a valid URL (a proper github URL will have /blob/branchname/
+        // in it after the repo) but we used to support it so maintain backwards compatibility
+        if (/^github\:/i.test(repopath)) {
+            repopath = repopath.slice(7)
+        }
+        if (/^https?\:/i.test(repopath)) {
+            const parsed = new URL(repopath);
+
+            // remove the leading slash
+            repopath = parsed.pathname.slice(1);
+
+            // check if this is an actual link to a file in github, for example:
+            //     Mojang/EducationContent/blob/master/computing/unit-2/lesson-1.md
+            //
+            // Note the "/blob/master/" which is not present in example 3 above
+            const fullURLMatch = /^((?:[^\/]+\/){2})blob\/[^\/]+\/(.*)\.md$/.exec(repopath)
+            if (fullURLMatch) {
+                repopath = fullURLMatch[1] + fullURLMatch[2];
+            }
+        }
+
+        return repopath;
     }
 }

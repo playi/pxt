@@ -134,6 +134,12 @@ namespace pxsim.visuals {
             this.boardView.highlightPin(pinNm);
         }
 
+        public removeEventListeners() {
+            if (this.boardView.removeEventListeners) {
+                this.boardView.removeEventListeners();
+            }
+        }
+
         public highlightBreadboardPin(rowCol: BBLoc) {
             this.breadboard.highlightLoc(rowCol);
         }
@@ -155,9 +161,11 @@ namespace pxsim.visuals {
         }
 
         public screenshotAsync(width?: number): Promise<ImageData> {
-            const svg = this.view.cloneNode(true) as SVGSVGElement;
-            svg.setAttribute('width', this.view.width.baseVal.value + "");
-            svg.setAttribute('height', this.view.height.baseVal.value + "");
+            // only clone the svg node with class="sim" so that screenshot doesn't include external parts
+            const simEl = this.view.classList.contains("sim") ? this.view : this.view.querySelector(".sim");
+            const svg = simEl ? simEl.cloneNode(true) as SVGSVGElement : this.view.cloneNode(true) as SVGSVGElement;
+            svg.setAttribute('width', svg.viewBox.baseVal.width + "");
+            svg.setAttribute('height', svg.viewBox.baseVal.height + "");
             const xml = new XMLSerializer().serializeToString(svg);
             const data = "data:image/svg+xml,"
                 + encodeURIComponent(xml.replace(/\s+/g, ' ').replace(/"/g, "'"));
@@ -185,7 +193,7 @@ namespace pxsim.visuals {
                     resolve(ctx.getImageData(0, 0, cvs.width, cvs.height));
                 };
                 img.onerror = e => {
-                    console.log(e);
+                    pxsim.log(e);
                     resolve(undefined);
                 }
                 img.src = data;
@@ -203,7 +211,7 @@ namespace pxsim.visuals {
         private getPinCoord(pin: string) {
             let boardCoord = this.boardView.getCoord(pin);
             if (!boardCoord) {
-                console.error(`Unable to find coord for pin: ${pin}`);
+                pxsim.error(`Unable to find coord for pin: ${pin}`);
                 return undefined;
             }
             return this.fromMBCoord(boardCoord);
@@ -218,7 +226,7 @@ namespace pxsim.visuals {
                 coord = this.getPinCoord(pinNm);
             }
             if (!coord)
-                console.debug("Unknown location: " + name)
+                pxsim.debug("Unknown location: " + name)
             return coord;
         }
         public getPinStyle(loc: Loc): PinStyle {

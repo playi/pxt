@@ -5,7 +5,7 @@
         "noImplicitReturns": true,
         "noImplicitThis": true,
         "declaration": true,
-        "out": "../built/pxtlib.js",
+        "outFile": "../built/pxtlib.js",
         "newLine": "LF",
         "sourceMap": false,
         "lib": [
@@ -13,13 +13,15 @@
             "dom.iterable",
             "scripthost",
             "es2017",
-            "ES2018.Promise"
+            "ES2018.Promise",
+            "ES2021.String"
         ],
         "types": [
             "highlight.js",
             "marked",
             "web-bluetooth"
         ],
-        "incremental": true
+        "incremental": true,
+        "skipLibCheck": true
     }
 }

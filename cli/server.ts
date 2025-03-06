@@ -1,18 +1,20 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as http from 'http';
+import * as https from 'https';
 import * as url from 'url';
 import * as querystring from 'querystring';
 import * as nodeutil from './nodeutil';
 import * as hid from './hid';
 import * as net from 'net';
-import * as crowdin from './crowdin';
 import * as storage from './storage';
+import { SUB_WEBAPPS } from './subwebapp';
 
 import { promisify } from "util";
 
 import U = pxt.Util;
 import Cloud = pxt.Cloud;
+import { SecureContextOptions } from 'tls';
 
 const userProjectsDirName = "projects";
 
@@ -304,7 +306,7 @@ async function handleApiStoreRequestAsync(req: http.IncomingMessage, res: http.S
                 res.end(val.toString());
             }
         } else {
-            res.writeHead(404);
+            res.writeHead(204);
             res.end();
         }
     } else if (meth === "POST") {
@@ -409,18 +411,19 @@ export function lookupDocFile(name: string) {
     return null
 }
 
-export function expandHtml(html: string, params?: pxt.Map<string>) {
-    let theme = U.flatClone(pxt.appTarget.appTheme)
+export function expandHtml(html: string, params?: pxt.Map<string>, appTheme?: pxt.AppTheme) {
+    let theme = U.flatClone(appTheme || pxt.appTarget.appTheme)
     html = expandDocTemplateCore(html)
     params = params || {};
     params["name"] = params["name"] || pxt.appTarget.appTheme.title;
     params["description"] = params["description"] || pxt.appTarget.appTheme.description;
     params["locale"] = params["locale"] || pxt.appTarget.appTheme.defaultLocale || "en"
 
+
     // page overrides
     let m = /<title>([^<>@]*)<\/title>/.exec(html)
     if (m) params["name"] = m[1]
-    m = /<meta name="Description" content="([^"@]*)"/.exec(html)
+    m = /<meta name="Description" content="([^"@]*)"/i.exec(html)
     if (m) params["description"] = m[1]
     let d: pxt.docs.RenderData = {
         html: html,
@@ -801,6 +804,9 @@ export interface ServeOptions {
     hostname?: string;
     wsPort?: number;
     serial?: boolean;
+    noauth?: boolean;
+    backport?: number;
+    https?: boolean;
 }
 
 // can use http://localhost:3232/streams/nnngzlzxslfu for testing
@@ -824,7 +830,7 @@ function certificateTestAsync(): Promise<string> {
 
 // use http://localhost:3232/45912-50568-62072-42379 for testing
 function scriptPageTestAsync(id: string) {
-    return Cloud.privateGetAsync(id)
+    return Cloud.privateGetAsync(pxt.Cloud.parseScriptId(id))
         .then((info: Cloud.JsonScript) => {
             // if running against old cloud, infer 'thumb' field
             // can be removed after new cloud deployment
@@ -853,7 +859,7 @@ function scriptPageTestAsync(id: string) {
                 filepath: "/" + id
             })
             return html
-        })
+        });
 }
 
 // use http://localhost:3232/pkg/microsoft/pxt-neopixel for testing
@@ -946,8 +952,7 @@ export function serveAsync(options: ServeOptions) {
     const wsServerPromise = initSocketServer(serveOptions.wsPort, serveOptions.hostname);
     if (serveOptions.serial)
         initSerialMonitor();
-
-    const server = http.createServer(async (req, res) => {
+    const reqListener: http.RequestListener = async (req, res) => {
         const error = (code: number, msg: string = null) => {
             res.writeHead(code, { "Content-Type": "text/plain" })
             res.end(msg || "Error " + code)
@@ -986,7 +991,13 @@ export function serveAsync(options: ServeOptions) {
             }
         }
 
-        let pathname = decodeURI(url.parse(req.url).pathname);
+        // Strip /app/hash-sig from URL.
+        // This can happen when the locally running backend is serving an uploaded target,
+        // but has been configured to route simulator urls to port 3232.
+        req.url = req.url.replace(/^\/app\/[0-9a-f]{40}(?:-[0-9a-f]{10})?(.*)$/i, "$1");
+
+        let uri = url.parse(req.url);
+        let pathname = decodeURI(uri.pathname);
         const opts: pxt.Map<string | string[]> = querystring.parse(url.parse(req.url).query);
         const htmlParams: pxt.Map<string> = {};
         if (opts["lang"] || opts["forcelang"])
@@ -1007,6 +1018,69 @@ export function serveAsync(options: ServeOptions) {
         let elts = pathname.split("/").filter(s => !!s)
         if (elts.some(s => s[0] == ".")) {
             return error(400, "Bad path :-(\n")
+        }
+
+        // Strip leading version number
+        if (elts.length && /^v\d+/.test(elts[0])) {
+            elts.shift();
+        }
+
+        // Rebuild pathname without leading version number
+        pathname = "/" + elts.join("/");
+
+        const expandWebappHtml = (appname: string, html: string) => {
+            // Expand templates
+            html = expandHtml(html);
+            // Rewrite application resource references
+            html = html.replace(/src="(\/static\/js\/[^"]*)"/, (m, f) => `src="/${appname}${f}"`);
+            html = html.replace(/src="(\/static\/css\/[^"]*)"/, (m, f) => `src="/${appname}${f}"`);
+            return html;
+        };
+
+        const serveWebappFile = (webappName: string, webappPath: string) => {
+            const webappUri = url.parse(`http://127.0.0.1:3000/${webappPath}${uri.search || ""}`);
+            const request = http.get(webappUri, r => {
+                let body = "";
+                r.on("data", (chunk) => {
+                    body += chunk;
+                });
+                r.on("end", () => {
+                    if (body.includes("<title>Error</title>")) { // CRA development server returns this for missing files
+                        res.writeHead(404, {
+                            'Content-Type': 'text/html; charset=utf8',
+                        });
+                        res.write(body);
+                        return res.end();
+                    }
+                    if (!webappPath || webappPath === "index.html") {
+                        body = expandWebappHtml(webappName, body);
+                    }
+                    if (webappPath) {
+                        res.writeHead(200, {
+                            'Content-Type': U.getMime(webappPath),
+                        });
+                    } else {
+                        res.writeHead(200, {
+                            'Content-Type': 'text/html; charset=utf8',
+                        });
+                    }
+                    res.write(body);
+                    res.end();
+                });
+            });
+            request.on("error", (e) => {
+                console.error(`Error fetching ${webappUri.href} .. ${e.message}`);
+                error(500, e.message);
+            });
+        };
+
+        const webappNames = SUB_WEBAPPS.filter(w => w.localServeEndpoint).map(w => w.localServeEndpoint);
+
+        const webappIdx = webappNames.findIndex(s => new RegExp(`^-{0,3}${s}$`).test(elts[0] || ''));
+        if (webappIdx >= 0) {
+            const webappName = webappNames[webappIdx];
+            const webappPath = pathname.split("/").slice(2).join('/'); // remove /<webappName>/ from path
+            return serveWebappFile(webappName, webappPath);
         }
 
         if (elts[0] == "api") {
@@ -1039,7 +1113,7 @@ export function serveAsync(options: ServeOptions) {
                     })
             }
 
-            if (!isAuthorizedLocalRequest(req)) {
+            if (!options.noauth && !isAuthorizedLocalRequest(req)) {
                 error(403);
                 return null;
             }
@@ -1076,6 +1150,30 @@ export function serveAsync(options: ServeOptions) {
             }
         }
 
+        if (elts[0] == "simx" && serveOptions.backport) {
+            // Proxy requests for simulator extensions to the locally running backend.
+            // Should only get here when the backend is running locally and configured to serve the simulator from the cli (via LOCAL_SIM_PORT setting).
+            const passthruOpts = {
+                hostname: uri.hostname,
+                port: serveOptions.backport,
+                path: uri.path,
+                method: req.method,
+                headers: req.headers
+            };
+
+            const passthruReq = http.request(passthruOpts, passthruRes => {
+                res.writeHead(passthruRes.statusCode, passthruRes.headers);
+                passthruRes.pipe(res);
+            });
+
+            passthruReq.on("error", e => {
+                console.error(`Error proxying request to port ${serveOptions.backport} .. ${e.message}`);
+                return error(500, e.message);
+            });
+
+            return req.pipe(passthruReq);
+        }
+
         if (options.packaged) {
             let filename = path.resolve(path.join(packagedDir, pathname))
             if (nodeutil.fileExistsSync(filename)) {
@@ -1093,7 +1191,7 @@ export function serveAsync(options: ServeOptions) {
 
         let publicDir = path.join(nodeutil.pxtCoreDir, "webapp/public")
 
-        if (pathname == "/--embed") {
+        if (pathname == "/--embed" || pathname === "/---embed") {
             sendFile(path.join(publicDir, 'embed.js'));
             return
         }
@@ -1113,9 +1211,11 @@ export function serveAsync(options: ServeOptions) {
             return
         }
 
-        if (pathname == "/--skillmap") {
-            sendFile(path.join(publicDir, 'skillmap.html'));
-            return
+        for (const subapp of SUB_WEBAPPS) {
+            if (subapp.localServeWebConfigUrl && pathname === `/--${subapp.name}`) {
+                sendFile(path.join(publicDir, `${subapp.name}.html`));
+                return
+            }
         }
 
         if (/\/-[-]*docs.*$/.test(pathname)) {
@@ -1129,9 +1229,10 @@ export function serveAsync(options: ServeOptions) {
             return
         }
 
-        if (/^\/(\d\d\d\d[\d-]+)$/.test(pathname)) {
-            scriptPageTestAsync(pathname.slice(1))
+        if (!!pxt.Cloud.parseScriptId(pathname)) {
+            scriptPageTestAsync(pathname)
                 .then(sendHtml)
+                .catch(() => error(404, "Script not found"));
             return
         }
 
@@ -1159,7 +1260,7 @@ export function serveAsync(options: ServeOptions) {
         }
 
         let dd = dirs
-        let mm = /^\/(cdn|parts|sim|doccdn|blb)(\/.*)/.exec(pathname)
+        let mm = /^\/(cdn|parts|sim|doccdn|blb|trgblb)(\/.*)/.exec(pathname)
         if (mm) {
             pathname = mm[2]
         } else if (U.startsWith(pathname, "/docfiles/")) {
@@ -1176,6 +1277,20 @@ export function serveAsync(options: ServeOptions) {
                     sendFile(filename)
                 }
                 return;
+            }
+        }
+
+        // Look for an .html file corresponding to `/---<pathname>`
+        // Handles serving of `trg-<target>.sim.local:<port>/---simulator`
+        let match = /^\/?---?(.*)/.exec(pathname)
+        if (match && match[1]) {
+            const htmlPathname = `/${match[1]}.html`
+            for (let dir of dd) {
+                const filename = path.resolve(path.join(dir, htmlPathname))
+                if (nodeutil.fileExistsSync(filename)) {
+                    const html = expandHtml(fs.readFileSync(filename, "utf8"), htmlParams)
+                    return sendHtml(html)
+                }
             }
         }
 
@@ -1238,7 +1353,10 @@ export function serveAsync(options: ServeOptions) {
                 });
         }
         return
-    });
+    };
+    const canUseHttps = serveOptions.https && process.env["HTTPS_KEY"] && process.env["HTTPS_CERT"];
+    const httpsServerOptions: SecureContextOptions = {cert: process.env["HTTPS_CERT"], key: process.env["HTTPS_KEY"]};
+    const server = canUseHttps ? https.createServer(httpsServerOptions, reqListener) : http.createServer(reqListener);
 
     // if user has a server.js file, require it
     const serverjs = path.resolve(path.join(root, 'built', 'server.js'))
@@ -1249,12 +1367,16 @@ export function serveAsync(options: ServeOptions) {
 
     const serverPromise = new Promise<void>((resolve, reject) => {
         server.on("error", reject);
-        server.listen(serveOptions.port, serveOptions.hostname, () => resolve());
+        server.listen(serveOptions.port, serveOptions.hostname, () => {
+            console.log(`Server listening on port ${serveOptions.port}`);
+            return resolve()
+        });
     });
 
     return Promise.all([wsServerPromise, serverPromise])
         .then(() => {
-            const start = `http://${serveOptions.hostname}:${serveOptions.port}/#local_token=${options.localToken}&wsport=${serveOptions.wsPort}`;
+            const protocol = canUseHttps ? "https" : "http";
+            const start = `${protocol}://${serveOptions.hostname}:${serveOptions.port}/#local_token=${options.localToken}&wsport=${serveOptions.wsPort}`;
             console.log(`---------------------------------------------`);
             console.log(``);
             console.log(`To launch the editor, open this URL:`);

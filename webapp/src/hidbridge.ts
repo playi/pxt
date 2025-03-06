@@ -38,27 +38,23 @@ function onOOB(v: OOB) {
     if (b) {
         b.onOOB(v)
     } else {
-        console.error("Dropping data for " + v.result.path)
-    }
-}
-
-function init() {
-    if (!iface) {
-        if (!pxt.BrowserUtils.isLocalHost() || !Cloud.localToken)
-            return;
-        pxt.debug('initializing hid pipe');
-        iface = pxt.worker.makeWebSocket(
-            `ws://localhost:${pxt.options.wsPort}/${Cloud.localToken}/hid`, onOOB)
+        pxt.error("Dropping data for " + v.result.path)
     }
 }
 
 export function shouldUse() {
     let serial = pxt.appTarget.serial
-    return serial && serial.useHF2 && (pxt.BrowserUtils.isLocalHost() && !!Cloud.localToken || pxt.winrt.isWinRT());
+    return serial && serial.useHF2 && (pxt.BrowserUtils.isLocalHost() && !!Cloud.localToken);
 }
 
 export function mkHIDBridgePacketIOAsync(): Promise<pxt.packetio.PacketIO> {
-    init()
+    if (!iface) {
+        if (!pxt.BrowserUtils.isLocalHost() || !Cloud.localToken)
+            return Promise.resolve(undefined);
+        pxt.debug('initializing hid pipe');
+        iface = pxt.worker.makeWebSocket(
+            `ws://localhost:${pxt.options.wsPort}/${Cloud.localToken}/hid`, onOOB)
+    }
     let raw = false
     if (pxt.appTarget.serial && pxt.appTarget.serial.rawHID)
         raw = true

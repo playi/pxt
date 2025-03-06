@@ -8,26 +8,6 @@
 @import (reference) "semantic.less";
 
 /*******************************
-    Windows App Deprecation
-*******************************/
-#winAppError {
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-
-    #winAppErrorMsg {
-        width: 30%;
-        margin-top: 1rem;
-    }
-
-    a {
-        font-weight: 700;
-    }
-}
-
-/*******************************
         Monaco Area Layout
 *******************************/
 .monacoEditorArea {
@@ -396,18 +376,6 @@
 .monaco-editor .parameter-hints-widget {
     flex-direction: row !important;
     z-index: @monacoHintsZIndex !important;
-}
-
-#monacoEditorArea.android {
-    .monaco-editor .editor-widget {
-        display: none !important;
-        visibility: hidden !important;
-    }
-
-    // on android, the cursor / text area overlay gets offset
-    textarea.inputarea {
-        margin-left: .5rem;
-    }
 }
 
 .line-numbers {

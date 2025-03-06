@@ -59,6 +59,7 @@ svg.blocklySvg {
 body.blocklyMinimalBody {
     min-width: initial;
     overflow: initial;
+    position: unset;
 }
 
 @supports (-ms-accelerator:true) {
@@ -90,7 +91,11 @@ body.blocklyMinimalBody {
         font-style: italic;
     }
 
-    .blocklyEditableText>text.semanticIcon {
+    text.blocklyText.blocklyBubbleText {
+        fill: #fff;
+    }
+
+    .blocklyEditableText>text.semanticIcon, .blocklyNonEditableText>text.semanticIcon {
         fill: #fff;
         font-family: "Icons";
         font-size: 19px;
@@ -113,6 +118,19 @@ body.blocklyMinimalBody {
 
 .blocklyTreeIcon {
     visibility: visible;
+}
+
+i.icon.blocklyTreeButton {
+    float: right;
+    line-height: 40px;
+    color: grey;
+    opacity: 0;
+    transition-property: opacity;
+    transition-duration: .5s;
+}
+
+.blocklyTreeRow:hover i.icon.blocklyTreeButton {
+    opacity: 1;
 }
 
 /*******************************
@@ -307,13 +325,13 @@ text.blocklyCheckbox {
         Comments
 *******************************/
 
-.blocklyCommentForeignObject {
-    overflow: hidden;
+.blocklyDeleteIcon {
+    display: block;
 }
 
-.blocklyMinimalBody {
-    position: static; // override default 'position: fixed' for comment <body> element
-    border: 1px solid #FAF6BD; // match comment color
+.blocklyComment .blocklyTextarea {
+    border: none;
+    color: #575E75;
 }
 
 /*******************************

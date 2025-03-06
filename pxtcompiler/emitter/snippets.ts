@@ -104,21 +104,32 @@ namespace ts.pxtc.service {
         takenNames: pxt.Map<SymbolInfo>;
         checker: ts.TypeChecker;
         screenSize?: pxt.Size;
+        parameterOverride?: { [key: string]: SnippetNode };
+        includeParentSnippet?: boolean;
     }
 
     export function getSnippet(context: SnippetContext, fn: SymbolInfo, decl: ts.FunctionLikeDeclaration, python?: boolean, recursionDepth = 0): SnippetNode {
         // TODO: a lot of this is duplicate logic with blocklyloader.ts:buildBlockFromDef; we should
         //  unify these approaches
-        let { apis, takenNames, blocksInfo, screenSize, checker } = context;
+        let { apis, takenNames, blocksInfo, screenSize, checker, parameterOverride, includeParentSnippet } = context;
 
         const PY_INDENT: string = (pxt as any).py.INDENT;
         const fileType = python ? "python" : "typescript";
 
         let snippetPrefix = fn.namespace;
-        let isInstance = false;
         let addNamespace = false;
         let namespaceToUse = "";
         let functionCount = 0;
+        let parentSnippet: SnippetNode;
+        let overrideParamLabel: string;
+        let overrideSnippet: SnippetNode;
+        if (parameterOverride) {
+            overrideParamLabel = Object.keys(parameterOverride)?.[0];
+            if (overrideParamLabel) {
+                overrideSnippet = parameterOverride[overrideParamLabel];
+            }
+        }
+
 
         let preStmt: SnippetNode[] = [];
 
@@ -177,6 +188,11 @@ namespace ts.pxtc.service {
                 if (python && snippetPrefix)
                     snippetPrefix = U.snakify(snippetPrefix);
             }
+            else if (params.thisParameter?.shadowBlockId === "variables_get") {
+                snippetPrefix = params.thisParameter.defaultValue || params.thisParameter.definitionName;
+                if (python && snippetPrefix)
+                    snippetPrefix = U.snakify(snippetPrefix);
+            }
             else if (element.namespace) { // some blocks don't have a namespace such as parseInt
                 const nsInfo = apis.byQName[element.namespace];
                 if (nsInfo.attributes.fixedInstances) {
@@ -223,8 +239,6 @@ namespace ts.pxtc.service {
                     if (namespaceToUse) {
                         addNamespace = true;
                     }
-
-                    isInstance = true;
                 }
                 else if (element.kind == pxtc.SymbolKind.Method || element.kind == pxtc.SymbolKind.Property) {
                     if (params.thisParameter) {
@@ -238,7 +252,6 @@ namespace ts.pxtc.service {
                         if (python && snippetPrefix)
                             snippetPrefix = U.snakify(snippetPrefix);
                     }
-                    isInstance = true;
                 }
                 else if (nsInfo.kind === pxtc.SymbolKind.Class) {
                     return undefined;
@@ -250,6 +263,7 @@ namespace ts.pxtc.service {
         let snippet: SnippetNode[];
         if (preDefinedSnippet) {
             snippet = [preDefinedSnippet];
+            snippetPrefix = undefined;
         } else {
             snippet = [fnName];
             if (args?.length || element.kind == pxtc.SymbolKind.Method || element.kind == pxtc.SymbolKind.Function || element.kind == pxtc.SymbolKind.Class) {
@@ -278,6 +292,21 @@ namespace ts.pxtc.service {
             }
         }
 
+        if (includeParentSnippet && element.attributes.toolboxParent && recursionDepth === 0) {
+            overrideSnippet = [preStmt, insertText];
+            overrideParamLabel = element.attributes.toolboxParentArgument;
+            parameterOverride = {[overrideParamLabel]: overrideSnippet}
+            const parentFn = blocksById[fn.attributes.toolboxParent];
+            parentSnippet = getSnippet(
+                {...context, parameterOverride},
+                parentFn,
+                lastApiInfo.decls[parentFn.qName] as ts.FunctionLikeDeclaration,
+                python,
+                recursionDepth + 1,
+            );
+            return parentSnippet;
+        }
+
         return [preStmt, insertText]
 
         function getUniqueName(inName: string): string {
@@ -291,7 +320,19 @@ namespace ts.pxtc.service {
             if (!typeNode)
                 return python ? "None" : "null"
 
+            if (overrideSnippet && param.symbol.escapedName === overrideParamLabel) {
+                return snippetStringify(overrideSnippet);
+            }
+
             const name = param.name.kind === SK.Identifier ? (param.name as ts.Identifier).text : undefined;
+
+            const override = attrs.paramSnippets?.[name];
+            if (override) {
+                if (python) {
+                    if (override.python) return override.python;
+                }
+                else if (override.ts) return override.ts;
+            }
 
             // check for explicit default in the attributes
             const paramDefl = attrs?.paramDefl?.[name]
@@ -318,7 +359,7 @@ namespace ts.pxtc.service {
                 }
                 const type = checker?.getTypeAtLocation(param);
                 const typeSymbol = getPxtSymbolFromTsSymbol(type?.symbol, apis, checker);
-                if (typeSymbol?.attributes.fixedInstances && python) {
+                if ((typeSymbol?.attributes.fixedInstances) && python) {
                     return pxt.Util.snakify(paramDefl);
                 }
                 if (python) {

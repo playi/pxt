@@ -138,7 +138,7 @@ namespace ts.pxtc.assembler {
                             }
                         }
                         if (this.ei.is32bit(this)) {
-                            // console.log(actual + " " + v.toString())
+                            // pxt.log(actual + " " + v.toString())
                             bit32_value = v
                             bit32_actual = actual
                             continue
@@ -152,7 +152,7 @@ namespace ts.pxtc.assembler {
 
                     v = enc.encode(v)
 
-                    // console.log("enc(v) = ",v)
+                    // pxt.log("enc(v) = ",v)
                     if (v == null) return emitErr("argument out of range or mis-aligned", actual);
                     assert((r & v) == 0)
                     r |= v;
@@ -194,6 +194,7 @@ namespace ts.pxtc.assembler {
         public opcode: number;
         public stack: number;
         public isLong: boolean;
+        public ldlitLabel: string;
 
         constructor(public bin: File, public text: string) {
         }
@@ -223,6 +224,18 @@ namespace ts.pxtc.assembler {
             else if (this.words[0][0] == "@")
                 this.type = "directive";
         }
+    }
+
+    const MAX_OBJ_USERS = 5
+    class AsmObject {
+        startLocation: number
+        endLocation: number
+        sizeAdj = 0
+        users: AsmObject[] = []
+        get size() {
+            return (this.endLocation - this.startLocation) - this.sizeAdj
+        }
+        constructor(public id: string, public description: string) { }
     }
 
     // File is the center of the action: parsing a file into a sequence of Lines
@@ -266,6 +279,13 @@ namespace ts.pxtc.assembler {
         public stackAtLabel: pxt.Map<number> = {};
         private prevLabel: string;
 
+        public codeSizeStats = false;
+        private labelToObject: pxt.Map<AsmObject> = {};
+        private idToObject: pxt.Map<AsmObject> = {};
+        private objSuspendStart = 0;
+        private currObject: AsmObject;
+        private labelsToObjectDone = false;
+
         protected emitShort(op: number) {
             assert(0 <= op && op <= 0xffff);
             this.buf.push(op);
@@ -282,6 +302,16 @@ namespace ts.pxtc.assembler {
 
         public pc() {
             return this.location() + this.baseOffset;
+        }
+
+        public useLabel(name: string) {
+            if (!this.currObject || name[0] == '.' || this.objSuspendStart)
+                return
+            const obj = U.lookup(this.labelToObject, name)
+            if (!obj || obj == this.currObject)
+                return
+            if (obj.users.length < MAX_OBJ_USERS && obj.users.indexOf(this.currObject) < 0)
+                obj.users.push(this.currObject)
         }
 
         // parsing of an "integer", well actually much more than
@@ -365,9 +395,9 @@ namespace ts.pxtc.assembler {
                     if (mul != 1)
                         this.directiveError(lf("multiplication not supported with saved stacks"));
                     if (this.stackpointers.hasOwnProperty(m[1])) {
-                        // console.log(m[1] + ": " + this.stack + " " + this.stackpointers[m[1]] + " " + m[2])
+                        // pxt.log(m[1] + ": " + this.stack + " " + this.stackpointers[m[1]] + " " + m[2])
                         v = this.ei.wordSize() * this.ei.computeStackOffset(m[1], this.stack - this.stackpointers[m[1]] + parseInt(m[2]))
-                        // console.log(v)
+                        // pxt.log(v)
                     }
                     else
                         this.directiveError(lf("saved stack not found"))
@@ -424,6 +454,7 @@ namespace ts.pxtc.assembler {
 
 
         public lookupLabel(name: string, direct = false) {
+            this.useLabel(name)
             let v: number = null;
             let scoped = this.scopedName(name)
             if (this.labels.hasOwnProperty(scoped)) {
@@ -588,6 +619,34 @@ namespace ts.pxtc.assembler {
             let num0: number;
 
             switch (words[0]) {
+                case ".object":
+                    if (!this.codeSizeStats) {
+                        // do nothing
+                    } else if (words[1] == "PUSH") {
+                        this.objSuspendStart = this.location()
+                    } else if (words[1] == "POP") {
+                        if (this.objSuspendStart)
+                            this.currObject.sizeAdj += this.location() - this.objSuspendStart
+                        this.objSuspendStart = 0
+                    } else {
+                        if (this.currObject)
+                            this.currObject.endLocation = this.location()
+                        this.currObject = U.lookup(this.idToObject, words[1])
+                        if (!this.currObject) {
+                            const str = l.text.replace(/^[^"]*/, "")
+                            let parsed = words[1]
+                            if (words.length > 2) {
+                                parsed = parseString(str.trim())
+                                if (parsed == null)
+                                    this.directiveError(lf("expecting string in .object"))
+                            }
+                            this.currObject = new AsmObject(words[1], parsed)
+                            this.idToObject[words[1]] = this.currObject
+                        }
+                        this.currObject.sizeAdj = 0
+                        this.currObject.startLocation = this.location()
+                    }
+                    break
                 case ".ascii":
                 case ".asciz":
                 case ".string":
@@ -785,6 +844,8 @@ namespace ts.pxtc.assembler {
         }
 
         private handleOneInstruction(ln: Line, instr: Instruction) {
+            if (this.codeSizeStats && ln.ldlitLabel)
+                this.useLabel(ln.ldlitLabel)
             let op = instr.emit(ln);
             if (!op.error) {
                 this.stack += op.stack;
@@ -910,6 +971,8 @@ namespace ts.pxtc.assembler {
                 if (l.words.length == 0) return;
 
                 if (l.type == "label") {
+                    if (this.currObject && !this.labelsToObjectDone && l.words[0][0] != '.')
+                        this.labelToObject[l.words[0]] = this.currObject
                     let lblname = this.scopedName(l.words[0])
                     this.prevLabel = lblname
                     if (this.finalEmit) {
@@ -946,6 +1009,9 @@ namespace ts.pxtc.assembler {
                 }
 
             })
+
+            this.labelsToObjectDone = true
+            this.currObject = null
         }
 
         public getSourceMap() {
@@ -982,6 +1048,24 @@ namespace ts.pxtc.assembler {
             return sourceMap
         }
 
+        public getCodeSizeStats() {
+            if (!this.codeSizeStats)
+                return ""
+            const objs = U.values(this.idToObject)
+            objs.sort((a, b) => b.size - a.size)
+
+            let r = ";\n; Code size:\n;\n"
+            for (const obj of objs) {
+                r += `; ${("         " + obj.size).slice(-6)} ${obj.description} [${obj.id}]\n`
+                if (obj.users.length >= MAX_OBJ_USERS)
+                    r += `;        by many, including ${obj.users[0].description}\n`
+                else
+                    for (const x of obj.users)
+                        r += `;        by ${x.description} [${x.id}]\n`
+            }
+
+            return r
+        }
 
         public getSource(clean: boolean, numStmts = 1, flashSize = 0) {
             let lenPrev = 0
@@ -999,8 +1083,12 @@ namespace ts.pxtc.assembler {
             let lenAllCode = lenPrev
             let totalSize = (lenTotal + this.baseOffset) & 0xffffff
 
-            if (flashSize && totalSize > flashSize)
-                U.userError(lf("program too big by {0} bytes!", totalSize - flashSize))
+            if (flashSize && totalSize > flashSize) {
+                const e = new Error(lf("program too big by {0} bytes!", totalSize - flashSize));
+                (e as any).ksErrorCode = 9283;
+                throw e;
+            }
+
             flashSize = flashSize || 128 * 1024
             let totalInfo = lf("; total bytes: {0} ({1}% of {2}k flash with {3} free)",
                 totalSize, (100 * totalSize / flashSize).toFixed(1), (flashSize / 1024).toFixed(1),
@@ -1014,7 +1102,7 @@ namespace ts.pxtc.assembler {
                     this.lines.length,
                     Math.round(100 * lenCode / numStmts) / 100, numStmts) +
                 totalInfo + "\n" +
-                this.stats + "\n\n"
+                this.stats + this.getCodeSizeStats() + "\n\n"
 
             let skipOne = false
 
@@ -1353,7 +1441,7 @@ namespace ts.pxtc.assembler {
         if (b.errors.length == 0) {
             oops("ASMTEST: expecting error for: " + asm)
         }
-        // console.log(b.errors[0].message)
+        // pxt.log(b.errors[0].message)
     }
 
     export function tohex(n: number) {
@@ -1377,7 +1465,7 @@ namespace ts.pxtc.assembler {
         b.disablePeepHole = true;
         b.emit(asm);
         if (b.errors.length > 0) {
-            console.debug(b.errors[0].message)
+            pxt.debug(b.errors[0].message)
             oops("ASMTEST: not expecting errors")
         }
 

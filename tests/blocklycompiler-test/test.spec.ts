@@ -1,6 +1,12 @@
 /// <reference path="..\..\localtypings\pxtblockly.d.ts" />
-/// <reference path="..\..\built\pxtblocks.d.ts" />
 /// <reference path="..\..\built\pxtcompiler.d.ts" />
+
+import * as Blockly from "blockly";
+import * as pxtblockly from "../../pxtblocks";
+import { DuplicateOnDragConnectionChecker } from "../../pxtblocks/plugins/duplicateOnDrag";
+
+import "./commentparsing.spec";
+import "./fieldUserEnum.spec";
 
 const WEB_PREFIX = "http://localhost:9876";
 
@@ -192,7 +198,7 @@ function getBlocksInfoAsync(): Promise<pxtc.BlocksInfo> {
             // decompile to blocks
             let apis = pxtc.getApiInfo(resp.ast, opts.jres);
             let blocksInfo = pxtc.getBlocksInfo(apis);
-            pxt.blocks.initializeAndInject(blocksInfo);
+            pxtblockly.initializeAndInject(blocksInfo);
 
             cachedBlocksInfo = blocksInfo;
 
@@ -200,37 +206,79 @@ function getBlocksInfoAsync(): Promise<pxtc.BlocksInfo> {
         }, err => fail('Could not get compile options'))
 }
 
-function blockTestAsync(name: string) {
+async function blockTestAsync(name: string) {
     let blocksFile: string;
     let tsFile: string;
-    return pxt.Util.httpGetTextAsync(WEB_PREFIX + '/tests/' + name + '.blocks')
-        .then(res => {
-            blocksFile = res;
-            return pxt.Util.httpGetTextAsync(WEB_PREFIX + '/baselines/' + name + '.ts')
-        }, err => fail(`Unable to get ${name}.blocks: ` + JSON.stringify(err)))
-        .then(res => {
-            tsFile = res;
-            return getBlocksInfoAsync();
-        }, err => fail(`Unable to get ${name}.ts: ` + JSON.stringify(err)))
-        .then(blocksInfo => {
-            const workspace = new Blockly.Workspace();
-            (Blockly as any).mainWorkspace = workspace;
-            const xml = Blockly.Xml.textToDom(blocksFile);
-            pxt.blocks.domToWorkspaceNoEvents(xml, workspace);
-            return pxt.blocks.compileAsync(workspace, blocksInfo)
-        }, err => fail(`Unable to get block info: ` + JSON.stringify(err)))
-        .then((res: pxt.blocks.BlockCompilationResult) => {
-            chai.expect(res).to.not.be.undefined;
+    const blocklyOptions: Blockly.BlocklyOptions = {
+        sounds: true,
+        trashcan: false,
+        collapse: true,
+        comments: true,
+        disable: false,
+        readOnly: false,
+        plugins: {
+            // 'blockDragger': pxtblockly.BlockDragger,
+            'connectionChecker': DuplicateOnDragConnectionChecker,
+            'flyoutsVerticalToolbox': pxtblockly.VerticalFlyout
+        },
+        move: {
+            scrollbars: true,
+            wheel: true
+        },
+        zoom: {
+            controls: false,
+            maxScale: 2.5,
+            minScale: .2,
+            scaleSpeed: 1.5,
+            startScale: pxt.BrowserUtils.isMobile() ? 0.7 : 0.9,
+            pinch: true
+        },
+        rtl: pxt.Util.isUserLanguageRtl()
+    };
 
-            const compiledTs = res.source.trim().replace(/\s+/g, " ");
-            const baselineTs = tsFile.trim().replace(/\s+/g, " ");
+    try {
+        blocksFile = await pxt.Util.httpGetTextAsync(WEB_PREFIX + '/tests/' + name + '.blocks');
+    }
+    catch (err) {
+        fail(`Unable to get ${name}.blocks: ` + JSON.stringify(err))
+    }
 
-            if (compiledTs !== baselineTs) {
-                console.log(compiledTs);
-            }
+    try {
+        tsFile = await pxt.Util.httpGetTextAsync(WEB_PREFIX + '/baselines/' + name + '.ts');
+    }
+    catch (err) {
+        fail(`Unable to get ${name}.ts: ` + JSON.stringify(err));
+    }
 
-            chai.assert(compiledTs === baselineTs, "Compiled result did not match baseline: " + name + " " + res.source);
-        }, err => fail('Compiling blocks failed with error: ' + err));
+    let blocksInfo: pxtc.BlocksInfo;
+    try {
+        blocksInfo = await getBlocksInfoAsync();
+    }
+    catch (err) {
+        fail(`Unable to get block info: ` + JSON.stringify(err));
+    }
+
+    let res: pxtblockly.BlockCompilationResult;
+    try {
+        const workspace = new Blockly.Workspace();
+        const xml = Blockly.utils.xml.textToDom(blocksFile);
+        pxtblockly.domToWorkspaceNoEvents(xml, workspace);
+        res = await pxtblockly.compileAsync(workspace, blocksInfo)
+    }
+    catch (err) {
+        fail('Compiling blocks failed with error: ' + err)
+    }
+
+    chai.expect(res).to.not.be.undefined;
+
+    const compiledTs = res.source.trim().replace(/\s+/g, " ");
+    const baselineTs = tsFile.trim().replace(/\s+/g, " ");
+
+    if (compiledTs !== baselineTs) {
+        console.log(compiledTs);
+    }
+
+    chai.assert(compiledTs === baselineTs, "Compiled result did not match baseline: " + name + " " + res.source);
 }
 
 describe("blockly compiler", function () {
@@ -321,6 +369,10 @@ describe("blockly compiler", function () {
 
         it("should handle non-number inputs in logic operators", (done: () => void) => {
             blockTestAsync("logic_non_numeric").then(done, done);
+        });
+
+        it("should handle literals being compared", (done: () => void) => {
+            blockTestAsync("compare_literals").then(done, done);
         });
     });
 
@@ -418,6 +470,10 @@ describe("blockly compiler", function () {
         it("should declare variable types when the initializer expression has a generic type", (done: () => void) => {
             blockTestAsync("array_type_declaration_in_set").then(done, done);
         });
+
+        it("shouldn't pollute the global primitive types when unifying variables", (done: () => void) => {
+            blockTestAsync("primitive_type_inference").then(done, done);
+        });
     });
 
     describe("compiling functions", () => {
@@ -480,6 +536,10 @@ describe("blockly compiler", function () {
         it("should handle an array of empty arrays as array argument", (done: () => void) => {
             blockTestAsync("array_parameter_empty_arrays").then(done, done);
         })
+
+        it("should perform type inference on array arguments", (done: () => void) => {
+            blockTestAsync("array_parameter_type_inference").then(done, done);
+        })
     });
 
     describe("compiling special blocks", () => {
@@ -502,6 +562,10 @@ describe("blockly compiler", function () {
         it("should convert enums to constants when emitAsConstant is set", done => {
             blockTestAsync("enum_constants").then(done, done);
         });
+
+        it("should compile gridTemplate blocks to template strings", done => {
+            blockTestAsync("grid_template_string").then(done, done);
+        })
     });
 
     describe("compiling expandable blocks", () => {

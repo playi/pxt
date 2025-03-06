@@ -2,6 +2,7 @@ import * as React from "react";
 import * as ReactDOM from "react-dom";
 import * as sui from "./sui";
 import * as core from "./core";
+import { ProgressBar } from "../../react-common/components/controls/ProgressBar";
 
 interface CoreDialogState {
     visible?: boolean;
@@ -108,7 +109,11 @@ export class CoreDialog extends React.Component<core.PromptOptions, CoreDialogSt
         buttons.forEach(btn => {
             const onclick = btn.onclick;
             btn.onclick = () => {
-                this.close(onclick ? onclick() : 0);
+                if (!btn.noCloseOnClick) {
+                    this.close(onclick ? onclick() : 0);
+                } else {
+                    onclick?.();
+                }
             }
             if (!btn.className) btn.className = "approve positive";
             if (btn.approveButton) this.okButton = btn;
@@ -159,7 +164,7 @@ export class CoreDialog extends React.Component<core.PromptOptions, CoreDialogSt
                             aria-label={options.placeholder}
                         />
                     </div>
-                    {!!inputError && <div className="ui error message">{inputError}</div>}
+                    {!!inputError && <div className="ui error message" role="alert">{inputError}</div>}
                 </div>}
                 {options.jsx}
                 {!!options.jsxd && options.jsxd()}
@@ -223,6 +228,8 @@ export interface LoadingDimmerProps {
 export interface LoadingDimmerState {
     visible?: boolean;
     content?: string;
+    loadedId?: string;
+    loadedPercentage?: number;
 }
 
 export class LoadingDimmer extends React.Component<LoadingDimmerProps, LoadingDimmerState> {
@@ -235,11 +242,31 @@ export class LoadingDimmer extends React.Component<LoadingDimmerProps, LoadingDi
     }
 
     hide() {
-        this.setState({ visible: false, content: undefined });
+        this.setState({
+            visible: false,
+            loadedId: undefined,
+            content: undefined,
+            loadedPercentage: undefined,
+        });
     }
 
-    show(content: string) {
-        this.setState({ visible: true, content: content });
+    show(id: string, content: string, percentComplete?: number) {
+        this.setState({
+            visible: true,
+            loadedId: id,
+            content: content,
+            loadedPercentage: percentComplete,
+        });
+    }
+
+    setPercentLoaded(percentage: number) {
+        this.setState({
+            loadedPercentage: percentage,
+        });
+    }
+
+    currentlyLoading() {
+        return this.state.loadedId;
     }
 
     isVisible() {
@@ -247,12 +274,13 @@ export class LoadingDimmer extends React.Component<LoadingDimmerProps, LoadingDi
     }
 
     render() {
-        const { visible, content } = this.state;
+        const { visible, content, loadedPercentage } = this.state;
         if (!visible) return <div />;
-
+        const hc = core.getHighContrastOnce();
         return <sui.Dimmer isOpen={true} active={visible} closable={false}>
-            <sui.Loader className="large main msg no-select" aria-live="assertive">
+            <sui.Loader className={`large main msg no-select ${hc ? "hc" : ""}`} aria-live="assertive">
                 {content}
+                {loadedPercentage !== undefined && <ProgressBar value={loadedPercentage} />}
             </sui.Loader>
         </sui.Dimmer>;
     }

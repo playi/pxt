@@ -1,18 +1,19 @@
 /// <reference path="../lib/skillMap.d.ts" />
+/// <reference path="../../../localtypings/react.d.ts" />
+
 import * as React from "react";
 
 import { connect } from 'react-redux';
 import { dispatchSaveAndCloseActivity, dispatchShowResetUserModal, dispatchShowLoginModal,
-    dispatchShowUserProfile, dispatchSetUserPreferences } from '../actions/dispatch';
+    dispatchShowUserProfile, dispatchSetUserPreferences, dispatchShowSelectLanguage } from '../actions/dispatch';
 import { SkillMapState } from '../store/reducer';
 import { isLocal, resolvePath, tickEvent } from "../lib/browserUtils";
 
 import { isActivityCompleted } from "../lib/skillMapUtils";
 import * as authClient from '../lib/authClient';
-import { Dropdown } from "./Dropdown";
-import { Button } from "react-common/controls/Button";
-import { MenuBar } from "react-common/controls/MenuBar";
-import { MenuDropdown, MenuItem } from "react-common/controls/MenuDropdown";
+import { Button } from "react-common/components/controls/Button";
+import { MenuBar } from "react-common/components/controls/MenuBar";
+import { MenuDropdown, MenuItem } from "react-common/components/controls/MenuDropdown";
 
 
 interface HeaderBarProps {
@@ -28,6 +29,7 @@ interface HeaderBarProps {
     dispatchShowLoginModal: () => void;
     dispatchShowUserProfile: () => void;
     dispatchSetUserPreferences: (preferences?: pxt.auth.UserPreferences) => void;
+    dispatchShowSelectLanguage: () => void;
 }
 
 export class HeaderBarImpl extends React.Component<HeaderBarProps> {
@@ -51,6 +53,20 @@ export class HeaderBarImpl extends React.Component<HeaderBarProps> {
                     })
                 }
             })
+        }
+
+        // We hide the language option when activities are open to avoid
+        // reloading the workspace and losing unsaved work.
+        if (!this.props.activityOpen) {
+            items.push({
+                id: "language",
+                title: lf("Language"),
+                label: lf("Language"),
+                onClick: () => {
+                    tickEvent("skillmap.language");
+                    this.props.dispatchShowSelectLanguage();
+                }
+            });
         }
 
         if (this.props.showReportAbuse) {
@@ -139,8 +155,11 @@ export class HeaderBarImpl extends React.Component<HeaderBarProps> {
             });
         }
 
+        // Google user picture URL must have referrer policy set to no-referrer
         const avatarElem = this.avatarPicUrl()
-            ? <div className="avatar"><img src={this.avatarPicUrl()} aria-hidden="true" alt={lf("Profile Image")}/></div>
+            ? <div className="avatar">
+                <img src={this.avatarPicUrl()} alt={lf("Profile Image")} referrerPolicy="no-referrer" aria-hidden="true" />
+            </div>
             : undefined;
 
         const initialsElem = <span><div className="avatar-initials" aria-hidden="true">{pxt.auth.userInitials(profile)}</div></span>
@@ -189,18 +208,10 @@ export class HeaderBarImpl extends React.Component<HeaderBarProps> {
     onHomeClicked = () => {
         tickEvent("skillmap.home");
 
-        // relprefix looks like "/beta---", need to chop off the hyphens and slash
-        let rel = pxt.webConfig?.relprefix.substr(0, pxt.webConfig.relprefix.length - 3);
-        if (pxt.appTarget.appTheme.homeUrl && rel) {
-            if (pxt.appTarget.appTheme.homeUrl?.lastIndexOf("/") === pxt.appTarget.appTheme.homeUrl?.length - 1) {
-                rel = rel.substr(1);
-            }
-            window.open(pxt.appTarget.appTheme.homeUrl + rel);
+        const homeUrl = pxt.U.getHomeUrl();
+        if (homeUrl) {
+            window.open(homeUrl);
         }
-        else {
-            window.open(pxt.appTarget.appTheme.homeUrl);
-        }
-
     }
 
     onBugClicked = () => {
@@ -243,7 +254,7 @@ function mapStateToProps(state: SkillMapState, ownProps: any) {
         signedIn: state.auth.signedIn,
         profile: state.auth.profile,
         preferences: state.auth.preferences
-    }
+    } as HeaderBarProps
 }
 
 
@@ -252,7 +263,8 @@ const mapDispatchToProps = {
     dispatchShowResetUserModal,
     dispatchShowLoginModal,
     dispatchShowUserProfile,
-    dispatchSetUserPreferences
+    dispatchSetUserPreferences,
+    dispatchShowSelectLanguage
 };
 
 export const HeaderBar = connect(mapStateToProps, mapDispatchToProps)(HeaderBarImpl);

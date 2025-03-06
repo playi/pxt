@@ -44,12 +44,24 @@ namespace pxt {
                 })
         }
 
+        latestVersionAsync(repopath: string, config: pxt.PackagesConfig): Promise<string> {
+            return this.db.latestVersionAsync(repopath, config)
+        }
+
         loadConfigAsync(repopath: string, tag: string): Promise<pxt.PackageConfig> {
             return this.loadAsync(repopath, tag, "pxt", (r, t) => this.db.loadConfigAsync(r, t));
         }
 
         loadPackageAsync(repopath: string, tag: string): Promise<pxt.github.CachedPackage> {
             return this.loadAsync(repopath, tag, "pkg", (r, t) => this.db.loadPackageAsync(r, t));
+        }
+
+        loadTutorialMarkdown(repopath: string, tag?: string): Promise<pxt.github.CachedPackage> {
+            return this.loadAsync(repopath, tag, "tutorial", (r, t) => this.db.loadTutorialMarkdown(r, t));
+        }
+
+        cacheReposAsync(resp: pxt.github.GHTutorialResponse) {
+            return this.db.cacheReposAsync(resp);
         }
     }
 
@@ -85,19 +97,19 @@ namespace pxt {
         }
 
         getHexInfoAsync(extInfo: pxtc.ExtensionInfo): Promise<pxtc.HexInfo> {
-            //console.log(`getHexInfoAsync(${extInfo})`);
+            //pxt.log(`getHexInfoAsync(${extInfo})`);
             return Promise.resolve<any>({ hex: ["SKIP"] })
         }
 
         cacheStoreAsync(id: string, val: string): Promise<void> {
-            //console.log(`cacheStoreAsync(${id}, ${val})`)
+            //pxt.log(`cacheStoreAsync(${id}, ${val})`)
             if (callbacks?.cacheSet)
                 return callbacks.cacheSet(id, val)
             return Promise.resolve()
         }
 
         cacheGetAsync(id: string): Promise<string> {
-            //console.log(`cacheGetAsync(${id})`)
+            //pxt.log(`cacheGetAsync(${id})`)
             if (callbacks?.cacheGet)
                 return callbacks.cacheGet(id)
             return Promise.resolve("")
@@ -113,12 +125,12 @@ namespace pxt {
                             })
                         }
                     })
-            //console.log(`downloadPackageAsync(${pkg.id})`)
+            //pxt.log(`downloadPackageAsync(${pkg.id})`)
             return Promise.resolve()
         }
 
         resolveVersionAsync(pkg: pxt.Package): Promise<string> {
-            //console.log(`resolveVersionAsync(${pkg.id})`)
+            //pxt.log(`resolveVersionAsync(${pkg.id})`)
             return Promise.resolve("*")
         }
     }
@@ -168,6 +180,9 @@ namespace pxt {
                 return mainPkg.getCompileOptionsAsync(target)
             }).then(opts => {
                 patchTS(mainPkg.targetVersion(), opts)
+                if (mainPkg.getPreferredEditor() === pxt.PYTHON_PROJECT_NAME) {
+                    patchPY(mainPkg.targetVersion(), opts)
+                }
                 prepPythonOptions(opts)
                 return opts
             })
@@ -200,6 +215,22 @@ namespace pxt {
                 if (ts != ts2) {
                     pxt.debug(`applying TS patch to ${fn}`)
                     opts.fileSystem[fn] = ts2
+                }
+            }
+        }
+    }
+
+    export function patchPY(version: string, opts: pxtc.CompileOptions) {
+        if (!version)
+            return
+        pxt.debug(`applying PY patches relative to ${version}`)
+        for (let fn of Object.keys(opts.fileSystem)) {
+            if (fn.indexOf("/") == -1 && U.endsWith(fn, ".py")) {
+                const initial = opts.fileSystem[fn]
+                const patched = pxt.patching.patchPython(version, initial)
+                if (initial != patched) {
+                    pxt.debug(`applying PY patch to ${fn}`)
+                    opts.fileSystem[fn] = patched
                 }
             }
         }

@@ -10,6 +10,7 @@
     border-radius: 2px;
     border: 1px solid @inputBorderColor;
     background: @inputBackgroundColor;
+    font-size: 16px;
 }
 
 .common-input-group:focus::after,
@@ -94,11 +95,54 @@
     }
 }
 
+
+/****************************************************
+ *                Attached Button                   *
+ ****************************************************/
+
+.common-input-attached-button {
+    display: flex;
+    flex-direction: row;
+
+    .common-input-wrapper {
+        flex-grow: 1;
+
+        .common-input-group {
+            border-top-right-radius: 0;
+            border-bottom-right-radius: 0;
+            border-right: none;
+            height: 3rem;
+        }
+    }
+
+    .common-button {
+        border-top-left-radius: 0;
+        border-bottom-left-radius: 0;
+    }
+}
+
+/****************************************************
+ *                   Dropdown                       *
+ ****************************************************/
+.common-input-group > .common-button {
+    color: @textColor !important;
+}
+
+.common-menu-dropdown-pane {
+    z-index: 1;
+
+    .common-button {
+        padding: .8rem;
+        width: 100%;
+        text-align: start;
+    }
+}
+
 /****************************************************
  *                 High Contrast                    *
  ****************************************************/
 
-.high-contrast {
+.high-contrast, .hc {
     .common-input {
         color: @highContrastTextColor;
         border-color: @highContrastTextColor;

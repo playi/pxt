@@ -10,6 +10,13 @@ namespace pxt.analytics {
     const defaultMeasures: Map<number> = {};
     let enabled = false;
 
+    export enum ConsoleTickOptions {
+        Off,
+        Short,
+        Verbose
+    };
+    export let consoleTicks: ConsoleTickOptions = ConsoleTickOptions.Off;
+
     export function addDefaultProperties(props: Map<string | number>) {
         Object.keys(props).forEach(k => {
             if (typeof props[k] == "string") {
@@ -20,22 +27,34 @@ namespace pxt.analytics {
         });
     }
 
-    export function enable() {
+    export function enable(lang: string) {
         if (!pxt.aiTrackException || !pxt.aiTrackEvent || enabled) return;
 
         enabled = true;
+        if (typeof lang != "string" || lang.length == 0) {
+            lang = "en"; //Always have a default language.
+        }
+        addDefaultProperties({ lang: lang })
+
         pxt.debug('setting up app insights')
 
         const te = pxt.tickEvent;
         pxt.tickEvent = function (id: string, data?: Map<string | number>, opts?: TelemetryEventOptions): void {
+            if (consoleTicks != ConsoleTickOptions.Off)
+            {
+                const prefix = consoleTicks == ConsoleTickOptions.Short ? "" : `${new Date().toLocaleTimeString(undefined, { hour12: false })} - Tick - `;
+                const tickInfo = `${id} ${data ? JSON.stringify(data) : "<no data>"} ${opts ? JSON.stringify(opts) : "<no opts>"}`;
+                pxt.log(prefix + tickInfo);
+            }
+
             if (te) te(id, data, opts);
 
             if (opts?.interactiveConsent) pxt.setInteractiveConsent(true);
 
             if (!data) pxt.aiTrackEvent(id);
             else {
-                const props: Map<string> = { ...defaultProps } || {};
-                const measures: Map<number> = { ...defaultMeasures } || {};
+                const props: Map<string> = { ...defaultProps };
+                const measures: Map<number> = { ...defaultMeasures };
                 Object.keys(data).forEach(k => {
                     if (typeof data[k] == "string") props[k] = <string>data[k];
                     else if (typeof data[k] == "number") measures[k] = <number>data[k];
@@ -73,5 +92,17 @@ namespace pxt.analytics {
                 pxt.aiTrackException(err, 'error', props);
             }
         };
+    }
+
+    export function trackPerformanceReport() {
+        if (pxt.perf.perfReportLogged) return;
+
+        const data = pxt.perf.report();
+
+        if (data) {
+            const { durations, milestones } = data;
+            pxt.tickEvent("performance.milestones", milestones);
+            pxt.tickEvent("performance.durations", durations);
+        }
     }
 }

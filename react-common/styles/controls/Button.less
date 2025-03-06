@@ -6,7 +6,7 @@
     outline: none;
     border: none;
     vertical-align: middle;
-    color: @buttonTextColor;
+    color: @buttonTextColorLightBackground;
     background: @buttonBackgroundColor;
     font-family: @pageFont;
     margin: 0 0.25rem 0 0;
@@ -16,6 +16,7 @@
     font-weight: 400;
     line-height: 1em;
     font-style: normal;
+    font-size: 16px;
     text-align: center;
     text-decoration: none;
     border-radius: 0.2em;
@@ -32,21 +33,9 @@
     margin-left: 0.5rem;
 }
 
-.common-button:focus::after {
-    content: "";
-    position: absolute;
-    inset: 4px;
-    border: 1px solid transparent;
-    outline: @buttonFocusOutline;
-    z-index: 1;
-    border-radius: 0.2em;
+.common-button-flex {
+    white-space: nowrap;
 }
-
-.common-button.inverted:focus::after,
-.common-button.menu-button:focus::after {
-    outline: @buttonFocusOutlineInverted;
-}
-
 
 /****************************************************
  *                  Color Variants                   *
@@ -54,62 +43,79 @@
 
 .common-button.primary {
     background: @primaryColor;
-    color: @buttonTextColorInverted;
+    color: @buttonTextColorDarkBackground;
     border: 1px solid @primaryColor;
 }
 
 .common-button.secondary {
     background: @secondaryColor;
-    color: @buttonTextColorInverted;
+    color: @buttonTextColorDarkBackground;
     border: 1px solid @secondaryColor;
 }
 
 .common-button.teal {
     background: @teal;
-    color: @buttonTextColorInverted;
+    color: @buttonTextColorDarkBackground;
     border: 1px solid @teal;
+}
+
+.common-button.blue {
+    background: @blue;
+    color: @buttonTextColorDarkBackground;
+    border: 1px solid @blue;
 }
 
 .common-button.orange {
     background: @orange;
-    color: @buttonTextColorInverted;
+    color: @buttonTextColorDarkBackground;
     border: 1px solid @orange;
 }
 
 .common-button.red {
     background: @red;
-    color: @buttonTextColorInverted;
+    color: @buttonTextColorDarkBackground;
     border: 1px solid @red;
 }
 
 .common-button.green {
     background: @green;
-    color: @buttonTextColorInverted;
+    color: @buttonTextColorDarkBackground;
     border: 1px solid @green;
 }
 
+.common-button.gray, .common-button.grey {
+    background: @buttonGrayColor;
+    color: @buttonTextColorLightBackground;
+    border: 1px solid @buttonGrayColor;
+}
+
 .common-button.primary.inverted {
-    background: @buttonTextColorInverted;
+    background: @buttonTextColorDarkBackground;
     color: @primaryColor;
 }
 
 .common-button.teal.inverted {
-    background: @buttonTextColorInverted;
+    background: @buttonTextColorDarkBackground;
     color: @teal;
 }
 
+.common-button.blue.inverted {
+    background: @buttonTextColorDarkBackground;
+    color: @blue;
+}
+
 .common-button.orange.inverted {
-    background: @buttonTextColorInverted;
+    background: @buttonTextColorDarkBackground;
     color: @orange;
 }
 
 .common-button.red.inverted {
-    background: @buttonTextColorInverted;
+    background: @buttonTextColorDarkBackground;
     color: @red;
 }
 
 .common-button.green.inverted {
-    background: @buttonTextColorInverted;
+    background: @buttonTextColorDarkBackground;
     color: @green;
 }
 
@@ -138,8 +144,48 @@
  {
     cursor: default;
     background-color: @buttonBackgroundColorDisabled;
-    color: @buttonTextColor;
+    color: @buttonTextColorLightBackground;
     border: @buttonBackgroundColorDisabled;
+}
+
+.common-button.menu-button.disabled {
+    opacity: 0.8;
+}
+
+.common-button.menu-button.disabled:hover,
+.common-button.menu-button.disabled:active {
+    background: none;
+}
+
+/****************************************************
+ *                      Focus                       *
+ ****************************************************/
+
+.common-button:focus-visible::after {
+    content: "";
+    position: absolute;
+    inset: 4px;
+    border: 1px solid transparent;
+    outline: @buttonFocusOutlineLightBackground;
+    z-index: 1;
+    border-radius: 0.2em;
+}
+
+.common-button.menu-button:focus-visible::after,
+.common-button.primary:focus-visible::after,
+.common-button.secondary:focus-visible::after,
+.common-button.teal:focus-visible::after,
+.common-button.orange:focus-visible::after,
+.common-button.red:focus-visible::after,
+.common-button.green:focus-visible::after,
+.common-button.facebook:focus-visible::after,
+.common-button.twitter:focus-visible::after,
+.common-button.discourse:focus-visible::after {
+    outline: @buttonFocusOutlineDarkBackground;
+}
+
+.common-button.inverted:focus-visible::after {
+    outline: @buttonFocusOutlineLightBackground;
 }
 
 
@@ -174,6 +220,149 @@
 .common-button.menu-button.inverted:hover  {
     background: @buttonMenuBackgroundColorInverted;
     color: @buttonMenuTextColorInverted;
+}
+
+.common-button.text-only, .common-button.inverted.text-only {
+    border: none;
+    background: none;
+}
+
+a.common-button.menu-button {
+    display: flex;
+    align-items: center;
+}
+
+/****************************************************
+ *                   Link Buttons                   *
+ ****************************************************/
+
+.common-button.link-button {
+    background: none;
+    border: none;
+    padding: 0;
+    color: @buttonLinkColor;
+}
+
+.common-button.link-button:hover {
+    text-decoration: underline;
+}
+
+.common-button.link-button:focus-visible::after {
+    outline: none;
+    border: none;
+    text-decoration: underline;
+}
+
+.common-button.link-button:focus-visible {
+    outline: none;
+    border: none;
+    text-decoration: underline;
+}
+
+.common-button.link-button.kiosk {
+    color: @commonTextColor;
+}
+
+
+/****************************************************
+ *                   Square Buttons                 *
+ ****************************************************/
+
+ .common-button.square-button {
+    width: 3rem;
+    height: 3rem;
+    overflow: hidden;
+    padding: 0;
+
+    i, i.fas, i.far {
+        margin: 0;
+    }
+}
+
+
+/****************************************************
+ *                   Circle Buttons                 *
+ ****************************************************/
+
+ .common-button.circle-button {
+    &:extend(.common-button.square-button);
+    border-radius: 2rem;
+}
+
+.common-button.circle-button:focus-visible::after {
+    border-radius: 2rem;
+}
+
+/****************************************************
+ *                 Button Group                     *
+ ****************************************************/
+
+ .common-button-group {
+    display: flex;
+    flex-direction: row;
+
+    .common-button {
+        border-radius: 0;
+        margin: 0;
+    }
+
+    .common-button.inverted:not(:last-child) {
+        border-right: none;
+    }
+
+    .common-button:first-child {
+        border-top-left-radius: 0.2em;
+        border-bottom-left-radius: 0.2em;
+    }
+    .common-button:last-child {
+        border-top-right-radius: 0.2em;
+        border-bottom-right-radius: 0.2em;
+
+        margin: 0 0.25rem 0 0;
+    }
+ }
+
+
+/****************************************************
+ *                   Social Buttons                 *
+ ****************************************************/
+
+.common-button.social-button {
+    font-size: 1.5rem;
+
+    img {
+        max-width: 100%;
+    }
+}
+
+.common-button.facebook {
+    background: #4267B2;
+    color: @buttonTextColorDarkBackground;
+}
+
+.common-button.twitter {
+    background: #1DA1F2;
+    color: @buttonTextColorDarkBackground;
+}
+
+.common-button.discourse {
+    background: #333333;
+    color: @buttonTextColorDarkBackground;
+}
+
+.common-button.device-share {
+    background: #333333;
+    color: @buttonTextColorDarkBackground;
+}
+
+.common-button.whatsapp {
+    background: #59CE72;
+    color: @buttonTextColorDarkBackground;
+}
+
+.common-button.microsoft-teams {
+    background: #35258F;
+    color: @buttonTextColorDarkBackground;
 }
 
 /****************************************************

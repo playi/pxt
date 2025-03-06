@@ -7,6 +7,7 @@ import * as data from "./data";
 import * as core from "./core";
 import * as auth from "./auth";
 import { fireClickOnEnter } from "./util";
+import { focusLastActive } from "../../react-common/components/util";
 
 export const appElement = document.getElementById('content');
 
@@ -15,7 +16,7 @@ export interface UiProps {
     iconClass?: string;
     text?: string;
     textClass?: string;
-    children?: any;
+    children?: React.ReactNode;
     className?: string;
     role?: string;
     title?: string;
@@ -90,10 +91,13 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
         this.setState({ open: false });
     }
 
-    toggle() {
+    toggle(focusFirst?: boolean) {
         if (this.state.open) {
             this.hide();
         } else {
+            if (focusFirst) {
+                this.focusFirst = true;
+            }
             this.show();
         }
     }
@@ -103,7 +107,7 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
         el.focus();
     }
 
-    private blur(el: HTMLElement) {
+    private setInactive(el: HTMLElement) {
         if (this.isActive(el)) {
             pxt.BrowserUtils.removeClass(el, "active");
         }
@@ -126,8 +130,8 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
             const child = menu.childNodes[i] as HTMLElement;
             // Remove separators
             if (pxt.BrowserUtils.containsClass(child, "divider")) continue;
-            // Check if item is intended for mobile only views
-            if (pxt.BrowserUtils.containsClass(child, "mobile") && !pxt.BrowserUtils.isMobile()) continue;
+            // Check if item is visible. Some items are intended for mobile only views.
+            if (!child.offsetParent) continue;
             children.push(child);
         }
         return children;
@@ -138,61 +142,17 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
         return menu.contains(document.activeElement);
     }
 
-    private navigateToNextElement = (e: KeyboardEvent, prev: HTMLElement, next: HTMLElement) => {
-        const dropdown = this.refs["dropdown"] as HTMLElement;
-        const charCode = core.keyCodeFromEvent(e);
-        const current = e.currentTarget as HTMLElement;
-        if (charCode === 40 /* Down arrow */) {
-            e.preventDefault();
-            e.stopPropagation();
-            if (next) {
-                this.focus(next);
-            }
-        } else if (charCode === 38 /* Up arrow */) {
-            e.preventDefault();
-            e.stopPropagation();
-            if (prev) {
-                this.focus(prev);
-            } else {
-                // Prev is undefined, go to dropdown
-                dropdown.focus();
-                this.setState({ open: false });
-            }
-        } else if (charCode === core.SPACE_KEY || charCode === core.ENTER_KEY) {
-            // Trigger click
-            e.preventDefault();
-            e.stopPropagation();
-            current.click();
+    handleFocusCapture = (e: React.FocusEvent<HTMLDivElement>) => {
+        const target = e.target as HTMLElement;
+        if (target && this.getChildren().includes(target)) {
+            this.setActive(target);
         }
     }
 
-    componentDidMount() {
-        const children = this.getChildren();
-        for (let i = 0; i < children.length; i++) {
-            const prev = i > 0 ? children[i - 1] as HTMLElement : undefined;
-            const child = children[i] as HTMLElement;
-            const next = i < children.length ? children[i + 1] as HTMLElement : undefined;
-
-            child.addEventListener('keydown', (e) => {
-                this.navigateToNextElement(e, prev, next);
-            })
-
-            child.addEventListener('focus', (e: FocusEvent) => {
-                this.setActive(child);
-            })
-            child.addEventListener('blur', (e: FocusEvent) => {
-                this.blur(child);
-            })
-
-            if (i == children.length - 1) {
-                // set tab on last child to clear focus
-                child.addEventListener('keydown', (e) => {
-                    const charCode = core.keyCodeFromEvent(e);
-                    if (!e.shiftKey && charCode === core.TAB_KEY) {
-                        this.hide();
-                    }
-                })
-            }
+    handleBlurCapture = (e: React.FocusEvent<HTMLDivElement>) => {
+        const target = e.target as HTMLElement;
+        if (target && this.getChildren().includes(target)) {
+            this.setInactive(target);
         }
     }
 
@@ -297,14 +257,50 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
 
     private focusFirst: boolean;
     private handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+        const dropdown = this.refs["dropdown"] as HTMLElement;
+        const children = this.getChildren();
+        const activeElementIndex = children.findIndex(el => this.isActive(el));
+        const activeChild = children[activeElementIndex];
+        const prev = activeElementIndex > 0 ? children[activeElementIndex - 1] as HTMLElement : undefined;
+        const next = activeElementIndex < children.length ? children[activeElementIndex + 1] as HTMLElement : undefined;
         const charCode = core.keyCodeFromEvent(e);
-        if (charCode === 40 /* Down arrow key */) {
+        if (charCode === 40 /* Down arrow */) {
             e.preventDefault();
-            this.focusFirst = true;
-            this.show();
+            e.stopPropagation();
+            // Show dropdown menu if not open
+            if (!this.state.open) {
+                this.focusFirst = true;
+                this.show();
+            }
+            if (next) {
+                this.focus(next);
+            }
+        } else if (charCode === 38 /* Up arrow */) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (prev) {
+                this.focus(prev);
+            } else {
+                // Prev is undefined, go to dropdown
+                dropdown.focus();
+                this.hide();
+            }
         } else if (charCode === core.SPACE_KEY || charCode === core.ENTER_KEY) {
+            // Trigger click on menu item or dropdown
             e.preventDefault();
-            this.toggle();
+            e.stopPropagation();
+            if (activeChild) {
+                activeChild.click();
+            } else {
+                if (!this.props.onClick || this.props.onClick()) {
+                    this.toggle(true);
+                }
+            }
+        } else if (activeElementIndex === children.length - 1 && !e.shiftKey && charCode === core.TAB_KEY) {
+            if (activeChild) {
+                this.setInactive(activeChild)
+            }
+            this.hide();
         }
     }
 
@@ -316,13 +312,13 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
         const aria = {
             'role': role || 'combobox',
             'aria-disabled': disabled,
-            'aria-haspopup': !!disabled,
+            'aria-haspopup': !disabled,
             'aria-expanded': open
         }
         const menuAria = {
             'role': 'menu',
             'aria-label': lf("Dropdown menu {0}", title),
-            'aria-hidden': !!open
+            'aria-hidden': !open
         }
         const classes = cx([
             'ui',
@@ -333,6 +329,7 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
             displayAbove ? 'menuAbove' : '',
             displayRight ? 'menuRight' : '',
             displayLeft ? "menuLeft" : '',
+            disabled ? "disabled" : ''
         ]);
         const menuClasses = cx([
             'menu',
@@ -349,6 +346,8 @@ export class DropdownMenu extends UIElement<DropdownProps, DropdownState> {
                 onKeyDown={this.handleKeyDown}
                 onFocus={this.handleFocus}
                 onBlur={this.handleBlur}
+                onBlurCapture={this.handleBlurCapture}
+                onFocusCapture={this.handleFocusCapture}
                 tabIndex={0}
             >
                 {titleContent ? titleContent : genericContent(this.props)}
@@ -367,6 +366,7 @@ export interface ExpandableMenuProps {
     title?: string;
     onShow?: () => void;
     onHide?: () => void;
+    children?: React.ReactNode;
 }
 
 export interface ExpandableMenuState {
@@ -498,7 +498,7 @@ export class Item extends data.Component<ItemProps, {}> {
         return (
             <div className={genericClassName("ui item link", this.props, true) + ` ${this.props.active ? 'active' : ''}`}
                 role={this.props.role}
-                aria-label={ariaLabel || title || text}
+                aria-label={(!this.props.role || this.props.role === "presentation") ? "" : ariaLabel || title || text}
                 aria-selected={this.props.active}
                 aria-hidden={ariaHidden}
                 title={title || text}
@@ -730,7 +730,7 @@ export class Input extends data.Component<InputProps, InputState> {
     copy() {
         this.setState({ copied: false });
         const p = this.props
-        const el = ReactDOM.findDOMNode(this);
+        const el = ReactDOM.findDOMNode(this) as Element;
 
         if (!p.lines || p.lines == 1) {
             const inp = el.getElementsByTagName("input")[0] as HTMLInputElement;
@@ -873,7 +873,7 @@ export interface IconProps extends UiProps {
     onKeyDown?: () => void;
 }
 
-export const Icon: React.StatelessComponent<IconProps> = (props: IconProps) => {
+export const Icon: React.FunctionComponent<IconProps> = (props: IconProps) => {
     const { icon, className, onClick, onKeyDown, children, ...rest } = props;
     return <i className={`icon ${icon} ${className ? className : ''}`}
         onClick={onClick}
@@ -1133,6 +1133,7 @@ export interface ModalButton {
     approveButton?: boolean;
     labelPosition?: "left" | "right";
     ariaLabel?: string;
+    noCloseOnClick?: boolean;
 }
 
 export interface ModalProps extends ReactModal.Props {
@@ -1166,12 +1167,14 @@ export interface ModalProps extends ReactModal.Props {
     allowResetFocus?: boolean;
     modalDidOpen?: (ref: HTMLElement) => void;
     overlayClassName?: string;
+    dontRestoreFocus?: boolean;
 }
 
 interface ModalState {
     marginTop?: number;
     scrolling?: boolean;
     mountClasses?: string;
+    previouslyFocused?: Element;
 }
 
 export class Modal extends data.Component<ModalProps, ModalState> {
@@ -1183,6 +1186,7 @@ export class Modal extends data.Component<ModalProps, ModalState> {
         super(props);
         this.id = ts.pxtc.Util.guidGen();
         this.state = {
+            previouslyFocused: document.activeElement
         }
 
         this.onRequestClose = this.onRequestClose.bind(this);
@@ -1209,6 +1213,12 @@ export class Modal extends data.Component<ModalProps, ModalState> {
 
     componentWillUnmount() {
         cancelAnimationFrame(this.animationRequestId);
+        if (!this.props.dontRestoreFocus) {
+            let toFocus = this.state.previouslyFocused as HTMLElement;
+            if (toFocus) {
+                focusLastActive(toFocus);
+            }
+        }
     }
 
     setPositionAndClassNames = () => {

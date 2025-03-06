@@ -12,7 +12,6 @@ https://youtu.be/XsM8hp7eysA
 
 Author the tutorial content in a **Markdown** file in your project. The format is the same as what's documented in [tutorials](/writing-docs/tutorials). 
 
-The dependencies are used when starting the tutorial project, but code content (``main.blocks``, ``main.ts``) is ignored.
 
 ### ~ hint
 
@@ -34,6 +33,10 @@ The easiest way to share a tutorial is to first share the program. Then, use the
 The complete shared url is formatted like:
 
     https://makecode.microbit.org/#tutorial:https://makecode.com/_sIty7Iop
+
+### Project dependencies
+
+The dependencies for a shared tutorial project are used when the tutorial starts. The project code content (``main.blocks``, ``main.ts``) is ignored though. This also includes the code in ``custom.ts``! If you are hoping to include custom blocks in a tutorial, put them in an extension first, then that extension can get added to the project's dependencies. Read more about making [extensions](/extensions/getting-started/).
 
 ### ~ alert
 
@@ -88,7 +91,9 @@ Click on the ``lab`` icon in the **Explorer** view to open any markdown file (``
 
 #### Cloud caching
 
-To increase performance, the MakeCode websites may "cloud cache" the release version of a previously used extension and tutorials hosted in a user GitHub repository. This means that if you commit changes to a tutorial you have in a repostory, those updates might not appear when you try to test the tutorial in MakeCode. The MakeCode cloud cache will not reflect your changes until you **create a new release version** for your repository. Makng a new release will force the cache to clear the prior version and refresh to the new version the next time it's requested. See [GitHub releases](https://arcade.makecode.com/github/release) for more about creating a versioned release.
+To increase performance, the MakeCode websites may "cloud cache" the release version of a previously used extension and tutorials hosted in a user GitHub repository. This means that if you commit changes to a tutorial you have in a repostory, those updates might not appear when you try to test the tutorial in MakeCode. The MakeCode cloud cache will not reflect your changes until you **create a new release version** for your repository. Making a new release will force the cache to clear the prior version and refresh to the new version the next time it's requested. See [GitHub releases](https://arcade.makecode.com/github/release) for more about creating a versioned release.
+
+Again, to be clear, you need to make the release through the [Github integration](https://makecode.com/extensions/github-authoring) on the MakeCode website. Making a release directly on github.com does _not_ force the cache to clear.
 
 ### ~
 
@@ -102,12 +107,14 @@ region specific language code or language neutral. MakeCode will pick the best m
 
 https://youtu.be/3LKmE0c5UZU
 
-### Repository as extension
+### Repository with custom blocks
 
 If the tutorial repository contains JavaScript files (``.ts``),
 it will automatically be added to the dependencies of the 
 program used during the tutorial. This allows you to package custom blocks
 in your tutorials or teach your extensions via tutorials.
+
+It's important to know that the tutorial project includes any code you might have in ``main.ts``. So, if you've built a sample program while making the tutorial, make sure to move the code into another project or delete it before sharing the tutorial. If ``main.ts`` has any code in it, the code will run when the tutorial gets opened!
 
 ## Report abuse and approvals
 

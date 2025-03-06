@@ -40,7 +40,7 @@ namespace ts.pxtc {
     // Assumptions:
     // - registers can hold a pointer (data or code)
     // - special registers include: sp
-    // - fixed registers are r0, r1, r2, r3, r5, r6 
+    // - fixed registers are r0, r1, r2, r3, r5, r6
     //   - r0 is the current value (from expression evaluation)
     //   - registers for runtime calls (r0, r1,r2,r3)
     //   - r5 is for captured locals in lambda
@@ -54,7 +54,7 @@ namespace ts.pxtc {
     export abstract class AssemblerSnippets {
         nop() { return "TBD(nop)" }
         reg_gets_imm(reg: string, imm: number) { return "TBD(reg_gets_imm)" }
-        // Registers are stored on the stack in numerical order 
+        // Registers are stored on the stack in numerical order
         proc_setup(numlocals: number, main?: boolean) { return "TBD(proc_setup)" }
         push_fixed(reg: string[]) { return "TBD(push_fixed)" }
         push_local(reg: string) { return "TBD(push_local)" }
@@ -97,6 +97,7 @@ namespace ts.pxtc {
             const info = utf8AsmStringLiteral(strLit)
             return `
             .balign 4
+            .object ${lbl}
             ${lbl}: ${this.obj_header(info.vt)}
             ${info.asm}
 `
@@ -109,6 +110,7 @@ namespace ts.pxtc {
             const align = /f{16}/i.test(data) ? 8 : 4
             return `
 .balign ${align}
+.object ${lbl}
 ${lbl}: ${this.obj_header("pxt::buffer_vt")}
 ${hexLiteralAsm(data)}
 `
@@ -226,6 +228,7 @@ ${hexLiteralAsm(data)}
 `)
 
             let baseLabel = this.proc.label()
+            this.write(`.object ${baseLabel} ${JSON.stringify(this.proc.getFullName())}`)
             let preLabel = baseLabel + "_pre"
             let bkptLabel = baseLabel + "_bkpt"
             let locLabel = baseLabel + "_locals"
@@ -280,15 +283,15 @@ ${baseLabel}_nochk:
                     if (bi) {
                         let off = U.lookup(th.stackAtLabel, `__brkp_${bi.id}`)
                         if (off !== this.proc.debugInfo.localsMark) {
-                            console.log(bi)
-                            console.log(th.stackAtLabel)
+                            pxt.log(bi)
+                            pxt.log(th.stackAtLabel)
                             U.oops(`offset doesn't match: ${off} != ${this.proc.debugInfo.localsMark}`)
                         }
                     }
                 }
             }
 
-            if (this.bin.options.breakpoints) {
+            if (this.bin.breakpoints) {
                 this.write(this.t.debugger_proc(bkptLabel))
             }
             this.baseStackSize = 1 // push {lr}
@@ -309,7 +312,7 @@ ${baseLabel}_nochk:
 
             for (let i = 0; i < this.proc.body.length; ++i) {
                 let s = this.proc.body[i]
-                // console.log("STMT", s.toString())
+                // pxt.log("STMT", s.toString())
                 switch (s.stmtKind) {
                     case ir.SK.Expr:
                         this.emitExpr(s.expr)
@@ -317,9 +320,9 @@ ${baseLabel}_nochk:
                     case ir.SK.StackEmpty:
                         if (this.exprStack.length > 0) {
                             for (let stmt of this.proc.body.slice(i - 4, i + 1))
-                                console.log(`PREVSTMT ${stmt.toString().trim()}`)
+                                pxt.log(`PREVSTMT ${stmt.toString().trim()}`)
                             for (let e of this.exprStack)
-                                console.log(`EXPRSTACK ${e.currUses}/${e.totalUses} E: ${e.toString()}`)
+                                pxt.log(`EXPRSTACK ${e.currUses}/${e.totalUses} E: ${e.toString()}`)
                             oops("stack should be empty")
                         }
                         this.write("@stackempty locals")
@@ -335,7 +338,7 @@ ${baseLabel}_nochk:
                         this.write(`; ${s.expr.data}`)
                         break
                     case ir.SK.Breakpoint:
-                        if (this.bin.options.breakpoints) {
+                        if (this.bin.breakpoints) {
                             let lbl = `__brkp_${s.breakpointInfo.id}`
                             if (s.breakpointInfo.isDebuggerStmt) {
                                 this.write(this.t.debugger_stmt(lbl))
@@ -384,7 +387,7 @@ ${baseLabel}_nochk:
         private terminate(expr: ir.Expr) {
             assert(expr.exprKind == ir.EK.SharedRef)
             let arg = expr.args[0]
-            // console.log("TERM", arg.sharingInfo(), arg.toString(), this.dumpStack())
+            // pxt.log("TERM", arg.sharingInfo(), arg.toString(), this.dumpStack())
             U.assert(arg.currUses != arg.totalUses)
             // we should have the terminated expression on top
             U.assert(this.exprStack[0] === arg, "term at top")
@@ -404,14 +407,14 @@ ${baseLabel}_nochk:
         }
 
         private validateJmpStack(lbl: ir.Stmt, off = 0) {
-            // console.log("Validate:", off, lbl.lblName, this.dumpStack())
+            // pxt.log("Validate:", off, lbl.lblName, this.dumpStack())
             let currSize = this.exprStack.length - off
             if (lbl.lblStackSize == null) {
                 lbl.lblStackSize = currSize
             } else {
                 if (lbl.lblStackSize != currSize) {
-                    console.log(lbl.lblStackSize, currSize)
-                    console.log(this.dumpStack())
+                    pxt.log(lbl.lblStackSize, currSize)
+                    pxt.log(this.dumpStack())
                     U.oops("stack misaligned at: " + lbl.lblName)
                 }
             }
@@ -539,7 +542,7 @@ ${baseLabel}_nochk:
 
         // result in R0
         private emitExpr(e: ir.Expr): void {
-            //console.log(`EMITEXPR ${e.sharingInfo()} E: ${e.toString()}`)
+            //pxt.log(`EMITEXPR ${e.sharingInfo()} E: ${e.toString()}`)
 
             switch (e.exprKind) {
                 case ir.EK.JmpValue:
@@ -618,9 +621,14 @@ ${baseLabel}_nochk:
             })
         }
 
+        private helperObject(desc: string) {
+            return `.object _pxt_helper_${desc.replace(/[^\w]+/g, "_")} "helper: ${desc}"`
+        }
+
         private emitBindHelper() {
             const maxArgs = 12
             this.write(`
+                ${this.helperObject("bind")}
                 .section code
                 _pxt_bind_helper:
                     push {r0, r2}
@@ -922,8 +930,8 @@ ${baseLabel}_nochk:
             let allArgs = nonRefs.concat(refs)
             for (let r of allArgs) {
                 if (r.currUses != 0 || r.totalUses != 1) {
-                    console.log(r.toString())
-                    console.log(allArgs.map(a => a.toString()))
+                    pxt.log(r.toString())
+                    pxt.log(allArgs.map(a => a.toString()))
                     U.oops(`wrong uses: ${r.currUses} ${r.totalUses}`)
                 }
                 r.currUses = 1
@@ -1139,6 +1147,7 @@ ${baseLabel}_nochk:
         private emitFieldMethods() {
             for (let op of ["get", "set"]) {
                 this.write(`
+                ${this.helperObject(op)}
                 .section code
                 _pxt_map_${op}:
                 `)
@@ -1191,6 +1200,7 @@ ${baseLabel}_nochk:
 
         private emitArrayMethod(op: string, isBuffer: boolean) {
             this.write(`
+            ${this.helperObject(op + " " + (isBuffer ? "buffer" : "array"))}
             .section code
             _pxt_${isBuffer ? "buffer" : "array"}_${op}:
             `)
@@ -1285,6 +1295,7 @@ ${baseLabel}_nochk:
         private emitLambdaTrampoline() {
             let r3 = target.stackAlign ? "r3," : ""
             this.write(`
+            ${this.helperObject("trampoline")}
             .section code
             _pxt_lambda_trampoline:
                 push {${r3} r4, r5, r6, r7, lr}
@@ -1325,6 +1336,7 @@ ${baseLabel}_nochk:
                 pop {${r3} r4, r5, r6, r7, pc}`)
 
             this.write(`
+            ${this.helperObject("exn")}
             .section code
             ; r0 - try frame
             ; r1 - handler PC
@@ -1355,6 +1367,7 @@ ${baseLabel}_nochk:
                 `)
 
             this.write(`
+            ${this.helperObject("stringconv")}
             .section code
             _pxt_stringConv:
             `)

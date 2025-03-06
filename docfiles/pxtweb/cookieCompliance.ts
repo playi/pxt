@@ -1,5 +1,3 @@
-/// <reference path="../../pxtwinrt/winrtrefs.d.ts"/>
-
 declare let process: any;
 
 namespace pxt {
@@ -11,6 +9,7 @@ namespace pxt {
     let analyticsLoaded = false;
     let interactiveConsent = false;
     let isProduction = false;
+    let partnerName: string;
 
     class TelemetryQueue<A, B, C> {
         private q: [A, B, C][] = [];
@@ -39,20 +38,54 @@ namespace pxt {
     let eventLogger: TelemetryQueue<string, Map<string>, Map<number>>;
     let exceptionLogger: TelemetryQueue<any, string, Map<string>>;
 
+    type EventListener<T = any> = (ev: T) => void;
+    type EventSource<T> = {
+        subscribe(listener: (ev: T) => void): () => void;
+        emit(ev: T): void;
+        forEach(callback: (ev: T) => void): void;
+    };
+
+    function createEventSource<T = any>(filter?: ((ev: T) => boolean)): EventSource<T> {
+        filter = filter || (() => true);
+        const listeners: EventListener<T>[] = [];
+        const eventCache: T[] = [];
+
+        return {
+            subscribe(listener: EventListener<T>): () => void {
+                eventCache.forEach(ev => filter(ev) && listener(ev));
+                listeners.push(listener);
+                // Return an unsubscribe function
+                return () => {
+                    const index = listeners.indexOf(listener);
+                    if (index !== -1) {
+                        listeners.splice(index, 1);
+                    }
+                };
+            },
+            emit(ev: T): void {
+                eventCache.push(ev);
+                if (filter(ev)) listeners.forEach(listener => listener(ev));
+            },
+            forEach(callback: (ev: T) => void): void {
+                eventCache.forEach(ev => filter(ev) && callback(ev));
+            }
+        };
+    }
+
     // performance measuring, added here because this is amongst the first (typescript) code ever executed
     export namespace perf {
         let enabled: boolean;
 
         export let startTimeMs: number;
+        export let measurementThresholdMs = 10;
         export let stats: {
-            // name, start, duration
-            durations: [string, number, number][],
-            // name, event
-            milestones: [string, number][]
+            durations: EventSource<{ name: string, start: number, duration: number, params?: Map<string> }>,
+            milestones: EventSource<{ milestone: string, time: number, params?: Map<string> }>,
         } = {
-            durations: [],
-            milestones: []
+            durations: createEventSource((ev) => ev.duration >= measurementThresholdMs),
+            milestones: createEventSource(),
         }
+        export function isEnabled() { return enabled; }
         export let perfReportLogged = false
         export function splitMs(): number {
             return Math.round(performance.now() - startTimeMs)
@@ -76,8 +109,9 @@ namespace pxt {
             return prettyStr(splitMs())
         }
 
-        export function recordMilestone(msg: string, time: number = splitMs()) {
-            stats.milestones.push([msg, time])
+        export function recordMilestone(msg: string, params?: Map<string>) {
+            const time = splitMs()
+            stats.milestones.emit({ milestone: msg, time, params });
         }
         export function init() {
             enabled = performance && !!performance.mark && !!performance.measure;
@@ -90,7 +124,7 @@ namespace pxt {
         export function measureStart(name: string) {
             if (enabled) performance.mark(`${name} start`)
         }
-        export function measureEnd(name: string) {
+        export function measureEnd(name: string, params?: Map<string>) {
             if (enabled && performance.getEntriesByName(`${name} start`).length) {
                 performance.mark(`${name} end`)
                 performance.measure(`${name} elapsed`, `${name} start`, `${name} end`)
@@ -98,39 +132,50 @@ namespace pxt {
                 if (e && e.length === 1) {
                     let measure = e[0]
                     let durMs = measure.duration
-                    if (durMs > 10) {
-                        stats.durations.push([name, measure.startTime, durMs])
-                    }
+                    stats.durations.emit({ name, start: measure.startTime, duration: durMs, params });
                 }
                 performance.clearMarks(`${name} start`)
                 performance.clearMarks(`${name} end`)
                 performance.clearMeasures(`${name} elapsed`)
             }
         }
-        export function report(filter: string = null) {
+        export function report() {
+            perfReportLogged = true;
             if (enabled) {
-                let report = `performance report:\n`
-                for (let [msg, time] of stats.milestones) {
-                    if (!filter || msg.indexOf(filter) >= 0) {
-                        let pretty = prettyStr(time)
-                        report += `\t\t${msg} @ ${pretty}\n`
-                    }
-                }
+                const milestones: { [index: string]: number } = {};
+                const durations: { [index: string]: number } = {};
+
+                let report = `Performance Report:\n`
                 report += `\n`
-                for (let [msg, start, duration] of stats.durations) {
-                    let filterIncl = filter && msg.indexOf(filter) >= 0
-                    if ((duration > 50 && !filter) || filterIncl) {
-                        let pretty = prettyStr(duration)
-                        report += `\t\t${msg} took ~ ${pretty}`
-                        if (duration > 1000) {
-                            report += ` (${prettyStr(start)} - ${prettyStr(start + duration)})`
-                        }
-                        report += `\n`
+                report += `\tMilestones:\n`
+                stats.milestones.forEach(({ milestone, time, params }) => {
+                    let pretty = prettyStr(time)
+                    report += `\t\t${milestone} @ ${pretty}`
+                    for (let k of Object.keys(params || {})) {
+                        report += `\n\t\t\t${k}: ${params[k]}`
                     }
-                }
+                    report += `\n`
+                    milestones[milestone] = time;
+                });
+
+                report += `\n`
+                report += `\tMeasurements:\n`
+                stats.durations.forEach(({ name, start, duration, params }) => {
+                    let pretty = prettyStr(duration)
+                    report += `\t\t${name} took ~ ${pretty}`
+                    report += ` (${prettyStr(start)} - ${prettyStr(start + duration)})`
+                    for (let k of Object.keys(params || {})) {
+                        report += `\n\t\t\t${k}: ${params[k]}`
+                    }
+                    report += `\n`
+                    durations[name] = duration;
+                });
+
                 console.log(report)
+                enabled = false; // stop collecting milestones and measurements after report
+                return { milestones, durations };
             }
-            perfReportLogged = true
+            return undefined;
         }
         (function () {
             init()
@@ -154,19 +199,40 @@ namespace pxt {
 
     export function aiTrackEvent(id: string, data?: any, measures?: any) {
         if (!eventLogger) {
-            eventLogger = new TelemetryQueue((a, b, c) => (window as any).appInsights.trackEvent(a, b, c));
+            eventLogger = new TelemetryQueue((a, b, c) =>
+                (window as any).appInsights.trackEvent({
+                    name: a,
+                    properties: b,
+                    measurements: c,
+                })
+            );
         }
         eventLogger.track(id, data, measures);
     }
 
     export function aiTrackException(err: any, kind?: string, props?: any) {
         if (!exceptionLogger) {
-            exceptionLogger = new TelemetryQueue((a, b, c) => (window as any).appInsights.trackException(a, b, c));
+            exceptionLogger = new TelemetryQueue((a, b, c) =>
+                (window as any).appInsights.trackException({
+                    exception: a,
+                    properties: b ? { ...c, ["kind"]: b } : c,
+                })
+            );
         }
         exceptionLogger.track(err, kind, props);
     }
 
     export function initializeAppInsightsInternal(includeCookie = false) {
+        try {
+            const params = new URLSearchParams(window.location.search);
+            if (params.has("partner")) {
+                partnerName = params.get("partner");
+            }
+        }
+        catch (e) {
+            console.warn("Could not parse search string", e);
+        }
+
         // loadAppInsights is defined in docfiles/tracking.html
         const loadAI = (window as any).loadAppInsights;
         if (loadAI) {
@@ -179,20 +245,39 @@ namespace pxt {
     function telemetryInitializer(envelope: any) {
         const pxtConfig = (window as any).pxtConfig;
 
-        if (typeof pxtConfig === "undefined" || !pxtConfig) return;
+        // App Insights automatically sends a page view event on setup, but we send our own later with additional properties.
+        // This stops the automatic event from firing, so we don't end up with duplicate page view events.
+        if (envelope.baseType == "PageviewData" && !envelope.baseData.properties) {
+            return false;
+        }
 
-        const telemetryItem = envelope.data.baseData;
+        if (envelope.baseType == "PageviewPerformanceData") {
+            const pageName = envelope.baseData.name;
+            envelope.baseData.name = window.location.origin;
+            if (!envelope.baseData.properties) {
+                envelope.baseData.properties = {};
+            }
+            envelope.baseData.properties.pageName = pageName;
+            envelope.baseData.properties.pathName = window.location.pathname;
+            // no url scrubbing for webapp (no share url, etc)
+        }
+
+        if (typeof pxtConfig === "undefined" || !pxtConfig) return true;
+
+        const telemetryItem = envelope.baseData;
         telemetryItem.properties = telemetryItem.properties || {};
         telemetryItem.properties["target"] = pxtConfig.targetId;
         telemetryItem.properties["stage"] = (pxtConfig.relprefix || "/--").replace(/[^a-z]/ig, '')
 
-        if (typeof Windows !== "undefined")
-            telemetryItem.properties["WindowsApp"] = 1;
+        if (partnerName) {
+            telemetryItem.properties["partner"] = partnerName;
+        }
+
         const userAgent = navigator.userAgent.toLowerCase();
-        const userAgentRegexResult = /\belectron\/(\d+\.\d+\.\d+.*?)(?: |$)/i.exec(userAgent); // Example navigator.userAgent: "Mozilla/5.0 Chrome/61.0.3163.100 Electron/2.0.0 Safari/537.36"
-        if (userAgentRegexResult) {
+        const electronRegexResult = /\belectron\/(\d+\.\d+\.\d+.*?)(?: |$)/i.exec(userAgent); // Example navigator.userAgent: "Mozilla/5.0 Chrome/61.0.3163.100 Electron/2.0.0 Safari/537.36"
+        if (electronRegexResult) {
             telemetryItem.properties["Electron"] = 1;
-            telemetryItem.properties["ElectronVersion"] = userAgentRegexResult[1];
+            telemetryItem.properties["ElectronVersion"] = electronRegexResult[1];
         }
 
         const pxtElectron = (window as any).pxtElectron;
@@ -207,11 +292,21 @@ namespace pxt {
             telemetryItem.properties["PxtElectronIsProd"] = pxtElectron.versions.isProd;
         }
 
+        // Kiosk UWP info is appended to the user agent by the makecode-dotnet-apps/arcade-kiosk UWP app
+        const kioskUwpRegexResult = /\((MakeCode Arcade Kiosk UWP)\/([\S]+)\/([\S]+)\)/i.exec(userAgent); // Example navigator.userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36 Edg/117.0.2045.60 (MakeCode Arcade Kiosk UWP/0.1.41.0/Windows.Xbox)"
+        if (kioskUwpRegexResult) {
+            telemetryItem.properties["KioskUwp"] = 1;
+            telemetryItem.properties["KioskUwpVersion"] = kioskUwpRegexResult[2];
+            telemetryItem.properties["KioskUwpPlatform"] = kioskUwpRegexResult[3];
+        }
+
         // "cookie" does not actually correspond to whether or not we drop the cookie because we recently
         // switched to immediately dropping it rather than waiting. Instead, we maintain the legacy behavior
         // of only setting it to true for production sites where interactive consent has been obtained
         // so that we don't break legacy queries
         telemetryItem.properties["cookie"] = interactiveConsent && isProduction;
+
+        return true;
     }
 
     export function setInteractiveConsent(enabled: boolean) {
@@ -219,14 +314,13 @@ namespace pxt {
     }
 
     /**
-     * Checks for winrt, pxt-electron and Code Connection
+     * Checks for pxt-electron and Code Connection
      */
     function isNativeApp(): boolean {
         const hasWindow = typeof window !== "undefined";
-        const isUwp = typeof Windows !== "undefined";
         const isPxtElectron = hasWindow && !!(window as any).pxtElectron;
         const isCC = hasWindow && !!(window as any).ipcRenderer || /ipc=1/.test(location.hash) || /ipc=1/.test(location.search); // In WKWebview, ipcRenderer is injected later, so use the URL query
-        return isUwp || isPxtElectron || isCC;
+        return isPxtElectron || isCC;
     }
     /**
      * Checks whether we should hide the cookie banner

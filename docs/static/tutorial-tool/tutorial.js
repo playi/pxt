@@ -16,6 +16,10 @@ var targets = [
             {
                 name: "",
                 url: "https://makecode.microbit.org/?controller=1"
+            },            
+            {
+                name: "beta",
+                url: "https://makecode.microbit.org/beta?controller=1"
             }
         ]
     }, {
@@ -24,16 +28,16 @@ var targets = [
         shareUrl: "https://minecraft.makecode.com/",
         endpoints: [
             {
+                name: "",
+                url: "https://minecraft.makecode.com?ipc=1&inGame=1&controller=1"
+            },
+            {
                 name: "nether",
                 url: "https://minecraft.makecode.com/beta?ipc=1&inGame=1&nether=1&controller=1"
             },
             {
                 name: "beta",
                 url: "https://minecraft.makecode.com/beta?ipc=1&inGame=1&controller=1"
-            },
-            {
-                name: "released",
-                url: "https://minecraft.makecode.com?ipc=1&inGame=1&controller=1"
             }
         ]
     }, {
@@ -55,6 +59,10 @@ var targets = [
         id: "adafruit",
         shareUrl: "https://makecode.adafruit.com/",
         endpoints: [
+            {
+                name: "",
+                url: "https://makecode.adafruit.com/?controller=1"
+            },
             {
                 name: "beta",
                 url: "https://makecode.adafruit.com/beta?controller=1"
@@ -80,22 +88,22 @@ var targets = [
                 url: "https://maker.makecode.com/?controller=1"
             }
         ]
-    }
-    /* not supported
-    , {
+    }, {
         name: "LEGO EV3",
         id: "ev3",
         endpoints: [
+            /*
+            {
+                name: "",
+                url: "https://makecode.mindstorms.com?controller=1"
+            },
+            */
             {
                 name: "beta",
                 url: "https://makecode.mindstorms.com/beta?controller=1"
-            },
-            {
-                name: "released",
-                url: "https://makecode.mindstorms.com?controller=1"
             }
         ]
-    } */
+    }
 ];
 function shareScript(md, done) {
     function request(url, data) {

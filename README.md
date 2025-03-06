@@ -70,6 +70,11 @@ Then install the `pxt` command line tool (only need to do it once):
 npm install -g pxt
 ```
 
+Then install `gulp` (only need to do it once):
+```
+npm install -g gulp
+```
+
 After this you can run `pxt` from anywhere within the build tree.
 
 To start the local web server, run `pxt serve` from within the root
@@ -88,6 +93,13 @@ If you are working on the CLI exclusively,
 gulp watchCli
 ```
 
+If you don't need to build the suite of associated webapps (skillmap, multiplayer, etc.), you can skip them and speed up your build a bit:
+
+```
+gulp --no-webapps
+```
+
+
 ### Icons
 
 There are a number of custom icons (to use in addition
@@ -101,6 +113,17 @@ If you're having trouble with display of the icon you created, try:
 npm install -g svgo
 svgo svgicons/myicon.svg
 ```
+
+### Shared Styling
+
+When adding a CSS color or other style element that will be shared across editor targets (e.g. micro:bit, Arcade) and sub-applications (a.k.a. "CRAs", like skillmap, teachertool, etc.). Declare a CSS variable for it in `theme/themepacks.less`:
+
+1. Add the new variable to the `:root` pseudo-class. Choose a reasonable default value according to the guidlines in the file.
+2. Add the new variable to all theme classes defined in that file. At the time of this writing, only `theme-highcontrast` is defined. Choose a value that works well for the given theme.
+3. Add the new variable to the theme overrides for each target. This will be done in the target repo's `theme/themepacks.less` file (e.g. pxt-microbit, pxt-arcade).
+
+Variables declared this way will be available to CRAs at runtime, and they will be initialized with the override values defined by the target in which they're running.
+
 
 ### Documentation Highlighting
 

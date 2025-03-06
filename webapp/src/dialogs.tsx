@@ -6,14 +6,22 @@ import * as core from "./core";
 import * as coretsx from "./coretsx";
 import * as pkg from "./package";
 import * as cloudsync from "./cloudsync";
+import * as workspace from "./workspace";
+import * as pxteditor from "../../pxteditor";
 
 import Cloud = pxt.Cloud;
 import Util = pxt.Util;
+import { TimeMachine } from "./timeMachine";
 import { fireClickOnEnter } from "./util";
+import { pairAsync } from "./cmds";
+import { invalidate } from "./data";
+
+import IProjectView = pxt.editor.IProjectView;
+import ImportFileOptions = pxt.editor.ImportFileOptions;
 
 let dontShowDownloadFlag = false;
 
-export function showAboutDialogAsync(projectView: pxt.editor.IProjectView) {
+export function showAboutDialogAsync(projectView: IProjectView) {
     const compileService = pxt.appTarget.compileService;
     const githubUrl = pxt.appTarget.appTheme.githubUrl;
     const targetTheme = pxt.appTarget.appTheme;
@@ -98,7 +106,7 @@ function renderCompileLink(variantName: string, cs: pxt.TargetCompileService) {
 
 function renderVersionLink(name: string, version: string, url: string) {
     return <p>{lf("{0} version:", name)} &nbsp;
-            <a href={encodeURI(url)}
+        <a href={encodeURI(url)}
             title={`${lf("{0} version: {1}", name, version)}`}
             aria-label={`${lf("{0} version{1}", name, version)}`}
             target="_blank" rel="noopener noreferrer">{version}</a>
@@ -305,7 +313,7 @@ interface ProgressBarProps {
     cornerRadius?: number;
 }
 
-class ProgressBar extends React.Component<ProgressBarProps, {}> {
+export class ProgressBar extends React.Component<ProgressBarProps, {}> {
     render() {
         let { percentage, label, cornerRadius } = this.props;
 
@@ -480,13 +488,13 @@ export function showCreateGithubRepoDialogAsync(name?: string) {
                 </p>
                 <div className="ui field">
                     <sui.Input type="url" autoFocus value={repoName} onChange={onNameChanged}
-                    label={lf("Repository name")} id="githubRepoNameInput"
-                    placeholder={`pxt-my-gadget...`} class="fluid" error={nameErr} />
+                        label={lf("Repository name")} id="githubRepoNameInput"
+                        placeholder={`pxt-my-gadget...`} class="fluid" error={nameErr} />
                 </div>
                 <div className="ui field">
                     <sui.Input type="text" value={repoDescription} onChange={onDescriptionChanged}
-                    label={lf("Repository description")} id="githubRepoDescriptionInput"
-                    placeholder={lf("MakeCode extension for my gadget")} class="fluid" />
+                        label={lf("Repository description")} id="githubRepoDescriptionInput"
+                        placeholder={lf("MakeCode extension for my gadget")} class="fluid" />
                 </div>
                 <div className="ui field">
                     <select className={`ui dropdown`} onChange={onPublicChanged} aria-label={lf("Repository visibility setting")}>
@@ -507,7 +515,7 @@ export function showCreateGithubRepoDialogAsync(name?: string) {
                     .finally(() => core.hideLoading("creategithub"))
                     .then(r => {
                         pxt.tickEvent("github.create.ok");
-                        return pxt.github.normalizeRepoId("https://github.com/" + r.fullName);
+                        return pxt.github.normalizeRepoId("https://github.com/" + r.fullName, "master");
                     }, err => {
                         if (!showGithubTokenError(err)) {
                             if (err.statusCode == 422)
@@ -545,7 +553,7 @@ export function showImportGithubDialogAsync() {
                 description: r.description,
                 updatedAt: r.updatedAt,
                 onClick: () => {
-                    res = pxt.github.normalizeRepoId("https://github.com/" + r.fullName)
+                    res = pxt.github.normalizeRepoId("https://github.com/" + r.fullName, r.defaultBranch)
                     core.hideDialog()
                 },
             }));
@@ -573,7 +581,7 @@ export function showImportGithubDialogAsync() {
                                 <i className="large github middle aligned icon"></i>
                                 <div className="content">
                                     <a onClick={r.onClick} role="button" className="header"
-                                        tabIndex={0}  onKeyDown={fireClickOnEnter}
+                                        tabIndex={0} onKeyDown={fireClickOnEnter}
                                     >{r.name}</a>
                                     <div className="description">
                                         {pxt.Util.timeSince(r.updatedAt)}
@@ -600,7 +608,7 @@ export function showImportGithubDialogAsync() {
         }).then(() => res)
 }
 
-export function showImportFileDialogAsync(options?: pxt.editor.ImportFileOptions) {
+export function showImportFileDialogAsync(options?: ImportFileOptions) {
     let input: HTMLInputElement;
     let exts = [pxt.appTarget.compile.saveAsPNG ? ".png" : ".mkcd"];
     if (pxt.appTarget.compile.hasHex) {
@@ -708,23 +716,6 @@ export function showReportAbuseAsync(pubId?: string) {
     })
 }
 
-export function showWinAppDeprecateAsync() {
-    pxt.tickEvent("winApp.dialog", undefined)
-    return core.confirmAsync({
-        header: lf("You can't get there from here!"),
-        hideAgree: true,
-        hasCloseIcon: true,
-        helpUrl: "/windows-app",
-        jsx: <div>
-            <img className="ui medium centered image" src={pxt.appTarget.appTheme.winAppDeprImage} alt={lf("An image of a shrugging board")}/>
-            <div>
-                {lf("This app is being deprecated. Text editing is only available on the MakeCode website ")}
-                {`(https://${pxt.appTarget.name}).`}
-            </div>
-        </div>
-    })
-}
-
 export function showResetDialogAsync() {
     return core.confirmAsync({
         header: lf("Reset"),
@@ -753,15 +744,17 @@ export function promptTranslateBlock(blockid: string, blockTranslationIds: strin
     });
 }
 
-export function renderBrowserDownloadInstructions(saveonly?: boolean) {
+export function renderBrowserDownloadInstructions(saveonly?: boolean, redeploy?: () => Promise<void>) {
     const boardName = pxt.appTarget.appTheme.boardName || lf("device");
     const boardDriveName = pxt.appTarget.appTheme.driveDisplayName || pxt.appTarget.compile.driveName || "???";
     const fileExtension = pxt.appTarget.compile?.useUF2 ? ".uf2" : ".hex";
     const webUSBSupported = pxt.usb.isEnabled && pxt.appTarget?.compile?.webUSB;
 
-    const onPairClicked = () => {
+    const onPairClicked = async () => {
         core.hideDialog();
-        pxt.commands.webUsbPairDialogAsync(pxt.usb.pairAsync, core.confirmAsync);
+        const successfulPairing = await pairAsync(true);
+        if (redeploy && successfulPairing)
+            await redeploy();
     }
 
     const onCheckboxClicked = (value: boolean) => {
@@ -788,17 +781,16 @@ export function renderBrowserDownloadInstructions(saveonly?: boolean) {
                                         </div>
                                         {webUSBSupported &&
                                             <div className="download-callout">
-                                                <label className="ui purple ribbon large label">{lf("New!")}</label>
-                                                <div className="ui two column grid">
+                                                <label className="ui purple ribbon label">{lf("Want faster downloads?")}</label>
+                                                <div className="ui two column grid content">
                                                     <div className="icon-align three wide column">
                                                         <div />
-                                                        <i className="icon big usb"/>
+                                                        <i className="icon big usb" />
                                                         <div />
                                                     </div>
                                                     <div className="thirteen wide column">
-                                                        {lf("Download your code faster by pairing with web usb!")}
-                                                        <br/>
-                                                        <strong><a onClick={onPairClicked}>{lf("Pair now")}</a></strong>
+                                                        {lf("Download your code faster by pairing with WebUSB!")}
+                                                        <sui.Button className="ui button purple" onClick={onPairClicked} text={lf("Pair Now")} />
                                                     </div>
                                                 </div>
                                             </div>
@@ -840,27 +832,27 @@ export function renderIncompatibleHardwareDialog() {
     const columns = imageURL ? "two" : "one";
 
     return <div className={`ui ${columns} column grid padded download-dialog`}>
-    <div className="column">
-        <div className="ui">
-            <div className="content">
-                <div className="description">
-                {bodyText}
-                <br />
-                {helpURL && <a target="_blank" rel="noopener noreferrer" href={helpURL}>{helpText}</a>}
-                </div>
-            </div>
-        </div>
-    </div>
-    {imageURL &&
         <div className="column">
             <div className="ui">
-                <div className="image download-dialog-image">
-                    <img alt={lf("Image of {0}", boardName)} className="ui medium rounded image" src={imageURL} />
+                <div className="content">
+                    <div className="description">
+                        {bodyText}
+                        <br />
+                        {helpURL && <a target="_blank" rel="noopener noreferrer" href={helpURL}>{helpText}</a>}
+                    </div>
                 </div>
             </div>
         </div>
-    }
-</div>
+        {imageURL &&
+            <div className="column">
+                <div className="ui">
+                    <div className="image download-dialog-image">
+                        <img alt={lf("Image of {0}", boardName)} className="ui medium rounded image" src={imageURL} />
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
 }
 
 export function clearDontShowDownloadDialogFlag() {
@@ -869,4 +861,92 @@ export function clearDontShowDownloadDialogFlag() {
 
 export function isDontShowDownloadDialogFlagSet() {
     return dontShowDownloadFlag;
+}
+
+export async function showTurnBackTimeDialogAsync(header: pxt.workspace.Header, reloadHeader: () => void) {
+    const text = await workspace.getTextAsync(header.id, true);
+    let history: pxteditor.history.HistoryFile;
+
+    if (text?.[pxt.HISTORY_FILE]) {
+        history = pxteditor.history.parseHistoryFile(text[pxt.HISTORY_FILE]);
+    }
+    else {
+        history = {
+            entries: [],
+            snapshots: [],
+            shares: [],
+            lastSaveTime: Date.now()
+        };
+    }
+
+    const loadProject = async (text: pxt.workspace.ScriptText, editorVersion: string) => {
+        core.hideDialog();
+
+        header.targetVersion = editorVersion;
+
+        await workspace.saveSnapshotAsync(header.id);
+        await workspace.saveAsync(header, text);
+        reloadHeader();
+    }
+
+    const copyProject = async (text: pxt.workspace.ScriptText, editorVersion: string, timestamp?: number) => {
+        core.hideDialog();
+
+        let newHistory = history
+
+        if (timestamp != undefined) {
+            newHistory = {
+                entries:  history.entries.slice(0, history.entries.findIndex(e => e.timestamp === timestamp)),
+                snapshots: history.snapshots.filter(s => s.timestamp <= timestamp),
+                shares: history.shares.filter(s => s.timestamp <= timestamp),
+                lastSaveTime: timestamp
+            }
+        }
+
+        text[pxt.HISTORY_FILE] = JSON.stringify(newHistory);
+
+        const date = timestamp ? new Date(timestamp) : new Date();
+
+        const dateString = date.toLocaleDateString(
+            pxt.U.userLanguage(),
+            {
+                year: "numeric",
+                month: "numeric",
+                day: "numeric"
+            }
+        );
+
+        const timeString = date.toLocaleTimeString(
+            pxt.U.userLanguage(),
+            {
+                timeStyle: "short"
+            } as any
+        );
+
+        const newHeader: pxt.workspace.Header = {
+            ...header,
+            targetVersion: editorVersion
+        }
+
+        await workspace.duplicateAsync(newHeader, `${newHeader.name} ${dateString} ${timeString}`, text);
+
+        invalidate("headers:");
+
+        core.infoNotification(lf("Project copy saved to My Projects"))
+    }
+
+    await core.dialogAsync({
+        header: lf("Turn back time"),
+        className: "time-machine-dialog",
+        size: "fullscreen",
+        hasCloseIcon: true,
+        jsx: (
+            <TimeMachine
+                history={history}
+                text={text}
+                onProjectLoad={loadProject}
+                onProjectCopy={copyProject}
+            />
+        )
+    })
 }

@@ -4,9 +4,11 @@ import * as sui from "./sui";
 import * as data from "./data";
 import * as simulator from "./simulator";
 
-type ISettingsProps = pxt.editor.ISettingsProps;
+import ISettingsProps = pxt.editor.ISettingsProps;
+import SimState = pxt.editor.SimState;
 
 export interface DebuggerToolbarProps extends ISettingsProps {
+    showAdvancedControls: boolean;
 }
 
 export interface DebuggerToolbarState {
@@ -66,7 +68,7 @@ export class DebuggerToolbar extends data.Component<DebuggerToolbarProps, Debugg
     }
 
     getMenuDom() {
-        const node = ReactDOM.findDOMNode(this);
+        const node = ReactDOM.findDOMNode(this) as Element;
         return node && node.firstElementChild;
     }
 
@@ -74,13 +76,13 @@ export class DebuggerToolbar extends data.Component<DebuggerToolbarProps, Debugg
         const parentState = this.props.parent.state;
 
         const simState = parentState.simState;
-        const isRunning = simState == pxt.editor.SimState.Running;
-        const isStarting = simState == pxt.editor.SimState.Starting;
+        const isRunning = simState == SimState.Running;
+        const isStarting = simState == SimState.Starting;
         const isDebugging = parentState.debugging;
         if (!isDebugging) return <div />;
 
         const isDebuggerRunning = simulator.driver && simulator.driver.state == pxsim.SimulatorState.Running;
-        const advancedDebugging = !this.props.parent.isBlocksActive();
+        const advancedDebugging = this.props.showAdvancedControls;
 
         const isValidDebugFile = advancedDebugging || this.props.parent.isBlocksActive() || pxt.appTarget.appTheme.debugExtensionCode;
         if (!isValidDebugFile) return <div />;

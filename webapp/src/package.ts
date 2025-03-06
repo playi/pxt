@@ -1,13 +1,12 @@
 import * as workspace from "./workspace";
 import * as data from "./data";
 import * as core from "./core";
-import * as db from "./db";
 import * as compiler from "./compiler";
-import * as auth from "./auth";
 
 import Util = pxt.Util;
+import { HOSTCACHE_TABLE, getObjectStoreAsync } from "./idbworkspace";
 
-let hostCache = new db.Table("hostcache")
+import IFile = pxt.editor.IFile;
 
 let extWeight: pxt.Map<number> = {
     "ts": 10,
@@ -24,7 +23,7 @@ export function setupAppTarget(trgbundle: pxt.TargetBundle) {
 const GENERATED_EXTENSION = ".g."
 
 
-export class File implements pxt.editor.IFile {
+export class File implements IFile {
     inSyncWithEditor = true;
     diagnostics: pxtc.KsDiagnostic[];
     numDiagnosticsOverride: number;
@@ -316,35 +315,33 @@ export class EditorPackage {
         return null;
     }
 
-    updateDepAsync(pkgid: string): Promise<void> {
+    async updateDepAsync(pkgid: string): Promise<void> {
         let p = this.ksPkg.resolveDep(pkgid);
         if (!p || p.verProtocol() != "github") return Promise.resolve();
         let parsed = pxt.github.parseRepoId(p.verArgument())
-        if (!parsed) return Promise.resolve();
-        return pxt.targetConfigAsync()
-            .then(config => pxt.github.latestVersionAsync(parsed.slug, config.packages))
-            .then(tag => {
-                // since all repoes in a mono-repo are tied to the same version number,
-                // we'll update them all to this tag at once.
-                const ghids = Util.values(this.ksPkg.dependencies())
-                    .map(ver => pxt.github.parseRepoId(ver))
-                    .filter(ghid => ghid?.slug === parsed.slug);
-                return Promise.all(ghids.map(ghid => {
-                    ghid.tag = tag;
-                    return pxt.github.pkgConfigAsync(ghid.fullName, ghid.tag)
-                        .catch(core.handleNetworkError)
-                        .then((cfg: pxt.PackageConfig) => ({ ghid, cfg }));
-                }))
-            })
-            .then(updates => this.updateConfigAsync(config =>
-                updates.forEach(({ ghid, cfg }) => config.dependencies[cfg.name] = pxt.github.stringifyRepo(ghid))
-            ))
-            .then(() => this.saveFilesAsync());
+        if (!parsed) return
+
+        const packagesConfig = await pxt.packagesConfigAsync()
+        const tag = await pxt.github.latestVersionAsync(parsed.slug, packagesConfig, true /* use proxy */)
+        // since all repoes in a mono-repo are tied to the same version number,
+        // we'll update them all to this tag at once.
+        const ghids = Util.values(this.ksPkg.dependencies())
+            .map(ver => pxt.github.parseRepoId(ver))
+            .filter(ghid => ghid?.slug === parsed.slug);
+        const updates = await Promise.all(ghids.map(ghid => {
+            ghid.tag = tag;
+            return pxt.github.pkgConfigAsync(ghid.fullName, ghid.tag, packagesConfig)
+                .catch(core.handleNetworkError)
+                .then((cfg: pxt.PackageConfig) => ({ ghid, cfg }));
+        }))
+        await this.updateConfigAsync(config =>
+            updates.forEach(({ ghid, cfg }) => config.dependencies[cfg.name] = pxt.github.stringifyRepo(ghid))
+        )
+        await this.saveFilesAsync();
     }
 
     removeDepAsync(pkgid: string) {
         return this.updateConfigAsync(cfg => delete cfg.dependencies[pkgid])
-            .then(() => this.saveFilesAsync());
     }
 
     /**
@@ -370,6 +367,7 @@ export class EditorPackage {
     }
 
     setFile(n: string, v: string, virtual?: boolean): File {
+        Util.assert(!!n, "missing file name");
         let f = new File(this, n, v)
         if (virtual) f.virtual = true;
         this.files[n] = f
@@ -388,6 +386,7 @@ export class EditorPackage {
     }
 
     setContentAsync(n: string, v: string): Promise<void> {
+        Util.assert(!!n, "missing file name");
         let f = this.files[n];
         let p = Promise.resolve();
         if (!f) {
@@ -454,7 +453,7 @@ export class EditorPackage {
     sortedFiles(): File[] {
         let lst = Util.values(this.files)
         if (!pxt.options.debug)
-            lst = lst.filter(f => f.name != pxt.github.GIT_JSON && f.name != pxt.SIMSTATE_JSON && f.name != pxt.SERIAL_EDITOR_FILE)
+            lst = lst.filter(f => f.name != pxt.github.GIT_JSON && f.name != pxt.SIMSTATE_JSON && f.name != pxt.SERIAL_EDITOR_FILE && f.name != pxt.PALETTES_FILE && f.name !== pxt.HISTORY_FILE)
         lst.sort((a, b) => a.weight() - b.weight() || Util.strcmp(a.name, b.name))
         return lst
     }
@@ -495,19 +494,19 @@ export class EditorPackage {
         return this.filterFiles(f => f.getName() == name)[0]
     }
 
-    buildAssetsAsync() {
-        if (!this.tilemapProject?.needsRebuild) return Promise.resolve();
+    async buildAssetsAsync() {
+        if (!this.tilemapProject?.needsRebuild) return;
         this.tilemapProject.needsRebuild = false;
 
-        return this.buildTilemapsAsync()
-            .then(() => this.buildImagesAsync())
+        await this.buildTilemapsAsync();
+        await this.buildImagesAsync();
     }
 
     buildTilemapsAsync() {
         const existingTS = this.lookupFile("this/" + pxt.TILEMAP_CODE);
         const existingJRES = this.lookupFile("this/" + pxt.TILEMAP_JRES);
 
-        const jres = this.tilemapProject.getProjectTilesetJRes();
+        const jres = this.tilemapProject.getProjectTilesetJRes(this.files);
 
         if (!existingTS && Object.keys(jres).length === 1) return Promise.resolve();
 
@@ -663,7 +662,18 @@ class Host
             // only write config writes
             let epkg = getEditorPkg(module)
             let file = epkg.files[filename];
-            file.setContentAsync(contents, force);
+
+            if (!file) {
+                if (module.config.files.indexOf(filename) !== -1) {
+                    epkg.files[filename] = new File(epkg, filename, contents);
+                }
+                else {
+                    throw Util.oops("trying to write file not listed in pxt.json " + module + " / " + filename)
+                }
+            }
+            else {
+                file.setContentAsync(contents, force);
+            }
             return;
         }
         throw Util.oops("trying to write " + module + " / " + filename)
@@ -673,19 +683,27 @@ class Host
         return pxt.hexloader.getHexInfoAsync(this, extInfo).catch(core.handleNetworkError);
     }
 
-    cacheStoreAsync(id: string, val: string): Promise<void> {
-        return hostCache.forceSetAsync({
-            id: id,
-            val: val
-        }).then(() => { }, e => {
+    async cacheStoreAsync(id: string, val: string): Promise<void> {
+        const hostCache = await getHostCacheAsync();
+
+        try {
+            await hostCache.setAsync({ id, val });
+        }
+        catch (e) {
             pxt.tickEvent('cache.store.failed', { error: e.name });
             pxt.log(`cache store failed for ${id}: ${e.name}`)
-        })
+        }
     }
 
-    cacheGetAsync(id: string): Promise<string> {
-        return hostCache.getAsync(id)
-            .then(v => v.val, e => null)
+    async cacheGetAsync(id: string): Promise<string> {
+        const hostCache = await getHostCacheAsync();
+
+        try {
+            return (await hostCache.getAsync(id)).val;
+        }
+        catch (e) {
+            return null;
+        }
     }
 
     downloadPackageAsync(pkg: pxt.Package): Promise<void> {
@@ -771,8 +789,7 @@ export function mainEditorPkg() {
 
 export function genFileName(extension: string): string {
     /* eslint-disable no-control-regex */
-    let sanitizedName = mainEditorPkg().header.name.replace(/[()\\\/.,?*^:<>!;'#$%^&|"@+=«»°{}\[\]¾½¼³²¦¬¤¢£~­¯¸`±\x00-\x1F]/g, '');
-    sanitizedName = sanitizedName.trim().replace(/\s+/g, '-');
+    let sanitizedName = pxt.Util.sanitizeFileName(mainEditorPkg().header.name);
     /* eslint-enable no-control-regex */
     if (pxt.appTarget.appTheme && pxt.appTarget.appTheme.fileNameExclusiveFilter) {
         const rx = new RegExp(pxt.appTarget.appTheme.fileNameExclusiveFilter, 'g');
@@ -979,4 +996,57 @@ export function getExtensionOfFileName(filename: string) {
     let m = /\.([^\.]+)$/.exec(filename)
     if (m) return m[1]
     return ""
+}
+
+async function getHostCacheAsync(): Promise<pxt.BrowserUtils.IDBObjectStoreWrapper<{id: string, val: string}>> {
+    return getObjectStoreAsync(HOSTCACHE_TABLE)
+}
+
+export function getProjectToolboxFilters() {
+    const filters: pxt.editor.ProjectFilters = {};
+
+    const deps = mainPkg.sortedDeps();
+    // sort the dependencies by level and then id. lower level overrides
+    // higher level
+    deps.sort((a, b) => {
+        if (a.level === b.level) {
+            return pxt.U.strcmp(a.id, b.id);
+        }
+        return b.level - a.level;
+    });
+
+    const applyProjectFilter = (projectFilter: pxt.PackageConfig["toolboxFilter"], key: keyof pxt.PackageConfig["toolboxFilter"]) => {
+        if (!projectFilter[key]) {
+            return
+        }
+
+        if (!filters[key]) {
+            filters[key] = {};
+        }
+
+        for (const entry of Object.keys(projectFilter[key])) {
+            const value = String(projectFilter[key][entry]).toLowerCase();
+            if (value === "hidden") {
+                filters[key][entry] = pxt.editor.FilterState.Hidden;
+            }
+            else if (value === "visible") {
+                filters[key][entry] = pxt.editor.FilterState.Visible;
+            }
+            else if (value === "disabled") {
+                filters[key][entry] = pxt.editor.FilterState.Disabled;
+            }
+        }
+    }
+
+    for (const dep of deps) {
+        const projectFilter = dep.config?.toolboxFilter;
+        if (!projectFilter) {
+            continue;
+        }
+
+        applyProjectFilter(projectFilter, "blocks");
+        applyProjectFilter(projectFilter, "namespaces");
+    }
+
+    return filters;
 }

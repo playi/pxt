@@ -8,7 +8,7 @@ import { tickEvent } from '../lib/browserUtils';
 import { editorUrl } from "./makecodeFrame";
 import { SkillMapState } from "../store/reducer";
 
-import { Button } from "react-common/controls/Button";
+import { Button } from "react-common/components/controls/Button";
 
 interface OwnProps {
     mapId: string;
@@ -106,7 +106,7 @@ export class ActivityActionsImpl extends React.Component<ActivityActionsProps> {
         // Apply "grid" class when there are four actions (for a completed activity)
         return <div className={`actions ${completedHeaderId ? "grid" : ""}`}>
             <Button
-                className="primary inverted"
+                className="teal"
                 tabIndex={-1}
                 ariaPosInSet={1}
                 ariaSetSize={numberOfActions}
@@ -150,7 +150,7 @@ export class ActivityActionsImpl extends React.Component<ActivityActionsProps> {
                     tabIndex={-1}
                     ariaPosInSet={numberOfActions}
                     ariaSetSize={numberOfActions}
-                    className="teal"
+                    className="primary inverted"
                     onClick={dispatchShowLoginModal}
                     label={lf("Sign in to Save")}
                     title={lf("Sign in to Save")}

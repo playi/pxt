@@ -1,258 +1,357 @@
 /// <reference path="../../built/pxtlib.d.ts" />
 
-namespace pxtblockly {
-    export interface ImageJSON {
-        src: string;
-        alt: string;
-        width: number;
-        height: number;
-    }
+import * as Blockly from "blockly";
+import { FieldImageDropdownOptions } from "./field_imagedropdown";
+import { FieldImages } from "./field_images";
+import { FieldCustom, getAllReferencedTiles, bitmapToImageURI, needsTilemapUpgrade, getAssetSaveState, loadAssetFromSaveState } from "./field_utils";
 
-    export type TilesetDropdownOption = [ImageJSON, string, pxt.Tile];
+export interface ImageJSON {
+    src: string;
+    alt: string;
+    width: number;
+    height: number;
+}
 
-    const PREVIEW_SIDE_LENGTH = 32;
+export type TilesetDropdownOption = [ImageJSON, string, pxt.Tile];
 
-    export class FieldTileset extends FieldImages implements Blockly.FieldCustom {
-        // private member of FieldDropdown
-        protected selectedOption_: TilesetDropdownOption;
+const PREVIEW_SIDE_LENGTH = 32;
 
-        protected static referencedTiles: TilesetDropdownOption[];
-        protected static cachedRevision: number;
-        protected static cachedWorkspaceId: string;
+export class FieldTileset extends FieldImages implements FieldCustom {
+    // private member of FieldDropdown
+    protected selectedOption_: TilesetDropdownOption;
 
-        protected static getReferencedTiles(workspace: Blockly.Workspace) {
-            const project = pxt.react.getTilemapProject();
+    protected static referencedTiles: TilesetDropdownOption[];
+    protected static cachedRevision: number;
+    protected static cachedWorkspaceId: string;
 
-            if (project.revision() !== FieldTileset.cachedRevision || workspace.id != FieldTileset.cachedWorkspaceId) {
-                FieldTileset.cachedRevision = project.revision();
-                FieldTileset.cachedWorkspaceId = workspace.id;
-                const references = getAllReferencedTiles(workspace);
+    protected static getReferencedTiles(workspace: Blockly.Workspace) {
+        const project = pxt.react.getTilemapProject();
 
-                const supportedTileWidths = [16, 8, 32];
+        if (project.revision() !== FieldTileset.cachedRevision || workspace.id != FieldTileset.cachedWorkspaceId) {
+            FieldTileset.cachedRevision = project.revision();
+            FieldTileset.cachedWorkspaceId = workspace.id;
+            const references = getAllReferencedTiles(workspace);
 
-                for (const width of supportedTileWidths) {
-                    const projectTiles = project.getProjectTiles(width, width === 16);
-                    if (!projectTiles) continue;
+            const supportedTileWidths = [16, 4, 8, 32];
 
-                    for (const tile of projectTiles.tiles) {
-                        if (!references.find(t => t.id === tile.id)) {
-                            references.push(tile);
-                        }
+            for (const width of supportedTileWidths) {
+                const projectTiles = project.getProjectTiles(width, width === 16);
+                if (!projectTiles) continue;
+
+                for (const tile of projectTiles.tiles) {
+                    if (!references.find(t => t.id === tile.id)) {
+                        references.push(tile);
                     }
                 }
-
-
-                let weights: pxt.Map<number> = {};
-                references.sort((a, b) => {
-                    if (a.id === b.id) return 0;
-
-                    if (a.bitmap.width !== b.bitmap.width) {
-                        return a.bitmap.width - b.bitmap.width
-                    }
-
-                    if (a.isProjectTile !== b.isProjectTile) {
-                        if (a.isProjectTile) return -1
-                        else return 1;
-                    }
-
-                    return (weights[a.id] || (weights[a.id] = tileWeight(a.id))) -
-                        (weights[b.id] || (weights[b.id] = tileWeight(b.id)))
-                });
-
-                const getTileImage = (t: pxt.Tile) => tileWeight(t.id) <= 2 ?
-                    mkTransparentTileImage(t.bitmap.width) :
-                    bitmapToImageURI(pxt.sprite.Bitmap.fromData(t.bitmap), PREVIEW_SIDE_LENGTH, false);
-
-                FieldTileset.referencedTiles = references.map(tile => [{
-                    src: getTileImage(tile),
-                    width: PREVIEW_SIDE_LENGTH,
-                    height: PREVIEW_SIDE_LENGTH,
-                    alt: displayName(tile)
-                }, tile.id, tile])
             }
-            return FieldTileset.referencedTiles;
+
+
+            let weights: pxt.Map<number> = {};
+            references.sort((a, b) => {
+                if (a.id === b.id) return 0;
+
+                if (a.bitmap.width !== b.bitmap.width) {
+                    return a.bitmap.width - b.bitmap.width
+                }
+
+                if (a.isProjectTile !== b.isProjectTile) {
+                    if (a.isProjectTile) return -1
+                    else return 1;
+                }
+
+                return (weights[a.id] || (weights[a.id] = tileWeight(a.id))) -
+                    (weights[b.id] || (weights[b.id] = tileWeight(b.id)))
+            });
+
+            const getTileImage = (t: pxt.Tile) => tileWeight(t.id) <= 2 ?
+                mkTransparentTileImage(t.bitmap.width) :
+                bitmapToImageURI(pxt.sprite.Bitmap.fromData(t.bitmap), PREVIEW_SIDE_LENGTH, false);
+
+            FieldTileset.referencedTiles = references.map(tile => [{
+                src: getTileImage(tile),
+                width: PREVIEW_SIDE_LENGTH,
+                height: PREVIEW_SIDE_LENGTH,
+                alt: displayName(tile)
+            }, tile.id, tile])
         }
+        return FieldTileset.referencedTiles;
+    }
 
-        public isFieldCustom_ = true;
-        protected selected: pxt.Tile;
-        protected blocksInfo: pxtc.BlocksInfo;
-        protected transparent: TilesetDropdownOption;
+    public isFieldCustom_ = true;
+    protected selected: pxt.Tile;
+    protected blocksInfo: pxtc.BlocksInfo;
+    protected transparent: TilesetDropdownOption;
+    protected localTile: pxt.Tile;
 
-        constructor(text: string, options: FieldImageDropdownOptions, validator?: Function) {
-            super(text, options, validator);
-            this.blocksInfo = options.blocksInfo;
+    constructor(text: string, options: FieldImageDropdownOptions, validator?: Function) {
+        super(text, options, validator);
+        this.blocksInfo = options.blocksInfo;
+    }
+
+    initView() {
+        super.initView();
+        if (this.sourceBlock_ && this.sourceBlock_.isInFlyout) {
+            this.setValue(this.getOptions()[0][1]);
         }
+    }
 
-        initView() {
-            super.initView();
-            if (this.sourceBlock_ && this.sourceBlock_.isInFlyout) {
-                this.setValue(this.getOptions()[0][1]);
+    getValue() {
+        if (this.selectedOption_) {
+            let tile = this.selectedOption_[2];
+            tile = pxt.react.getTilemapProject().lookupAsset(tile.type, tile.id);
+
+            if (!tile) {
+                // This shouldn't happen
+                return super.getValue();
             }
+
+            return pxt.getTSReferenceForAsset(tile);
         }
+        const v = super.getValue();
 
-        getValue() {
-            if (this.selectedOption_) {
-                let tile = this.selectedOption_[2];
-                tile = pxt.react.getTilemapProject().lookupAsset(tile.type, tile.id);
+        // If the user decompiled from JavaScript, then they might have passed an image literal
+        // instead of the qualified name of a tile. The decompiler strips out the "img" part
+        // so we need to add it back
+        if (typeof v === "string" && v.indexOf(".") === -1 && v.indexOf(`\``) === -1) {
+            return `img\`${v}\``
+        }
+        return v;
+    }
 
-                return pxt.getTSReferenceForAsset(tile);
-            }
-            const v = super.getValue();
+    getText() {
+        const v = this.getValue();
 
-            // If the user decompiled from JavaScript, then they might have passed an image literal
-            // instead of the qualified name of a tile. The decompiler strips out the "img" part
-            // so we need to add it back
-            if (typeof v === "string" && v.indexOf(".") === -1 && v.indexOf(`\``) === -1) {
-                return `img\`${v}\``
-            }
+        if (typeof v === "string" && v.indexOf("`") !== -1) {
             return v;
         }
+        return super.getText();
+    }
 
-        getText() {
-            const v = this.getValue();
+    render_() {
+        if (this.value_ && this.selectedOption_) {
+            if (this.selectedOption_[1] !== this.value_) {
+                const tile = pxt.react.getTilemapProject().resolveTile(this.value_);
+                FieldTileset.cachedRevision = -1;
 
-            if (typeof v === "string" && v.indexOf("`") !== -1) {
-                return v;
-            }
-            return super.getText();
-        }
-
-        render_() {
-            if (this.value_ && this.selectedOption_) {
-                if (this.selectedOption_[1] !== this.value_) {
-                    const tile = pxt.react.getTilemapProject().resolveTile(this.value_);
-                    FieldTileset.cachedRevision = -1;
-
-                    if (tile) {
-                        this.selectedOption_ = [{
-                            src: bitmapToImageURI(pxt.sprite.Bitmap.fromData(tile.bitmap), PREVIEW_SIDE_LENGTH, false),
-                            width: PREVIEW_SIDE_LENGTH,
-                            height: PREVIEW_SIDE_LENGTH,
-                            alt: displayName(tile)
-                        }, this.value_, tile]
-                    }
+                if (tile) {
+                    this.selectedOption_ = [{
+                        src: bitmapToImageURI(pxt.sprite.Bitmap.fromData(tile.bitmap), PREVIEW_SIDE_LENGTH, false),
+                        width: PREVIEW_SIDE_LENGTH,
+                        height: PREVIEW_SIDE_LENGTH,
+                        alt: displayName(tile)
+                    }, this.value_, tile]
                 }
-
             }
-            super.render_();
+
         }
+        super.render_();
+    }
 
-        doValueUpdate_(newValue: string) {
-            super.doValueUpdate_(newValue);
-            const options: TilesetDropdownOption[] = this.getOptions(true);
+    doValueUpdate_(newValue: string) {
+        let calledSuper = false;
+        const options: TilesetDropdownOption[] = this.getOptions(true);
 
-            // This text can be one of four things:
-            // 1. The JavaScript expression (assets.tile`name`)
-            // 2. The tile id (qualified name)
-            // 3. The tile display name
-            // 4. Something invalid (like an image literal or undefined)
+        // This text can be one of four things:
+        // 1. The JavaScript expression (assets.tile`name`)
+        // 2. The tile id (qualified name)
+        // 3. The tile display name
+        // 4. Something invalid (like an image literal or undefined)
 
+        if (newValue) {
+            // If it's an expression, pull out the id
+            const match = pxt.parseAssetTSReference(newValue);
+            if (match) {
+                newValue = match.name;
+            }
+
+            newValue = newValue.trim();
+
+            for (const option of options) {
+                if (newValue === option[2].id || newValue === option[2].meta.displayName || newValue === pxt.getShortIDForAsset(option[2])) {
+                    this.selectedOption_ = option;
+                    this.value_ = this.getValue();
+                    this.updateAssetListener();
+                    super.doValueUpdate_(option[1]);
+                    calledSuper = true;
+                    return;
+                }
+            }
+
+            if (!calledSuper) {
+                super.doValueUpdate_(newValue);
+            }
+
+            this.selectedOption_ = null;
+            this.updateAssetListener();
+        }
+    }
+
+    protected doClassValidation_(newValue?: string): string {
+        const options = this.getOptions(true);
+
+        if (!options.some(([_, id]) => id === newValue)) {
             if (newValue) {
-                // If it's an expression, pull out the id
-                const match = pxt.parseAssetTSReference(newValue);
+                const project = pxt.react.getTilemapProject();
+                const match = /^\s*assets\s*\.\s*tile\s*`([^`]*)`\s*$/.exec(newValue);
+                let tile: pxt.Tile;
+
                 if (match) {
-                    newValue = match.name;
+                    tile = project.lookupAssetByName(pxt.AssetType.Tile, match[1]);
+                }
+                else if (newValue.startsWith(pxt.sprite.TILE_NAMESPACE)) {
+                    tile = project.lookupAsset(pxt.AssetType.Tile, newValue.trim());
+                }
+                else {
+                    tile = project.lookupAssetByName(pxt.AssetType.Tile, newValue.trim());
                 }
 
-                newValue = newValue.trim();
-
-                for (const option of options) {
-                    if (newValue === option[2].id || newValue === option[2].meta.displayName || newValue === pxt.getShortIDForAsset(option[2])) {
-                        this.selectedOption_ = option;
-                        this.value_ = this.getValue();
-                        this.updateAssetListener();
-                        return;
-                    }
+                if (tile) {
+                    this.localTile = tile;
+                    return pxt.getTSReferenceForAsset(tile, false);
                 }
-
-                this.selectedOption_ = null;
-                this.updateAssetListener();
-            }
-        }
-
-        getOptions(opt_useCache?: boolean): any[] {
-            if (typeof this.menuGenerator_ !== 'function') {
-                this.transparent = constructTransparentTile();
-                return [this.transparent];
             }
 
-            return this.menuGenerator_.call(this);
-        }
-
-        menuGenerator_ = () => {
-            if (this.sourceBlock_?.workspace && needsTilemapUpgrade(this.sourceBlock_?.workspace)) {
-                return [constructTransparentTile()]
+            if (this.sourceBlock_) {
+                pxt.warn(`Trying to set tile reference to nonexistent tile. Block type: ${this.sourceBlock_.type}, Field name: ${this.name}, Value: ${newValue}`)
             }
-            return FieldTileset.getReferencedTiles(this.sourceBlock_.workspace);
+
+            return null;
         }
 
-        dispose() {
-            super.dispose();
-            pxt.react.getTilemapProject().removeChangeListener(pxt.AssetType.Tile, this.assetChangeListener);
-        }
+        return newValue;
+    }
 
-        protected updateAssetListener() {
-            const project = pxt.react.getTilemapProject();
-            project.removeChangeListener(pxt.AssetType.Tile, this.assetChangeListener);
-            if (this.selectedOption_) {
-                project.addChangeListener(this.selectedOption_[2], this.assetChangeListener);
+    getOptions(opt_useCache?: boolean): any[] {
+        if (typeof this.menuGenerator_ !== 'function') {
+            this.transparent = constructTransparentTile();
+            const res = [this.transparent];
+
+            if (this.localTile) {
+                res.push([
+                    {
+                        src: bitmapToImageURI(pxt.sprite.Bitmap.fromData(this.localTile.bitmap), PREVIEW_SIDE_LENGTH, false),
+                        width: PREVIEW_SIDE_LENGTH,
+                        height: PREVIEW_SIDE_LENGTH,
+                        alt: displayName(this.localTile)
+                    },
+                    this.localTile.id,
+                    this.localTile
+                ])
             }
+
+            return res;
         }
 
-        protected assetChangeListener = () => {
-           this.doValueUpdate_(this.getValue());
-           this.forceRerender();
+        return this.menuGenerator_.call(this);
+    }
+
+    menuGenerator_ = () => {
+        if (this.sourceBlock_?.workspace && needsTilemapUpgrade(this.sourceBlock_?.workspace)) {
+            return [constructTransparentTile()] as unknown as [ImageJSON, string][];
+        }
+        return FieldTileset.getReferencedTiles(this.sourceBlock_.workspace) as unknown as [ImageJSON, string][];
+    }
+
+    dispose() {
+        super.dispose();
+        pxt.react.getTilemapProject().removeChangeListener(pxt.AssetType.Tile, this.assetChangeListener);
+    }
+
+    protected updateAssetListener() {
+        const project = pxt.react.getTilemapProject();
+        project.removeChangeListener(pxt.AssetType.Tile, this.assetChangeListener);
+        if (this.selectedOption_) {
+            project.addChangeListener(this.selectedOption_[2], this.assetChangeListener);
         }
     }
 
-    function constructTransparentTile(): TilesetDropdownOption {
-        const tile = pxt.react.getTilemapProject().getTransparency(16);
-        return [{
-            src: mkTransparentTileImage(16),
-            width: PREVIEW_SIDE_LENGTH,
-            height: PREVIEW_SIDE_LENGTH,
-            alt: pxt.U.lf("transparency")
-        }, tile.id, tile];
+    protected assetChangeListener = () => {
+       this.doValueUpdate_(this.getValue());
+       this.forceRerender();
     }
 
-    function mkTransparentTileImage(sideLength: number) {
-        const canvas = document.createElement("canvas");
-        const context = canvas.getContext("2d");
-        canvas.width = sideLength;
-        canvas.height = sideLength;
+    saveState(_doFullSerialization?: boolean) {
+        let asset = this.localTile || this.selectedOption_?.[2];
+        const project = pxt.react.getTilemapProject();
 
-        context.fillStyle = "#aeaeae";
-        context.fillRect(0, 0, sideLength, sideLength);
+        if (!asset) {
+            const value = this.getValue();
 
-        context.fillStyle = "#dedede";
+            const parsedTsReference = pxt.parseAssetTSReference(value);
+            if (parsedTsReference) {
+                asset = project.lookupAssetByName(pxt.AssetType.Tile, parsedTsReference.name);
+            }
 
-        for (let x = 0; x < sideLength; x += 4) {
-            for (let y = 0; y < sideLength; y += 4) {
-                if (((x + y) >> 2) & 1) context.fillRect(x, y, 4, 4);
+            if (!asset) {
+                asset = project.lookupAsset(pxt.AssetType.Tile, value);
             }
         }
-
-        return canvas.toDataURL();
+        if (asset?.isProjectTile) {
+            return getAssetSaveState(asset)
+        }
+        return super.saveState(_doFullSerialization);
     }
 
-    function tileWeight(id: string) {
-        switch (id) {
-            case "myTiles.transparency16":
-                return 1;
-            case "myTiles.transparency8":
-            case "myTiles.transparency32":
-                return 2;
-            default:
-                if (id.startsWith("myTiles.tile")) {
-                    const num = parseInt(id.slice(12));
+    loadState(state: any) {
+        if (typeof state === "string") {
+            super.loadState(state);
+            return;
+        }
 
-                    if (!Number.isNaN(num)) return num + 2;
-                }
-                return 9999999999;
+        const asset = loadAssetFromSaveState(state);
+        this.localTile = asset as pxt.Tile;
+        super.loadState(pxt.getTSReferenceForAsset(asset));
+    }
+}
+
+function constructTransparentTile(): TilesetDropdownOption {
+    const tile = pxt.react.getTilemapProject().getTransparency(16);
+    return [{
+        src: mkTransparentTileImage(16),
+        width: PREVIEW_SIDE_LENGTH,
+        height: PREVIEW_SIDE_LENGTH,
+        alt: pxt.U.lf("transparency")
+    }, tile.id, tile];
+}
+
+function mkTransparentTileImage(sideLength: number) {
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    canvas.width = sideLength;
+    canvas.height = sideLength;
+
+    context.fillStyle = "#aeaeae";
+    context.fillRect(0, 0, sideLength, sideLength);
+
+    context.fillStyle = "#dedede";
+
+    for (let x = 0; x < sideLength; x += 4) {
+        for (let y = 0; y < sideLength; y += 4) {
+            if (((x + y) >> 2) & 1) context.fillRect(x, y, 4, 4);
         }
     }
 
-    function displayName(tile: pxt.Tile) {
-        return tile.meta.displayName || pxt.getShortIDForAsset(tile);
+    return canvas.toDataURL();
+}
+
+function tileWeight(id: string) {
+    switch (id) {
+        case "myTiles.transparency16":
+            return 1;
+        case "myTiles.transparency4":
+        case "myTiles.transparency8":
+        case "myTiles.transparency32":
+            return 2;
+        default:
+            if (id.startsWith("myTiles.tile")) {
+                const num = parseInt(id.slice(12));
+
+                if (!Number.isNaN(num)) return num + 2;
+            }
+            return 9999999999;
     }
+}
+
+function displayName(tile: pxt.Tile) {
+    return tile.meta.displayName || pxt.getShortIDForAsset(tile);
 }

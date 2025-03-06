@@ -3,10 +3,23 @@
 namespace pxt.blocks {
     const THIS_NAME = "this";
 
+    export let showBlockIdInTooltip: boolean = false;
+
+    // These interfaces are extended in localtypings/pxtblockly.d.ts
+    export interface PxtBlockly {
+    }
+    export interface BlocklyModule {
+    }
+
+    // patched in webapp/pxtrunner
+    export let requirePxtBlockly: () => PxtBlockly = () => undefined;
+    export let requireBlockly: () => BlocklyModule = () => undefined;
+    export let registerFieldEditor: (selector: string, proto: any, validator?: any) => void = () => {}
+
     // The JS Math functions supported in the blocks. The order of this array
     // determines the order of the dropdown in the math_js_op block
     export const MATH_FUNCTIONS = {
-        unary: ["sqrt", "sin", "cos", "tan"],
+        unary: ["sqrt", "sin", "cos", "tan", "asin", "acos"],
         binary: ["atan2"],
         infix: ["idiv", "imul"]
     };
@@ -26,6 +39,9 @@ namespace pxt.blocks {
         // Parameter name as it appears in the block string. This is the name that
         // gets used for the input/field in the Blockly block
         definitionName: string;
+
+        // The index of this parameter in the block string
+        definitionIndex?: number;
 
         // Shadow block ID specified in the block string (if present)
         shadowBlockId?: string;
@@ -110,7 +126,7 @@ namespace pxt.blocks {
             handlerArgs: []
         };
 
-        const instance = (fn.kind == ts.pxtc.SymbolKind.Method || fn.kind == ts.pxtc.SymbolKind.Property) && !fn.attributes.defaultInstance;
+        const instance = (fn.kind == ts.pxtc.SymbolKind.Method || fn.kind == ts.pxtc.SymbolKind.Property) && !fn.attributes.defaultInstance && !fn.isStatic;
         const hasBlockDef = !!fn.attributes._def;
         const defParameters = hasBlockDef ? fn.attributes._def.parameters.slice(0) : undefined;
         const optionalStart = hasBlockDef ? defParameters.length : (fn.parameters ? fn.parameters.length : 0);
@@ -135,10 +151,10 @@ namespace pxt.blocks {
             const defName = def.name;
             const isVar = !def.shadowBlockId || def.shadowBlockId === "variables_get";
 
-            let defaultValue: string;
+            let defaultValue = fn.attributes.paramDefl[defName] || fn.attributes.paramDefl["this"];
 
             if (isVar) {
-                defaultValue = def.varName || fn.attributes.paramDefl[defName] || fn.attributes.paramDefl["this"];
+                defaultValue = def.varName || defaultValue;
             }
 
             res.thisParameter = {
@@ -147,6 +163,7 @@ namespace pxt.blocks {
                 shadowBlockId: def.shadowBlockId,
                 type: fn.namespace,
                 defaultValue: defaultValue,
+                definitionIndex: defParameters.indexOf(def),
 
                 // Normally we pass ths actual parameter name, but the "this" parameter doesn't have one
                 fieldEditor: fieldEditor(defName, THIS_NAME),
@@ -182,6 +199,7 @@ namespace pxt.blocks {
                         type: p.type,
                         defaultValue: isVarOrArray ? (def.varName || p.default) : p.default,
                         definitionName: defName,
+                        definitionIndex: def ? defParameters.indexOf(def) : i,
                         shadowBlockId: def && def.shadowBlockId,
                         isOptional: defParameters ? defParameters.indexOf(def) >= optionalStart : false,
                         fieldEditor: fieldEditor(defName, p.name),
@@ -235,6 +253,23 @@ namespace pxt.blocks {
         ));
     }
 
+    export function getHelpUrl(fn: pxtc.SymbolInfo) {
+        if (fn.attributes.help) {
+            const helpUrl = fn.attributes.help.replace(/^\//, '');
+            if (/^github:/.test(helpUrl)) {
+                return helpUrl;
+            } else if (helpUrl !== "none") {
+                return "/reference/" + helpUrl;
+            }
+        } else if (fn.pkg && !pxt.appTarget.bundledpkgs[fn.pkg]) {// added package
+            let anchor = fn.qName.toLowerCase().split('.');
+            if (anchor[0] == fn.pkg) anchor.shift();
+            return `/pkg/${fn.pkg}#${encodeURIComponent(anchor.join('-'))}`;
+        }
+
+        return undefined;
+    }
+
     /**
      * Returns which Blockly block type to use for an argument reporter based
      * on the specified TypeScript type.
@@ -246,6 +281,10 @@ namespace pxt.blocks {
 
         if (varType === "boolean" || varType === "number" || varType === "string") {
             reporterType = `argument_reporter_${varType}`;
+        }
+
+        if (/^(?:Array<(?:.+)>)|(?:(?:.+)\[\])$/.test(varType)) {
+            reporterType = "argument_reporter_array";
         }
 
         return reporterType;
@@ -389,26 +428,26 @@ namespace pxt.blocks {
             },
             'math_number': {
                 name: Util.lf("{id:block}number"),
-                url: '/blocks/math/random',
+                url: '/types/number',
                 category: 'math',
                 tooltip: (pxt.appTarget && pxt.appTarget.compile) ?
                     Util.lf("a decimal number") : Util.lf("an integer number")
             },
             'math_integer': {
                 name: Util.lf("{id:block}number"),
-                url: '/blocks/math/random',
+                url: '/types/number',
                 category: 'math',
                 tooltip: Util.lf("an integer number")
             },
             'math_whole_number': {
                 name: Util.lf("{id:block}number"),
-                url: '/blocks/math/random',
+                url: '/types/number',
                 category: 'math',
                 tooltip: Util.lf("a whole number")
             },
             'math_number_minmax': {
                 name: Util.lf("{id:block}number"),
-                url: '/blocks/math/random',
+                url: '/blocks/math',
                 category: 'math'
             },
             'math_arithmetic': {
@@ -429,7 +468,7 @@ namespace pxt.blocks {
                     MATH_ADDITION_SYMBOL: Util.lf("{id:op}+"),
                     MATH_SUBTRACTION_SYMBOL: Util.lf("{id:op}-"),
                     MATH_MULTIPLICATION_SYMBOL: Util.lf("{id:op}×"),
-                    MATH_DIVISION_SYMBOL: Util.lf("{id:op}÷"),
+                    MATH_DIVISION_SYMBOL: Util.lf("{id:op}/"),
                     MATH_POWER_SYMBOL: Util.lf("{id:op}**")
                 }
             },
@@ -439,7 +478,7 @@ namespace pxt.blocks {
                 url: '/blocks/math',
                 category: 'math',
                 block: {
-                    MATH_MODULO_TITLE: Util.lf("remainder of %1 ÷ %2")
+                    MATH_MODULO_TITLE: Util.lf("remainder of %1 / %2")
                 }
             },
             'math_js_op': {
@@ -448,6 +487,8 @@ namespace pxt.blocks {
                     "sqrt": Util.lf("Returns the square root of the argument"),
                     "sin": Util.lf("Returns the sine of the argument"),
                     "cos": Util.lf("Returns the cosine of the argument"),
+                    "acos": Util.lf("Returns the arccosine of the argument"),
+                    "asine": Util.lf("Returns the arcsine of the argument"),
                     "tan": Util.lf("Returns the tangent of the argument"),
                     "atan2": Util.lf("Returns the arctangent of the quotient of the two arguments"),
                     "idiv": Util.lf("Returns the integer portion of the division operation on the two arguments"),
@@ -462,9 +503,11 @@ namespace pxt.blocks {
                     "sqrt": Util.lf("{id:op}square root"),
                     "sin": Util.lf("{id:op}sin"),
                     "cos": Util.lf("{id:op}cos"),
+                    "asin": Util.lf("{id:op}asin"),
+                    "acos": Util.lf("{id:op}acos"),
                     "tan": Util.lf("{id:op}tan"),
                     "atan2": Util.lf("{id:op}atan2"),
-                    "idiv": Util.lf("{id:op}integer ÷"),
+                    "idiv": Util.lf("{id:op}integer /"),
                     "imul": Util.lf("{id:op}integer ×"),
                 }
             },
@@ -761,20 +804,43 @@ namespace pxt.blocks {
             }
         }
 
-        if (pxt.Util.isTranslationMode()) {
-            const msg = Blockly.Msg as any;
-            Util.values(_blockDefinitions).filter(b => b.block).forEach(b => {
+        if (pxt.blocks.showBlockIdInTooltip) {
+            for (const id of Object.keys(_blockDefinitions)) {
+                const tooltip = _blockDefinitions[id].tooltip;
+                if (typeof tooltip === "object" && tooltip !== null) {
+                    for (const innerKey in tooltip) {
+                        if (tooltip.hasOwnProperty(innerKey)) {
+                            (_blockDefinitions[id].tooltip as any)[innerKey] = `${tooltip[innerKey]} (id: ${id})`;
+                        }
+                    }
+                } else {
+                    _blockDefinitions[id].tooltip = `${_blockDefinitions[id].tooltip} (id: ${id})`;
+                }
+            }
+        }
+    }
+
+    export async function initInContextTranslationAsync() {
+        if (!_blockDefinitions) cacheBlockDefinitions();
+
+        const msg: pxt.Map<string> = {}
+        await Promise.all(
+            Util.values(_blockDefinitions).filter(b => b.block).map(async b => {
                 const keys = Object.keys(b.block);
                 b.translationIds = Util.values(b.block);
-                keys.forEach(k => pxt.crowdin.inContextLoadAsync(b.block[k])
-                    .then(r => {
+                await Promise.all(
+                    keys.map(async k => {
+                        const r = await pxt.crowdin.inContextLoadAsync(b.block[k])
                         b.block[k] = r;
                         // override builtin blockly namespace strings
-                        if (/^[A-Z_]+$/.test(k))
+                        if (/^[A-Z_]+$/.test(k)) {
                             msg[k] = r;
+                        }
                     })
-                )
+                );
             })
-        }
+        );
+
+        return msg;
     }
 }

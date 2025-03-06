@@ -4,7 +4,15 @@
 
 The College Board’s [Advanced Placement (AP®) Computer Science Principles](https://apcentral.collegeboard.org/courses/ap-computer-science-principles) course is an introductory computer science course for High School students (typically 14-18 years old). While academically rigorous, the AP Computer Science Principles course is designed to attract students of all backgrounds, experience levels, and interests, and covers a wide range of computing topics with a special focus on the impact of technology and computing on students’ lives. The course covers a full academic year, does not require any prerequisites( Algebra I is recommended), and an end-of-course exam may be taken to receive college credit.
 
+## AP CS Principles Curriculum
+
 The **[AP CS Principles with Microsoft MakeCode](https://microsoft.github.io/makecode-csp)** curriculum is free and uses web-based technology and tools that can be accessed across platforms and devices. The curriculum is also endorsed and approved by the College Board as aligning with the [CS Principles curriculum framework](https://apcentral.collegeboard.org/courses/ap-computer-science-principles/course?course=ap-computer-science-principles) and [AP CS Principles exam](https://apcentral.collegeboard.org/courses/ap-computer-science-principles/exam).
+
+### ~ tip
+
+#### **Access and explore the curriculum - [AP CS Principles with Microsoft MakeCode](https://microsoft.github.io/makecode-csp)**
+
+### ~
 
 Some additional features of the Microsoft MakeCode curriculum include: 
 
@@ -94,25 +102,6 @@ In the final unit of the course, students will prepare for the AP CS Principles 
 
 In the Service Learning unit, students will explore the [United Nations Sustainable Development Goals](https://www.undp.org/content/undp/en/home/sustainable-development-goals.html), see examples of how games can be used for good, and then using the design thinking process, create their own games for social good.
 
-## Educator Materials
-
-The curriculum materials include:
-
-* Daily Lesson plans in the form of a OneNote notebook.
-* PowerPoint decks for classroom lectures with talking points in the Notes section.
-* Textbook Blown to Bits: Your Life, Liberty, and Pursuit of Happiness After the Digital Explosion.
-* Student projects, labs and activities (with solutions where appropriate).
-
-### ~ reminder
-
-#### Download Educator Materials
-
-All of the materials for the **AP Computer Science Principles with Microsoft MakeCode** curriculum are available to download here:
-
-* **[Curriculum Materials Downloads](https://aka.ms/MSMakeCodeAPCSP)**
-
-### ~
-
 ## Stay Connected 
 
 If you decide to use the AP Computer Science Principles with Microsoft MakeCode curriculum or materials, please keep in touch. Join the [Microsoft MakeCode AP CSP Forum](https://forum.makecode.com/c/ap-cs-principles/23) to connect with other Educators teaching the curriculum, ask questions, or give feedback on curriculum materials. Please also follow [@MSMakeCode](https://twitter.com/MSMakeCode) on Twitter for the latest news and announcements.
@@ -121,7 +110,11 @@ If you decide to use the AP Computer Science Principles with Microsoft MakeCode 
 
 * Are there professional development opportunities or other training available for this curriculum?
 
->The professional development workshops for the 2021-2022 academic year have concluded. However, we will publish the schedule for Summer 2022 workshops in the Spring. Join the [Microsoft MakeCode AP CSP Forum](https://forum.makecode.com/c/ap-cs-principles/23) to be notified of the upcoming workshops.
+>Free, online 4-day professional development workshops are held every summer to support this curriculum. The dates for the Summer workshops are published in the Spring. Join the [Microsoft MakeCode AP CSP Forum](https://forum.makecode.com/c/ap-cs-principles/23) to be notified of the upcoming workshops.
+
+* What is included in the curriculum?
+
+>The **Microsoft MakeCode AP CS Principles** curriculum includes daily PowerPoints with guided notes for the teacher, Word documents for student handouts, and a OneNote notebook that teachers can use to create a Class Notebook where they distribute files directly to students. The curriculum also has vocabulary quizzes, short answer quizzes, and answer keys with solutions for all materials. You can download the Educator Materials from https://microsoft.github.io/makecode-csp. To access these materials, teachers must have a verified teacher GitHub account. Consult the [GitHub Teacher Verification Instructions](/github-teacher-verification) for how to obtain a verified teacher GitHub account.
 
 * How is the curriculum graded/assessed?
 
@@ -145,5 +138,5 @@ If you decide to use the AP Computer Science Principles with Microsoft MakeCode 
 
 * Who wrote this curriculum?
 
->The MakeCode curriculum was written by [Kelli Etheredge](https://www.linkedin.com/in/ketheredge), a Director of Teaching & Learning and an AP Computer Science Principles teacher herself.  Follow her on Twitter [@ketheredge](https://twitter.com/ketheredge).
+>The MakeCode curriculum was written by [Kelli Etheredge](https://www.linkedin.com/in/ketheredge), a Director of Teaching & Learning and an AP Computer Science Principles teacher herself. Follow her on Twitter [@ketheredge](https://twitter.com/ketheredge).
 

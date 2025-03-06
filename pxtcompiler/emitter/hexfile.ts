@@ -105,6 +105,7 @@ namespace ts.pxtc {
                     return ""
                 })
                 let code =
+                    ".object inlineasm\n" +
                     ".section code\n" +
                     "@stackmark func\n" +
                     "@scope user" + asmIdx++ + "\n" +
@@ -507,7 +508,7 @@ namespace ts.pxtc {
                 for (let i = 0; i < hd.length; ++i)
                     pxt.HF2.write16(resbuf, i * 2 + ctx.jmpStartAddr, hd[i])
                 if (uf2 && !bin.target.switches.rawELF) {
-                    let bn = bin.options.name || "pxt"
+                    let bn = bin.name || "pxt"
                     bn = bn.replace(/[^a-zA-Z0-9\-\.]+/g, "_")
                     uf2.filename = "Projects/" + bn + ".elf"
                     UF2.writeBytes(uf2, 0, resbuf);
@@ -682,6 +683,7 @@ namespace ts.pxtc {
         for (let data of Object.keys(bin.doubles)) {
             let lbl = bin.doubles[data]
             bin.otherLiterals.push(`
+.object ${lbl}
 .balign 4
 ${lbl}: ${snippets.obj_header("pxt::number_vt")}
         .hex ${data}
@@ -763,7 +765,7 @@ ${lbl}: ${snippets.obj_header("pxt::number_vt")}
     }
 
 
-    export function vtableToAsm(info: ClassInfo, opts: CompileOptions, bin: Binary) {
+    export function vtableToAsm(info: ClassInfo, opts: CompileOptions, bin: Binary, res: CompileResult) {
         /*
         uint16_t numbytes;
         ValType objectType;
@@ -781,6 +783,7 @@ ${lbl}: ${snippets.obj_header("pxt::number_vt")}
 
         let ptrSz = target.shortPointers ? ".short" : ".word"
         let s = `
+        .object ${info.id}_VT
         .balign 4
 ${info.id}_VT:
         .short ${info.allfields.length * 4 + 4}  ; size in bytes
@@ -865,7 +868,7 @@ ${hexfile.hexPrelude()}
     }
 
 
-    function serialize(bin: Binary, opts: CompileOptions) {
+    function serialize(bin: Binary, opts: CompileOptions, res: CompileResult) {
         let asmsource = `
     .short ${bin.globalsWords}   ; num. globals
     .short 0 ; patched with number of 64 bit words resulting from assembly
@@ -897,16 +900,20 @@ ${hexfile.hexPrelude()}
         asmsource += "_code_end:\n\n"
 
         U.iterMap(bin.codeHelpers, (code, lbl) => {
-            asmsource += `    .section code\n${lbl}:\n${code}\n`
+            asmsource +=
+                `    .section code\n` +
+                `    .object _code_helper_${lbl}\n` +
+                `${lbl}:\n` +
+                `${code}\n`
         })
         asmsource += snippets.arithmetic()
         asmsource += "_helpers_end:\n\n"
 
         bin.usedClassInfos.forEach(info => {
-            asmsource += vtableToAsm(info, opts, bin)
+            asmsource += vtableToAsm(info, opts, bin, res)
         })
 
-        asmsource += `\n.balign 4\n_pxt_iface_member_names:\n`
+        asmsource += `\n.balign 4\n.object _pxt_iface_member_names\n_pxt_iface_member_names:\n`
         asmsource += `    .word ${bin.ifaceMembers.length}\n`
         let idx = 0
         for (let d of bin.ifaceMembers) {
@@ -916,8 +923,8 @@ ${hexfile.hexPrelude()}
         asmsource += `    .word 0\n`
         asmsource += "_vtables_end:\n\n"
 
-        asmsource += `\n.balign 4\n_pxt_config_data:\n`
-        const cfg = bin.res.configData || []
+        asmsource += `\n.balign 4\n.object _pxt_config_data\n_pxt_config_data:\n`
+        const cfg = res.configData || []
         // asmsource += `    .word ${cfg.length}, 0 ; num. entries`
         for (let d of cfg) {
             asmsource += `    .word ${d.key}, ${d.value}  ; ${d.name}=${d.value}\n`
@@ -927,7 +934,7 @@ ${hexfile.hexPrelude()}
         emitStrings(snippets, bin)
         asmsource += bin.otherLiterals.join("")
 
-        asmsource += `\n.balign 4\n.section code\n_pxt_perf_counters:\n`
+        asmsource += `\n.balign 4\n.section code\n.object _perf_counters\n_pxt_perf_counters:\n`
         asmsource += `    .word ${perfCounters.length}\n`
         let strs = ""
         for (let i = 0; i < perfCounters.length; ++i) {
@@ -968,6 +975,9 @@ ${hexfile.hexPrelude()}
         if (target.switches.noPeepHole)
             b.disablePeepHole = true
 
+        if (target.switches.size)
+            b.codeSizeStats = true
+
         b.lookupExternalLabel = hexfile.lookupFunctionAddr;
         b.normalizeExternalLabel = s => {
             let inf = hexfile.lookupFunc(s)
@@ -995,8 +1005,8 @@ ${hexfile.hexPrelude()}
 
             if (userErrors) {
                 //TODO
-                console.log(U.lf("errors in inline assembly"))
-                console.log(userErrors)
+                pxt.log(U.lf("errors in inline assembly"))
+                pxt.log(userErrors)
                 throw new Error(b.errors[0].message)
             } else {
                 throw new Error(b.errors[0].message)
@@ -1035,6 +1045,7 @@ ${hexfile.hexPrelude()}
 
         return `
     .balign 16
+    .object _stored_program
 _stored_program: .hex ${res}
 `
     }
@@ -1218,13 +1229,17 @@ __flash_checksums:
     }
 
     export function processorEmit(bin: Binary, opts: CompileOptions, cres: CompileResult) {
-        const src = serialize(bin, opts)
+        const src = serialize(bin, opts, cres)
 
         const opts0 = U.flatClone(opts)
         // normally, this would already have been done, but if the main variant
         // is disabled, another variant may be set up
         hexfile.setupFor(opts.target, opts.extinfo || emptyExtInfo())
         assembleAndPatch(src, bin, opts, cres)
+        if (!cres.builtVariants) {
+            cres.builtVariants = [];
+        }
+        cres.builtVariants.push(opts.extinfo?.appVariant);
 
         const otherVariants = opts0.otherMultiVariants || []
         if (otherVariants.length)
@@ -1236,6 +1251,7 @@ __flash_checksums:
                     localOpts.target = other.target
                     hexfile.setupFor(localOpts.target, localOpts.extinfo)
                     assembleAndPatch(src, bin, localOpts, cres)
+                    cres.builtVariants.push(other.extinfo?.appVariant);
                 }
             } finally {
                 hexfile.setupFor(opts0.target, opts0.extinfo)

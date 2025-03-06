@@ -27,6 +27,9 @@ namespace pxsim {
         dependencies?: Map<string>;
         single?: boolean;
         traceDisabled?: boolean;
+        activePlayer?: 1 | 2 | 3 | 4 | undefined;
+        theme?: string | pxt.Map<string>;
+        yieldDelay?: number;
     }
 
     export interface SimulatorInstructionsMessage extends SimulatorMessage {
@@ -80,6 +83,8 @@ namespace pxsim {
     }
     export interface SimulatorBroadcastMessage extends SimulatorMessage {
         broadcast: boolean;
+        toParentIFrameOnly?: boolean;
+        srcFrameIndex?: number;
     }
 
     export interface SimulatorControlMessage extends SimulatorBroadcastMessage {
@@ -100,6 +105,7 @@ namespace pxsim {
         id: string;
         data: string;
         sim?: boolean;
+        csvType?: undefined | "headers" | "row" | "clear"; // if non-nullish pass to csv view instead
         receivedTime?: number;
     }
     export interface SimulatorBulkSerialMessage extends SimulatorMessage {
@@ -110,7 +116,7 @@ namespace pxsim {
     }
     export interface SimulatorCommandMessage extends SimulatorMessage {
         type: "simulator",
-        command: "modal" | "restart" | "reload" | "setstate" | "focus" | "blur"
+        command: "modal" | "restart" | "reload" | "setstate" | "focus" | "blur" | "single"
         stateKey?: string;
         stateValue?: any;
         header?: string;
@@ -163,6 +169,11 @@ namespace pxsim {
         data: ImageData;
         delay?: number;
         modalContext?: string;
+    }
+
+    export interface SimulatorAutomaticThumbnailMessage extends SimulatorMessage {
+        type: "thumbnail";
+        frames: ImageData[];
     }
 
     export interface SimulatorAddExtensionsMessage extends SimulatorMessage {
@@ -248,6 +259,81 @@ namespace pxsim {
         css?: string;
         uri?: string;
         error?: string;
+    }
+
+    export interface SetActivePlayerMessage extends SimulatorMessage {
+        type: "setactiveplayer";
+        playerNumber: 1 | 2 | 3 | 4 | undefined;
+    }
+
+    export interface SetSimThemeMessage extends SimulatorMessage {
+        type: "setsimthemecolor";
+        part:
+            | "background-color"
+            | "button-stroke"
+            | "text-color"
+            | "button-fill"
+            | "dpad-fill";
+        color: string;
+    }
+
+    export interface SetMuteButtonStateMessage extends SimulatorMessage {
+        type: "setmutebuttonstate";
+        state: "muted" | "unmuted" | "disabled";
+    }
+
+    export namespace multiplayer {
+        type MessageBase = {
+            type: "multiplayer";
+            origin?: "server" | "client";
+            broadcast?: boolean;
+        };
+
+        export enum IconType {
+            Player = 0,
+            Reaction = 1,
+        }
+
+        export type ImageMessage = MessageBase & {
+            content: "Image";
+            image?: pxsim.RefBuffer; // pxsim.RefBuffer
+            palette: Uint8Array;
+        };
+
+        export type InputMessage = MessageBase & {
+            content: "Button";
+            button: number;
+            clientNumber: number;
+            state: "Pressed" | "Released" | "Held";
+        };
+
+        export type AudioMessage = MessageBase & {
+            content: "Audio";
+            instruction: "playinstructions" | "muteallchannels";
+            soundbuf?: Uint8Array;
+        };
+
+        export type IconMessage = MessageBase & {
+            content: "Icon";
+            icon?: pxsim.RefBuffer; // pxsim.RefBuffer
+            slot: number;
+            iconType: IconType;
+            // 48bytes, [r0,g0,b0,r1,g1,b1,...]
+            palette: Uint8Array;
+        };
+
+        export type ConnectionMessage = MessageBase & {
+            content: "Connection";
+            slot: number;
+            connected: boolean;
+        }
+
+        export type Message =
+            | ImageMessage
+            | AudioMessage
+            | InputMessage
+            | IconMessage
+            | ConnectionMessage;
     }
 
     export function print(delay: number = 0) {
@@ -437,9 +523,9 @@ namespace pxsim {
 
             const serviceWorkerUrl = window.location.href.replace(/---simulator.*$/, "---simserviceworker");
             navigator.serviceWorker.register(serviceWorkerUrl).then(function (registration) {
-                console.log("Simulator ServiceWorker registration successful with scope: ", registration.scope);
+                pxsim.log("Simulator ServiceWorker registration successful with scope: ", registration.scope);
             }, function (err) {
-                console.log("Simulator ServiceWorker registration failed: ", err);
+                pxsim.log("Simulator ServiceWorker registration failed: ", err);
             });
         }
     }

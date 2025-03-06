@@ -94,7 +94,7 @@ export class ImageCanvasImpl extends React.Component<ImageCanvasProps, {}> imple
         const isPortrait = !imageState || (imageState.bitmap.height > imageState.bitmap.width);
         const showResizeHandles = !this.props.isTilemap && this.props.tool == ImageEditorTool.Marquee;
 
-        return <div ref="canvas-bounds" className={`image-editor-canvas ${isPortrait ? "portrait" : "landscape"}`} onContextMenu={this.preventContextMenu}>
+        return <div ref="canvas-bounds" className={`image-editor-canvas ${isPortrait ? "portrait" : "landscape"}`} onContextMenu={this.preventContextMenu} tabIndex={0}>
             <div className="paint-container">
                 {!this.props.lightMode && <canvas ref="paint-surface-bg" className="paint-surface" />}
                 <canvas ref="paint-surface" className="paint-surface main" />
@@ -201,9 +201,10 @@ export class ImageCanvasImpl extends React.Component<ImageCanvasProps, {}> imple
         this.hasInteracted = true
         if (this.isPanning()) return;
 
-        if (document.activeElement instanceof HTMLElement) {
+        if (document.activeElement instanceof HTMLElement && document.activeElement !== this.refs["canvas-bounds"]) {
             document.activeElement.blur();
         }
+        this.focus();
 
         if (this.isColorSelect()) {
             this.selectCanvasColor(coord, isRightClick);
@@ -229,6 +230,7 @@ export class ImageCanvasImpl extends React.Component<ImageCanvasProps, {}> imple
 
     onDragStart(coord: ClientCoordinates, isRightClick?: boolean): void {
         this.hasInteracted = true
+        this.focus();
         if (this.touchesResize(coord.clientX, coord.clientY)) {
             this.isResizing = true;
         }
@@ -242,10 +244,12 @@ export class ImageCanvasImpl extends React.Component<ImageCanvasProps, {}> imple
         else {
             this.updateCursorLocation(coord);
             this.startEdit(!!isRightClick);
+            this.updateEdit(this.cursorLocation[0], this.cursorLocation[1]);
         }
     }
 
     onDragMove(coord: ClientCoordinates): void {
+        this.focus();
         if (this.isPanning() && this.lastPanX != undefined && this.lastPanY != undefined) {
             this.panX += this.lastPanX - coord.clientX;
             this.panY += this.lastPanY - coord.clientY;
@@ -290,34 +294,6 @@ export class ImageCanvasImpl extends React.Component<ImageCanvasProps, {}> imple
 
         this.hasInteracted = true;
 
-        if (this.shouldHandleCanvasShortcut() && this.editState?.floating?.image) {
-            let moved = false;
-
-            switch (ev.key) {
-                case 'ArrowLeft':
-                    this.editState.layerOffsetX = Math.max(this.editState.layerOffsetX - 1, -this.editState.floating.image.width);
-                    moved = true;
-                    break;
-                case 'ArrowUp':
-                    this.editState.layerOffsetY = Math.max(this.editState.layerOffsetY - 1, -this.editState.floating.image.height);
-                    moved = true;
-                    break;
-                case 'ArrowRight':
-                    this.editState.layerOffsetX = Math.min(this.editState.layerOffsetX + 1, this.editState.width);
-                    moved = true;
-                    break;
-                case 'ArrowDown':
-                    this.editState.layerOffsetY = Math.min(this.editState.layerOffsetY + 1, this.editState.height);
-                    moved = true;
-                    break;
-            }
-
-            if (moved) {
-                this.props.dispatchImageEdit(this.editState.toImageState());
-                ev.preventDefault();
-            }
-        }
-
         if (!ev.repeat) {
             // prevent blockly's ctrl+c / ctrl+v handler
             if ((ev.ctrlKey || ev.metaKey) && (ev.key === 'c' || ev.key === 'v')) {
@@ -332,11 +308,6 @@ export class ImageCanvasImpl extends React.Component<ImageCanvasProps, {}> imple
             if (ev.key == "Escape" && this.editState?.floating?.image && this.shouldHandleCanvasShortcut()) {
                 // TODO: If there isn't currently a marqueed selection, escape should save and close the field editor
                 this.cancelSelection();
-                ev.preventDefault();
-            }
-
-            if ((ev.key === "Backspace" || ev.key === "Delete") && this.editState?.floating?.image && this.shouldHandleCanvasShortcut()) {
-                this.deleteSelection();
                 ev.preventDefault();
             }
 
@@ -424,6 +395,7 @@ export class ImageCanvasImpl extends React.Component<ImageCanvasProps, {}> imple
                 this.props.dispatchChangeImageTool(ImageEditorTool.Marquee);
             }
 
+            this.editState.mergeFloatingLayer();
             this.editState.setFloatingLayer(image);
             this.props.dispatchImageEdit(this.editState.toImageState());
         }
@@ -712,52 +684,23 @@ export class ImageCanvasImpl extends React.Component<ImageCanvasProps, {}> imple
     }
 
     protected drawBitmap(bitmap: pxt.sprite.Bitmap, x0 = 0, y0 = 0, transparent = false, alpha = !this.props.lightMode, target = this.canvas) {
-        if (!this.colors) {
-            this.colors = new Uint8ClampedArray(this.props.colors.length * 4);
+        const { colors } = this.props;
 
-            const transparent = pxt.sprite.colorStringToRGB(LIGHT_MODE_TRANSPARENT);
-            this.colors[0] = transparent[0];
-            this.colors[1] = transparent[1];
-            this.colors[2] = transparent[2];
-
-            for (let i = 1; i < this.props.colors.length; i++) {
-                const [r, g, b] = pxt.sprite.colorStringToRGB(this.props.colors[i]);
-                const start = i << 2;
-                this.colors[start] = r;
-                this.colors[start + 1] = g;
-                this.colors[start + 2] = b;
-                this.colors[start + 3] = 255;
-            }
-        }
-
-        this.colors[3] = alpha ? 0 : 255;
         const context = target.getContext("2d");
+        context.imageSmoothingEnabled = false;
+        for (let x = 0; x < bitmap.width; x++) {
+            for (let y = 0; y < bitmap.height; y++) {
+                const index = bitmap.get(x, y);
 
-        const data = transparent ? context.getImageData(0, 0, target.width, target.height) : new ImageData(target.width, target.height);
-
-        const colors = this.colors.slice();
-        for (let i = 0; i < colors.length; i += 4) {
-            colors[i + 3] = (colors[i + 3] * context.globalAlpha) | 0;
-        }
-
-        for (let y = 0; y < bitmap.height; y++) {
-            if (y0 + y >= target.height) break;
-            if (y0 + y < 0) continue;
-
-            for (let x = 0; x < bitmap.width; x++) {
-                if (x0 + x >= target.width || x0 + x < 0) continue;
-
-                const i = ((x0 + x) << 2) + (((y0 + y) * target.width) << 2)
-                const colorOffset = bitmap.get(x, y) << 2;
-
-                if (!colorOffset && transparent) continue;
-                data.data[i] = colors[colorOffset];
-                data.data[i + 1] = colors[colorOffset + 1];
-                data.data[i + 2] = colors[colorOffset + 2];
-                data.data[i + 3] = colors[colorOffset + 3];
+                if (index) {
+                    context.fillStyle = colors[index];
+                    context.fillRect(x + x0, y + y0, 1, 1);
+                }
+                else {
+                    if (!transparent) context.clearRect(x + x0, y + y0, 1, 1);
+                }
             }
         }
-        target.getContext("2d").putImageData(data, 0, 0);
     }
 
     protected generateTile(index: number, tileset: pxt.TileSet) {
@@ -1010,11 +953,6 @@ export class ImageCanvasImpl extends React.Component<ImageCanvasProps, {}> imple
         this.props.dispatchImageEdit(this.editState.toImageState());
     }
 
-    protected deleteSelection() {
-        this.editState.floating = null;
-        this.props.dispatchImageEdit(this.editState.toImageState());
-    }
-
     protected cloneCanvasStyle(base: HTMLCanvasElement, target: HTMLCanvasElement) {
         target.style.position = base.style.position;
         target.style.width = base.style.width;
@@ -1156,12 +1094,16 @@ export class ImageCanvasImpl extends React.Component<ImageCanvasProps, {}> imple
 
         this.props.dispatchImageEdit(this.editState.toImageState());
     }
+
+    protected focus() {
+        (this.refs["canvas-bounds"] as HTMLDivElement).focus();
+    }
 }
 
 function mapStateToProps({ store: { present }, editor }: ImageEditorStore, ownProps: any) {
     if (editor.isTilemap) {
         let state = (present as TilemapState);
-        if (!state) return {};
+        if (!state) return {} as ImageCanvasProps;
         return {
             selectedColor: editor.selectedColor,
             tilemapState: state,
@@ -1176,11 +1118,11 @@ function mapStateToProps({ store: { present }, editor }: ImageEditorStore, ownPr
             drawingMode: editor.drawingMode,
             gallery: editor.tileGallery,
             tilesetRevision: editor.tilesetRevision
-        };
+        } as ImageCanvasProps
     }
 
     let state = (present as AnimationState);
-    if (!state) return {};
+    if (!state) return {} as ImageCanvasProps;
 
     return {
         selectedColor: editor.selectedColor,
@@ -1194,7 +1136,7 @@ function mapStateToProps({ store: { present }, editor }: ImageEditorStore, ownPr
         prevFrame: state.frames[state.currentFrame - 1],
         isTilemap: editor.isTilemap,
         tilesetRevision: editor.tilesetRevision
-    };
+    } as ImageCanvasProps
 }
 
 const mapDispatchToProps = {

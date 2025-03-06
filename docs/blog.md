@@ -1,5 +1,133 @@
 # Microsoft MakeCode Blog
 
+## [Display shield extension/simulator for the micro:bit](/blog/microbit/display-shield)
+
+February 3, 2025 by [Thomas Ball](https://github.com/thomasjball)
+
+With the new display shield extension, you can now use Arcade shields for the micro:bit V2 in https://makecode.microbit.org/beta, with simulator support!
+
+**[Continue reading this blog post](/blog/microbit/display-shield)**
+
+## [MakeCode Code Evaluation Tool Beta](/blog/tools/code-eval-tool)
+
+January 14th, 2025 by [Jaqster](https://github.com/jaqster)
+
+The year 2025 is already off to a great start with the Beta release of a new tool for Teachers! **MakeCode Code Evaluation** is an online tool for teachers to help them understand and evaluate student programs.
+
+**[Continue reading this blog post](/blog/tools/code-eval-tool)**
+
+## [MakeCode for the micro:bit 2024 Update](/blog/microbit/2024-update)
+
+September 4, 2024 by [Jaqster](https://github.com/jaqster)
+
+Today we are releasing our annual update for [MakeCode for the micro:bit](https://makecode.microbit.org). This year we have been focusing on some core foundational and infrastructure-level work...
+
+**[Continue reading this blog post](/blog/microbit/2024-update)**
+
+## [MakeCode Arcade - now more ways to play!](/blog/arcade/arcade-on-microbit-xbox)
+
+November 6th, 2023 by [Jaqster](https://github.com/jaqster)
+
+Great news for MakeCode Arcaders... we’re releasing some updates today that will allow you to play the Arcade games you create on micro:bits and on an Xbox!
+
+**[Continue reading this blog post](/blog/arcade/arcade-on-microbit-xbox)**
+
+## [MakeCode Minecraft 2023 Update](/blog/minecraft/2023-release)
+
+November 1st, 2023 by [Jaqster](https://github.com/jaqster)
+
+The MakeCode fall update for Minecraft is here! Here’s a run-down of all the new features and improvements...
+
+**[Continue reading this blog post](/blog/minecraft/2023-release)**
+
+## [MakeCode Clever Integration Released!](/blog/clever-release)
+
+September 6th, 2023 by [benvillalobos](https://github.com/benvillalobos)
+
+Just in time for the fall semester, MakeCode has integrated with [Clever](https://www.clever.com/)!
+
+**[Continue reading this blog post](/blog/clever-release)**
+
+## [MakeCode micro:bit 2023 Release!](/blog/microbit/2023-release)
+
+June 19th, 2023 by [Jaqster](https://github.com/jaqster)
+
+School’s out for many in the Northern Hemisphere, which means that it’s time again for our annual release! Here’s the list of new or updated features in this release.
+
+**[Continue reading this blog post](/blog/microbit/2023-release)**
+
+## [MakeCode Arcade Extension for Visual Studio Code](/blog/arcade/vscode-extension)
+
+March 24th, 2023 by [Jaqster](https://github.com/jaqster)
+
+What?! You heard that right. Now, for more experienced MakeCoders, you can take your MakeCode Arcade games to the next level with Visual Studio Code!
+
+**[Continue reading this blog post](/blog/arcade/vscode-extension)**
+
+## [MakeCode Arcade 2023 Update](/blog/arcade/update-jan-2023)
+
+January 30th, 2023 by [Jaqster](https://github.com/jaqster)
+
+To start off the year right, we’ve got some great updates to MakeCode Arcade that will make playing games even more fun with multiplayer and Kiosk mode! We also have lots of other goodies packed into this release...
+
+**[Continue reading this blog post](/blog/arcade/update-jan-2023)**
+
+## [Computer Science Education Week 2022](/blog/csed-week/csed-week-2022)
+
+November 14th, 2022 by [Jaqster](https://github.com/jaqster)
+
+Along with the holidays, Computer Science Education Week is coming up December 5th - 11th. This is an annual event to raise the visibility of computer science in education, and to inspire all teachers and students to do an "Hour of Code" during this week.
+
+**[Continue reading this blog post](/blog/csed-week/csed-week-2022)**
+
+## [MakeCode Arcade Fall Release](/blog/arcade/fall-release-2022)
+
+October 3rd, 2022 by [Jaqster](https://github.com/jaqster)
+
+The [MakeCode Arcade](https://arcade.makecode.com) Fall Release is here! We wanted to get an update out sooner, but we couldn't resist adding more and more things...
+
+**[Continue reading this blog post](/blog/arcade/fall-release-2022)**
+
+## [MakeCode Translation Tips and Tricks](/blog/localization/tips-and-tricks)
+
+September 19th, 2022 by [anzhou5](https://github.com/anzhou5)
+
+Language translation for MakeCode is possible thanks to an amazing community of volunteer translators! If you would like to get involved or want to learn more about translating MakeCode...
+
+**[Continue reading this blog post](/blog/localization/tip-and-tricks)**
+
+## [MakeCode Minecraft 2022 Update](/blog/minecraft/2022-release)
+
+August 9th, 2022 by [Jaqster](https://github.com/jaqster)
+
+Well, just in time for back-to-school, we have some nice MakeCode updates to share with everyone that will make your coding experience in Minecraft: Education Edition even better!
+
+**[Continue reading this blog post](/blog/minecraft/2022-release)**
+
+## [MakeCode for the micro:bit – Buzz, Beep, Bing, Hello 2022 Update!](/blog/microbit/2022-release)
+
+June 17th, 2022 by [Jaqster](https://github.com/jaqster)
+
+As always at this time of year we have a new MakeCode release for the micro:bit that is jam-packed full of improvements, bug fixes, and new stuff.
+
+**[Continue reading this blog post](/blog/microbit/2022-release)**
+
+## [AP Computer Science Principles with MakeCode Professional Development](/blog/csp/csp-prodev-2022)
+
+April 29th, 2022 by [Jaqster](https://github.com/jaqster)
+
+It's hard to believe the academic year is almost over and Summer is on the horizon! Even so, this is a great time to start planning some professional development between those camping and road trips.
+
+**[Continue reading this blog post](/blog/csp/csp-prodev-2022)**
+
+## [MakeCode Arcade Valentine’s Update](/blog/arcade/valentine-update-2022)
+
+February 9th, 2022 by [Jaqster](https://github.com/jaqster)
+
+Love is in the air! But instead of a box of chocolates, we’ve got something better for you... updates for MakeCode Arcade and a Valentine’s Day tutorial! 💖
+
+**[Continue reading this blog post](/blog/arcade/valentine-update-2022)**
+
 ## [Sing 2 Skillmap](/blog/arcade/sing-2-skillmap)
 
 December 27th, 2021 by [ElizabethRiffle](https://github.com/ElizabethRiffle)
