@@ -5,7 +5,7 @@ import { DecompileResult, compileBlocksAsync, decompileSnippetAsync, renderProje
 import * as Blockly from "blockly";
 
 import { BlocksRenderOptions, cleanRenderingWorkspace, decompiledDiffAsync, diffXml, render } from "../pxtblocks";
-import { CodeCardRenderOptions, renderCodeCard } from "../pxtblocks/codecardRenderer";
+import { CodeCardRenderOptions, renderCodeCard } from "../pxtblocks/codecardrenderer";
 
 const JS_ICON = "icon xicon js";
 const PY_ICON = "icon xicon python";
