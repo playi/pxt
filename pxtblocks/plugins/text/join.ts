@@ -176,15 +176,17 @@ Blockly.Extensions.registerMutator('pxt_text_join_mutator',
     TEXT_JOIN_EXTENSION
 );
 
-Blockly.defineBlocksWithJsonArray([
-    {
-        "type": "text_join",
-        "message0": "",
-        "output": "String",
-        "outputShape": new Blockly.zelos.ConstantProvider().SHAPES.ROUND,
-        "style": "text_blocks",
-        "helpUrl": "%{BKY_TEXT_JOIN_HELPURL}",
-        "tooltip": "%{BKY_TEXT_JOIN_TOOLTIP}",
-        "mutator": "pxt_text_join_mutator"
-      },
-])
+if (!Blockly.Blocks["text_join"]) {
+    Blockly.defineBlocksWithJsonArray([
+        {
+            "type": "text_join",
+            "message0": "",
+            "output": "String",
+            "outputShape": new Blockly.zelos.ConstantProvider().SHAPES.ROUND,
+            "style": "text_blocks",
+            "helpUrl": "%{BKY_TEXT_JOIN_HELPURL}",
+            "tooltip": "%{BKY_TEXT_JOIN_TOOLTIP}",
+            "mutator": "pxt_text_join_mutator"
+        },
+    ]);
+}

@@ -1,5 +1,6 @@
 import * as Blockly from "blockly";
 
+if (!Blockly.Blocks["text"]) {
 Blockly.defineBlocksWithJsonArray([  // BEGIN JSON EXTRACT
   // Block for text value
   {
@@ -20,4 +21,4 @@ Blockly.defineBlocksWithJsonArray([  // BEGIN JSON EXTRACT
       "parent_tooltip_when_inline"
     ]
   }
-]);
+])};
