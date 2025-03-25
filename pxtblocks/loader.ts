@@ -1,7 +1,7 @@
 /// <reference path="../built/pxtlib.d.ts" />
 import * as Blockly from "blockly";
 import { optionalDummyInputPrefix, optionalInputWithFieldPrefix, provider } from "./constants";
-import { initExpandableBlock, initVariableArgsBlock, appendMutation } from "./composableMutations";
+import { initExpandableBlock, initVariableArgsBlock, appendMutation } from "./composablemutations";
 import { addMutation, MutatingBlock, MutatorTypes } from "./legacyMutations";
 import { initMath } from "./builtins/math";
 import { FieldCustom, FieldCustomDropdownOptions, FieldCustomOptions } from "./fields";
@@ -21,7 +21,7 @@ import { promptTranslateBlock } from "./external";
 import { initVariables } from "./builtins/variables";
 import { initOnStart } from "./builtins/misc";
 import { initContextMenu } from "./contextMenu";
-import { renderCodeCard } from "./codecardRenderer";
+import { renderCodeCard } from "./codecardrenderer";
 import { FieldDropdown } from "./fields/field_dropdown";
 import { setDraggableShadowBlocks, setDuplicateOnDrag, setDuplicateOnDragStrategy } from "./plugins/duplicateOnDrag";
 import { applyPolyfills } from "./polyfills";
