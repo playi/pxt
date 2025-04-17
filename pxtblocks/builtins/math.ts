@@ -4,7 +4,7 @@
 import * as Blockly from "blockly"
 import { attachCardInfo, installBuiltinHelpInfo, installHelpResources, setBuiltinHelpInfo, setHelpResources } from "../help";
 import { provider } from "../constants";
-import { appendMutation } from "../composableMutations";
+import { appendMutation } from "../composablemutations";
 import { FieldDropdown } from "../fields/field_dropdown";
 
 export function initMath(blockInfo: pxtc.BlocksInfo) {
@@ -159,7 +159,7 @@ export function initMathOpBlock() {
             // Because the shape of inputs changes, we need a mutation. Technically the op tells us
             // how many inputs we should have but we can't read its value at init time
             appendMutation(b, {
-                mutationToDom: mutation => {
+                mutationToDom: (mutation: Element) => {
                     let infix: boolean;
                     for (let i = 0; i < b.inputList.length; i++) {
                         const input = b.inputList[i];
@@ -175,7 +175,7 @@ export function initMathOpBlock() {
                     mutation.setAttribute("op-type", (b.getInput("ARG1") ? (infix ? "infix" : "binary") : "unary").toString());
                     return mutation;
                 },
-                domToMutation: saved => {
+                domToMutation: (saved: Element) => {
                     if (saved.hasAttribute("op-type")) {
                         const type = saved.getAttribute("op-type");
                         if (type != "unary") {
