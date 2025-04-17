@@ -1,7 +1,7 @@
 /// <reference path="../localtypings/pxtarget.d.ts"/>
 
 namespace pxt {
-    declare var require: any;
+    declare let require: any;
 
     let lzmaPromise: Promise<any>;
     function getLzmaAsync() {
@@ -75,6 +75,21 @@ namespace pxt.cpp {
         return null;
     }
 
+    const vmKeepFunctions: pxt.Map<number> = {
+        "pxt::mkAction": 1,
+        "pxt::dumpPerfCounters": 1,
+        "pxt::deepSleep": 1,
+        "pxt::getConfig": 1,
+
+        "pxtrt::mkMap": 1,
+        "pxtrt::mapSet": 1,
+        "pxtrt::stclo": 1,
+        "pxtrt::mklocRef": 1,
+        "pxtrt::stlocRef": 1,
+        "pxtrt::ldlocRef": 1,
+        "pxtrt::panic": 1,
+    }
+
     export function nsWriter(nskw = "namespace") {
         let text = ""
         let currNs = ""
@@ -124,8 +139,7 @@ namespace pxt.cpp {
         return null
     }
 
-    let prevExtInfo: pxtc.ExtensionInfo;
-    let prevSnapshot: Map<string>;
+    let prevExtInfos: Map<pxtc.ExtensionInfo> = {};
 
     export class PkgConflictError extends Error {
         pkg0: Package;
@@ -142,21 +156,49 @@ namespace pxt.cpp {
     }
 
     export function getExtensionInfo(mainPkg: MainPackage): pxtc.ExtensionInfo {
-        let pkgSnapshot: Map<string> = {}
-        let constsName = "dal.d.ts"
+        const pkgSnapshot: Map<string> = {
+            "__appVariant": pxt.appTargetVariant || ""
+        }
+        const constsName = "dal.d.ts"
         let sourcePath = "/source/"
+        let disabledDeps = ""
+        let mainDeps: Package[] = []
 
-        for (let pkg of mainPkg.sortedDeps()) {
+        // order shouldn't matter for c++ compilation,
+        // so use a stable order to prevent order changes from fetching a new hex file
+        const mainPkgDeps = mainPkg.sortedDeps(true)
+            .sort((a, b) => {
+                if (a.id == "this") return 1;
+                else if (b.id == "this") return -1;
+                else return U.strcmp(a.id, b.id);
+            });
+
+        for (let pkg of mainPkgDeps) {
+            if (pkg.disablesVariant(pxt.appTargetVariant) ||
+                pkg.resolvedDependencies().some(d => d.disablesVariant(pxt.appTargetVariant))) {
+                if (disabledDeps)
+                    disabledDeps += ", "
+                disabledDeps += pkg.id
+                pxt.debug(`disable variant ${pxt.appTargetVariant} due to ${pkg.id}`)
+                continue
+            }
+            mainDeps.push(pkg)
             pkg.addSnapshot(pkgSnapshot, [constsName, ".h", ".cpp"])
         }
 
-        if (prevSnapshot && U.stringMapEq(pkgSnapshot, prevSnapshot)) {
+        const key = JSON.stringify(pkgSnapshot)
+        const prevInfo = prevExtInfos[key]
+        if (prevInfo) {
             pxt.debug("Using cached extinfo")
-            return prevExtInfo
+            const r = U.flatClone(prevInfo)
+            r.disabledDeps = disabledDeps
+            return r
         }
 
         pxt.debug("Generating new extinfo")
         const res = pxtc.emptyExtInfo();
+
+        res.disabledDeps = disabledDeps
 
         let compileService = appTarget.compileService;
         if (!compileService)
@@ -166,24 +208,30 @@ namespace pxt.cpp {
             }
         compileService = U.clone(compileService)
 
-        let compile = appTarget.compile
+        let compile = mainPkg.getTargetOptions()
         if (!compile)
             compile = {
                 isNative: false,
                 hasHex: false,
+                switches: {}
             }
 
         const isPlatformio = !!compileService.platformioIni;
         const isCodal = compileService.buildEngine == "codal" || compileService.buildEngine == "dockercodal"
-        const isDockerMake = compileService.buildEngine == "dockermake"
-        const isYotta = !isPlatformio && !isCodal && !isDockerMake
+        const isDockerMake = compileService.buildEngine == "dockermake" || compileService.buildEngine == "dockercross"
+        const isEspIdf = compileService.buildEngine == "dockerespidf"
+        const isYotta = !isPlatformio && !isCodal && !isDockerMake && !isEspIdf
+        const isVM = compile.nativeType == pxtc.NATIVE_TYPE_VM
         if (isPlatformio)
             sourcePath = "/src/"
         else if (isCodal || isDockerMake)
             sourcePath = "/pxtapp/"
+        else if (isEspIdf)
+            sourcePath = "/main/"
 
         let pxtConfig = "// Configuration defines\n"
         let pointersInc = "\nPXT_SHIMS_BEGIN\n"
+        let pointerIncPre = ""
         let abiInc = ""
         let includesInc = `#include "pxt.h"\n`
         let thisErrors = ""
@@ -196,6 +244,7 @@ namespace pxt.cpp {
         let enumsDTS = nsWriter("declare namespace")
         let allErrors = ""
         let knownEnums: Map<boolean> = {}
+        let vmVisitedFunctions: Map<boolean> = {}
 
 
         const enumVals: Map<string> = {
@@ -210,9 +259,7 @@ namespace pxt.cpp {
             return name.trim().replace(/[\_\*]$/, "")
         }
 
-        let makefile = ""
-
-        for (const pkg of mainPkg.sortedDeps()) {
+        for (const pkg of mainDeps) {
             if (pkg.getFiles().indexOf(constsName) >= 0) {
                 const src = pkg.host().readFile(pkg, constsName)
                 Util.assert(!!src, `${constsName} not found in ${pkg.id}`)
@@ -223,10 +270,34 @@ namespace pxt.cpp {
                     }
                 })
             }
-            if (!makefile && pkg.getFiles().indexOf("Makefile") >= 0) {
-                makefile = pkg.host().readFile(pkg, "Makefile")
+
+            for (const fn of pkg.getFiles()) {
+                if (["Makefile", "sdkconfig.defaults", "CMakeLists.txt"].indexOf(fn) >= 0 || U.endsWith(fn, ".mk")) {
+                    res.generatedFiles["/" + fn] = pkg.host().readFile(pkg, fn)
+                }
             }
         }
+
+        let hash_if_options = ["0", "false", "PXT_UTF8"]
+
+        let cpp_options: pxt.Map<number> = {}
+        if (compile.switches.boxDebug)
+            cpp_options["PXT_BOX_DEBUG"] = 1
+
+        if (compile.utf8)
+            cpp_options["PXT_UTF8"] = 1
+
+        if (compile.switches.profile)
+            cpp_options["PXT_PROFILE"] = 1
+
+        if (compile.switches.gcDebug)
+            cpp_options["PXT_GC_DEBUG"] = 1
+
+        if (compile.switches.numFloat)
+            cpp_options["PXT_USE_FLOAT"] = 1
+
+        if (compile.nativeType == pxtc.NATIVE_TYPE_VM)
+            cpp_options["PXT_VM"] = 1
 
         function stripComments(ln: string) {
             return ln.replace(/\/\/.*/, "").replace(/\/\*/, "")
@@ -238,19 +309,15 @@ namespace pxt.cpp {
         let currDocComment = ""
         let currAttrs = ""
         let inDocComment = false
-        let outp = ""
 
         function handleComments(ln: string) {
-            if (inEnum) {
-                outp += ln + "\n"
+            if (inEnum)
                 return true
-            }
 
             if (/^\s*\/\*\*/.test(ln)) {
                 inDocComment = true
                 currDocComment = ln + "\n"
                 if (/\*\//.test(ln)) inDocComment = false
-                outp += "//\n"
                 return true
             }
 
@@ -259,17 +326,14 @@ namespace pxt.cpp {
                 if (/\*\//.test(ln)) {
                     inDocComment = false
                 }
-                outp += "//\n"
                 return true
             }
 
             if (/^\s*\/\/%/.test(ln)) {
                 currAttrs += ln + "\n"
-                outp += "//\n"
                 return true
             }
 
-            outp += ln + "\n"
             return false
         }
 
@@ -392,12 +456,15 @@ namespace pxt.cpp {
             let indexedInstanceIdx = -1
 
             // replace #if 0 .... #endif with newlines
-            src = src.replace(/^\s*#\s*if\s+0\s*$[^]*?^\s*#\s*endif\s*$/mg, f => f.replace(/[^\n]/g, ""))
+            src = src.replace(/^(\s*#\s*if\s+(\w+)\s*$)([^]*?)(^\s*#\s*(elif|else|endif)\s*$)/mg,
+                (f, _if, arg, middle, _endif) =>
+                    hash_if_options.indexOf(arg) >= 0 && !cpp_options[arg] ?
+                        _if + middle.replace(/[^\n]/g, "") + _endif : f)
 
             // special handling of C++ namespace that ends with Methods (e.g. FooMethods)
             // such a namespace will be converted into a TypeScript interface
             // this enables simple objects with methods to be defined. See, for example:
-            // https://github.com/Microsoft/pxt-microbit/blob/master/libs/core/buffer.cpp
+            // https://github.com/microsoft/pxt-microbit/blob/master/libs/core/buffer.cpp
             // within that namespace, the first parameter of each function should have
             // the type Foo
             function interfaceName() {
@@ -488,11 +555,96 @@ namespace pxt.cpp {
                     default:
                         if (U.lookup(knownEnums, tp))
                             return "I"
-                        return "_";
+                        return "_" + tp.replace(/[\*_]+$/, "");
                 }
             }
 
-            outp = ""
+            function generateVMWrapper(fi: pxtc.FuncInfo, argTypes: string[]) {
+                if (argTypes[0] == "FiberContext*")
+                    return "::" + fi.name // no wrapper
+
+                let wrap = "_wrp_" + fi.name.replace(/:/g, "_")
+                if (vmVisitedFunctions[fi.name])
+                    return wrap
+                vmVisitedFunctions[fi.name] = true
+                /*
+                void call_getConfig(FiberContext *ctx) {
+                    int a0 = toInt(ctx->sp[0]);
+                    int a1 = toInt(ctx->r0); // last argument in r0
+                    int r = getConfig(a0, a1);
+                    ctx->r0 = fromInt(r);
+                    ctx->sp += 1;
+                }
+                */
+                pointerIncPre += `\nvoid ${wrap}(FiberContext *ctx) {\n`
+                const numArgs = argTypes.length
+                let refs: string[] = []
+                let needsStackSave = false
+
+                let allConvs = ""
+
+                for (let i = 0; i < numArgs; ++i) {
+                    const ind = fi.argsFmt[i + 1]
+                    const tp = argTypes[i]
+                    let conv =
+                        ind == "I" ? "toInt" :
+                            ind == "B" ? "numops::toBool" :
+                                ""
+                    const inp = i == numArgs - 1 ? "ctx->r0" : `ctx->sp[${numArgs - i - 2}]`
+                    let argPref = ""
+
+                    switch (tp) {
+                        case "TValue":
+                        case "TNumber":
+                            break
+                        case "Action":
+                            conv = "asRefAction"
+                            break
+                        case "String":
+                            conv = "convertToString"
+                            argPref = "ctx, "
+                            needsStackSave = true
+                            break
+                        default:
+                            if (!conv) conv = "as" + tp.replace(/\*/g, "")
+                            break
+                    }
+
+                    allConvs += `  ${tp} a${i} = (${tp}) ${conv}(${argPref}${inp});\n`
+                    refs.push("a" + i)
+                }
+
+                if (needsStackSave)
+                    pointerIncPre += "  auto prevSP = ctx->sp;\n"
+
+                pointerIncPre += allConvs
+
+                if (needsStackSave)
+                    pointerIncPre += "  if (panicCode) { ctx->sp = prevSP; return; }\n"
+
+                const call = `::${fi.name}(${refs.join(", ")})`
+
+                if (fi.argsFmt[0] == "V") {
+                    pointerIncPre += `  ${call};\n`
+                    pointerIncPre += `  ctx->r0 = NULL;\n`
+                } else if (fi.argsFmt[0] == "I") {
+                    pointerIncPre += `  ctx->r0 = fromInt(${call});\n`
+                } else if (fi.argsFmt[0] == "B") {
+                    pointerIncPre += `  ctx->r0 = fromBool(${call});\n`
+                } else {
+                    pointerIncPre += `  ctx->r0 = (TValue)${call};\n`
+                }
+
+                if (needsStackSave)
+                    pointerIncPre += "  ctx->sp = prevSP;\n"
+
+                if (numArgs > 1)
+                    pointerIncPre += `  ctx->sp += ${numArgs - 1};\n`
+                pointerIncPre += `}\n`
+
+                return wrap
+            }
+
             inEnum = false
             enumVal = 0
 
@@ -544,14 +696,21 @@ namespace pxt.cpp {
                 }
 
                 m = /^PXT_ABI\((\w+)\)/.exec(ln)
-                if (m) {
+                if (m && !isVM) {
                     pointersInc += `PXT_FNPTR(::${m[1]}),\n`
                     abiInc += `extern "C" void ${m[1]}();\n`
                     res.functions.push({
                         name: m[1],
-                        argsFmt: "",
+                        argsFmt: [],
                         value: 0
                     })
+                }
+
+                m = /^\s*PXT_EXPORT\(([:\&\w]+)\)/.exec(ln)
+                if (m) {
+                    if (!res.vmPointers)
+                        res.vmPointers = []
+                    res.vmPointers.push(m[1])
                 }
 
                 m = /^#define\s+PXT_COMM_BASE\s+([0-9a-fx]+)/.exec(ln)
@@ -569,13 +728,14 @@ namespace pxt.cpp {
                     let funName = m[3]
                     let origArgs = m[4]
                     currAttrs = currAttrs.trim().replace(/ \w+\.defl=\w+/g, "")
-                    let argsFmt = mapRunTimeType(retTp)
+                    let argsFmt = [mapRunTimeType(retTp)]
+                    let argTypes: string[] = []
                     let args = origArgs.split(/,/).filter(s => !!s).map(s => {
                         let r = parseArg(parsedAttrs, s)
-                        argsFmt += mapRunTimeType(r.type)
+                        argsFmt.push(mapRunTimeType(r.type))
+                        argTypes.push(r.type.replace(/ /g, ""))
                         return `${r.name}: ${mapType(r.type)}`
                     })
-                    let numArgs = args.length
                     let fi: pxtc.FuncInfo = {
                         name: currNs + "::" + funName,
                         argsFmt,
@@ -615,8 +775,31 @@ namespace pxt.cpp {
                     res.functions.push(fi)
                     if (isYotta)
                         pointersInc += "(uint32_t)(void*)::" + fi.name + ",\n"
-                    else
+                    else if (isVM) {
+                        if (U.startsWith(fi.name, "pxt::op_") ||
+                            vmKeepFunctions[fi.name] ||
+                            parsedAttrs.expose ||
+                            (!U.startsWith(fi.name, "pxt::") && !U.startsWith(fi.name, "pxtrt::"))) {
+                            const wrap = generateVMWrapper(fi, argTypes)
+                            const nargs = fi.argsFmt.length - 1
+                            pointersInc += `{ "${fi.name}", (OpFun)(void*)${wrap}, ${nargs} },\n`
+                        }
+                    } else
                         pointersInc += "PXT_FNPTR(::" + fi.name + "),\n"
+                    return;
+                }
+
+                m = /^\s*extern const (\w+) (\w+);/.exec(ln)
+                if (currAttrs && m) {
+                    let fi: pxtc.FuncInfo = {
+                        name: currNs + "::" + m[2],
+                        argsFmt: [],
+                        value: null
+                    }
+                    res.functions.push(fi)
+                    if (!isVM)
+                        pointersInc += "PXT_FNPTR(&::" + fi.name + "),\n"
+                    currAttrs = ""
                     return;
                 }
 
@@ -651,16 +834,15 @@ namespace pxt.cpp {
                     return;
                 }
             })
-
-            return outp
         }
 
         const currSettings: Map<any> = U.clone(compileService.yottaConfig || {})
         const optSettings: Map<any> = {}
         const settingSrc: Map<Package> = {}
+        const codalLibraries: pxt.Map<github.ParsedRepo> = {}
 
         function parseJson(pkg: Package) {
-            let j0 = pkg.config.platformio
+            const j0 = pkg.config.platformio
             if (j0 && j0.dependencies) {
                 U.jsonCopyFrom(res.platformio.dependencies, j0.dependencies)
             }
@@ -668,7 +850,24 @@ namespace pxt.cpp {
             if (res.npmDependencies && pkg.config.npmDependencies)
                 U.jsonCopyFrom(res.npmDependencies, pkg.config.npmDependencies)
 
-            let json = pkg.config.yotta
+            const codal = pkg.config.codal
+            if (isCodal && codal) {
+                for (const lib of codal.libraries || []) {
+                    const repo = github.parseRepoId(lib)
+                    if (!repo)
+                        U.userError(lf("codal library {0} doesn't look like github repo", lib))
+                    const canonical = github.stringifyRepo(repo)
+                    const existing = U.lookup(codalLibraries, repo.project)
+                    if (existing) {
+                        if (github.stringifyRepo(existing) != canonical)
+                            U.userError(lf("conflict between codal libraries: {0} and {1}", github.stringifyRepo(existing), canonical))
+                    } else {
+                        codalLibraries[repo.project] = repo
+                    }
+                }
+            }
+
+            const json = pkg.config.yotta
             if (!json) return;
 
             // TODO check for conflicts
@@ -721,8 +920,7 @@ namespace pxt.cpp {
         if (mainPkg) {
             let seenMain = false
 
-            // TODO computeReachableNodes(pkg, true)
-            for (let pkg of mainPkg.sortedDeps()) {
+            for (let pkg of mainDeps) {
                 thisErrors = ""
                 parseJson(pkg)
                 if (pkg == mainPkg) {
@@ -733,9 +931,16 @@ namespace pxt.cpp {
                 } else {
                     U.assert(!seenMain)
                 }
-                let ext = ".cpp"
-                for (let fn of pkg.getFiles()) {
-                    let isHeader = U.endsWith(fn, ".h")
+                // Generally, headers need to be processed before sources, as they contain definitions
+                // (in particular of enums, which are needed to decide if we're doing conversions for
+                // function arguments). This can still fail if one header uses another and they are
+                // listed in invalid order...
+                const isHeaderFn = (fn: string) => U.endsWith(fn, ".h")
+                const ext = ".cpp"
+                const files = pkg.getFiles().filter(isHeaderFn)
+                    .concat(pkg.getFiles().filter(s => !isHeaderFn(s)))
+                for (let fn of files) {
+                    const isHeader = isHeaderFn(fn)
                     if (isHeader || U.endsWith(fn, ext)) {
                         let fullName = pkg.config.name + "/" + fn
                         if ((pkg.config.name == "base" || /^core($|---)/.test(pkg.config.name)) && isHeader)
@@ -747,9 +952,8 @@ namespace pxt.cpp {
                             U.userError(lf("C++ file {0} is missing in extension {1}.", fn, pkg.config.name))
                         fileName = fullName
 
-                        // parseCpp() will remove doc comments, to prevent excessive recompilation
-                        pxt.debug("Parse C++: " + fullName)
-                        src = parseCpp(src, isHeader)
+                        parseCpp(src, isHeader)
+                        // src = src.replace(/^[ \t]*/mg, "") // HACK: shrink the files
                         res.extensionFiles[sourcePath + fullName] = src
 
                         if (pkg.level == 0)
@@ -766,6 +970,12 @@ namespace pxt.cpp {
                     allErrors += lf("Extension {0}:\n", pkg.id) + thisErrors
                 }
             }
+
+            if (!seenMain) {
+                // this can happen if the main package is disabled in current variant
+                shimsDTS.clear()
+                enumsDTS.clear()
+            }
         }
 
         if (allErrors)
@@ -773,6 +983,30 @@ namespace pxt.cpp {
 
         // merge optional settings
         U.jsonCopyFrom(optSettings, currSettings);
+        U.iterMap(optSettings, (k, v) => {
+            if (v === null) {
+                delete optSettings[k];
+            }
+        })
+        // fix keys - ==> _
+        Object.keys(optSettings)
+            .filter(k => /-/.test(k)).forEach(k => {
+                const v = optSettings[k];
+                delete optSettings[k];
+                optSettings[k.replace(/-/g, '_')] = v;
+            })
+        if (!isYotta && compileService.yottaConfigCompatibility) { // yotta automatically adds YOTTA_CFG_
+            Object.keys(optSettings)
+                .forEach(k => optSettings["YOTTA_CFG_" + k] = optSettings[k]);
+        }
+
+        optSettings["PXT_TARGET"] = JSON.stringify(appTarget.id)
+
+        function allFilesWithExt(ext: string) {
+            let allfiles = Object.keys(res.extensionFiles).concat(Object.keys(res.generatedFiles))
+            return allfiles.filter(f => U.endsWith(f, ext)).map(s => s.slice(1))
+        }
+
         const configJson = U.jsonUnFlatten(optSettings)
         if (isDockerMake) {
             let packageJson = {
@@ -781,6 +1015,17 @@ namespace pxt.cpp {
                 dependencies: res.npmDependencies,
             }
             res.generatedFiles["/package.json"] = JSON.stringify(packageJson, null, 4) + "\n"
+        } else if (isEspIdf) {
+            const files = U.concatArrayLike<string>([
+                allFilesWithExt(".c"),
+                allFilesWithExt(".cpp"),
+                allFilesWithExt(".s")
+            ]).map(s => s.slice(sourcePath.length - 1)).concat(["main.cpp"])
+            files.push("pointers.cpp")
+            res.generatedFiles[sourcePath + "CMakeLists.txt"] =
+                `idf_component_register(\n  SRCS\n` +
+                files.map(f => `    "${f}"\n`).join("") +
+                `  INCLUDE_DIRS\n    "."\n)\n`
         } else if (isCodal) {
             let cs = compileService
             let cfg = U.clone(cs.codalDefinitions) || {}
@@ -795,13 +1040,22 @@ namespace pxt.cpp {
                 // include these, because we use hash of this file to see if anything changed
                 "pxt_gitrepo": cs.githubCorePackage,
                 "pxt_gittag": cs.gittag,
+                "libraries": U.values(codalLibraries).map(r => ({
+                    "name": r.project,
+                    "url": "https://github.com/" + r.fullName,
+                    "branch": r.tag || "master",
+                    "type": "git"
+                }))
             }
+            if (codalJson.libraries.length == 0)
+                delete codalJson.libraries
             U.iterMap(U.jsonFlatten(configJson), (k, v) => {
                 k = k.replace(/^codal\./, "device.").toUpperCase().replace(/\./g, "_")
                 cfg[k] = v
             })
             res.generatedFiles["/codal.json"] = JSON.stringify(codalJson, null, 4) + "\n"
             pxt.debug(`codal.json: ${res.generatedFiles["/codal.json"]}`);
+            res.codal = codalJson
         } else if (isPlatformio) {
             const iniLines = compileService.platformioIni.slice()
             // TODO merge configjson
@@ -829,14 +1083,15 @@ namespace pxt.cpp {
             pxt.debug(`module.json: ${res.generatedFiles["/module.json"]}`)
         }
 
-        if (compile.boxDebug) {
-            pxtConfig += "#define PXT_BOX_DEBUG 1\n"
+        for (let k of Object.keys(cpp_options)) {
+            pxtConfig += `#define ${k} ${cpp_options[k]}\n`
         }
 
-        if (compile.vtableShift)
-            pxtConfig += `#define PXT_VTABLE_SHIFT ${compile.vtableShift}\n`
+        if (compile.uf2Family)
+            pxtConfig += `#define PXT_UF2_FAMILY ${compile.uf2Family}\n`
 
-        res.generatedFiles[sourcePath + "pointers.cpp"] = includesInc + protos.finish() + abiInc + pointersInc + "\nPXT_SHIMS_END\n"
+        res.generatedFiles[sourcePath + "pointers.cpp"] = includesInc + protos.finish() + abiInc +
+            pointerIncPre + pointersInc + "\nPXT_SHIMS_END\n"
         res.generatedFiles[sourcePath + "pxtconfig.h"] = pxtConfig
         pxt.debug(`pxtconfig.h: ${res.generatedFiles[sourcePath + "pxtconfig.h"]}`)
         if (isYotta) {
@@ -856,24 +1111,21 @@ int main() {
 }
 #endif
 `
-        if (makefile) {
-            let allfiles = Object.keys(res.extensionFiles).concat(Object.keys(res.generatedFiles))
+        if (res.generatedFiles["/Makefile"]) {
             let inc = ""
-            let objs: string[] = []
             let add = (name: string, ext: string) => {
-                let files = allfiles.filter(f => U.endsWith(f, ext)).map(s => s.slice(1))
-                inc += `${name} = ${files.join(" ")}\n`
+                inc += `${name} = ${allFilesWithExt(ext).join(" ")}\n`
             }
             add("PXT_C", ".c")
             add("PXT_CPP", ".cpp")
             add("PXT_S", ".s")
             add("PXT_HEADERS", ".h")
-            inc += "PXT_SOURCES = $(PXT_C) $(PXT_S) $(PXT_CPP)\n"
-            inc += "PXT_OBJS = $(addprefix bld/, $(PXT_C:.c=.o) $(PXT_S:.s=.o) $(PXT_CPP:.cpp=.o))\n"
-            res.generatedFiles["/Makefile"] = makefile
+            inc += "PXT_SOURCES := $(PXT_C) $(PXT_S) $(PXT_CPP)\n"
+            inc += "PXT_OBJS := $(addprefix bld/, $(PXT_C:.c=.o) $(PXT_S:.s=.o) $(PXT_CPP:.cpp=.o))\n"
             res.generatedFiles["/Makefile.inc"] = inc
-
         }
+
+        res.generatedFiles["/functions.json"] = JSON.stringify(res.functions, null, 1)
 
         let tmp = res.extensionFiles
         U.jsonCopyFrom(tmp, res.generatedFiles)
@@ -887,12 +1139,14 @@ int main() {
 
         let data = JSON.stringify(creq)
         res.sha = U.sha256(data)
+        res.skipCloudBuild = !!compileService.skipCloudBuild
         res.compileData = ts.pxtc.encodeBase64(U.toUTF8(data))
         res.shimsDTS = shimsDTS.finish()
         res.enumsDTS = enumsDTS.finish()
 
-        prevSnapshot = pkgSnapshot
-        prevExtInfo = res
+        if (Object.keys(prevExtInfos).length > 10)
+            prevExtInfos = {}
+        prevExtInfos[key] = res
 
         return res;
     }
@@ -963,14 +1217,14 @@ int main() {
         let buf: number[];
         let ptr = 0;
         hexfile.split(/\r?\n/).forEach(ln => {
-            let m = /^:10....0041140E2FB82FA2BB(....)(....)(....)(....)(..)/.exec(ln)
+            let m = /^:10....0[0E]41140E2FB82FA2BB(....)(....)(....)(....)(..)/.exec(ln)
             if (m) {
                 metaLen = parseInt(swapBytes(m[1]), 16)
                 textLen = parseInt(swapBytes(m[2]), 16)
                 toGo = metaLen + textLen
                 buf = <any>new Uint8Array(toGo)
             } else if (toGo > 0) {
-                m = /^:10....00(.*)(..)$/.exec(ln)
+                m = /^:10....0[0E](.*)(..)$/.exec(ln)
                 if (!m) return
                 let k = m[1]
                 while (toGo > 0 && k.length > 0) {
@@ -1075,9 +1329,10 @@ int main() {
     }
 }
 
-namespace pxt.hex {
+namespace pxt.hexloader {
     const downloadCache: Map<Promise<pxtc.HexInfo>> = {};
     let cdnUrlPromise: Promise<string>;
+    let hexInfoMemCache: pxt.Map<pxtc.HexInfo> = {}
 
     export let showLoading: (msg: string) => void = (msg) => { };
     export let hideLoading: () => void = () => { };
@@ -1103,27 +1358,45 @@ namespace pxt.hex {
         let hexurl = ""
 
         showLoading(pxt.U.lf("Compiling (this may take a minute)..."));
+        pxt.tickEvent("cppcompile.start")
         return downloadHexInfoLocalAsync(extInfo)
             .then((hex) => {
                 if (hex) {
                     // Found the hex image in the local server cache, use that
+                    pxt.tickEvent("cppcompile.cachehit")
                     return hex;
                 }
-
                 return getCdnUrlAsync()
                     .then(url => {
                         hexurl = url + "/compile/" + extInfo.sha
                         return U.httpGetTextAsync(hexurl + ".hex")
                     })
                     .then(r => r, e =>
-                        Cloud.privatePostAsync("compile/extension", { data: extInfo.compileData })
+                        Cloud.privatePostAsync("compile/extension", { data: extInfo.compileData }, true)
                             .then(ret => new Promise<string>((resolve, reject) => {
-                                let tryGet = () => {
+                                let retry = 0;
+                                const delay = 8000; // ms
+                                const maxWait = 300000; // ms
+                                const startTry = U.now();
+                                const tryGet = () => {
+                                    retry++;
+                                    if (U.now() - startTry > maxWait) {
+                                        pxt.log(`abandoning C++ build`)
+                                        pxt.tickEvent("cppcompile.cancel", { retry })
+                                        resolve(null);
+                                        return null;
+                                    }
                                     let url = ret.hex.replace(/\.hex/, ".json")
-                                    pxt.log(`polling C++ build ${url}`)
+                                    pxt.log(`polling C++ build ${url} (attempt #${retry})`)
+                                    pxt.tickEvent("cppcompile.poll", { retry })
                                     return Util.httpGetJsonAsync(url)
                                         .then(json => {
                                             pxt.log(`build log ${url.replace(/\.json$/, ".log")}`);
+                                            pxt.tickEvent("cppcompile.done", {
+                                                success: json?.success ? 1 : 0,
+                                                retry,
+                                                duration: U.now() - startTry
+                                            })
                                             if (!json.success) {
                                                 pxt.log(`build failed`);
                                                 if (json.mbedresponse && json.mbedresponse.result && json.mbedresponse.result.exception)
@@ -1136,8 +1409,9 @@ namespace pxt.hex {
                                             }
                                         },
                                             e => {
-                                                setTimeout(tryGet, 1000)
-                                                return null
+                                                pxt.log(`waiting ${(delay / 1000) | 0}s for C++ build...`)
+                                                setTimeout(tryGet, delay)
+                                                return null;
                                             })
                                 }
                                 tryGet();
@@ -1154,6 +1428,9 @@ namespace pxt.hex {
     }
 
     function downloadHexInfoLocalAsync(extInfo: pxtc.ExtensionInfo): Promise<pxtc.HexInfo> {
+        if (extInfo.skipCloudBuild)
+            return Promise.resolve({ hex: ["SKIP"] })
+
         if (pxt.webConfig && pxt.webConfig.isStatic) {
             return Util.requestAsync({
                 url: `${pxt.webConfig.cdnUrl}hexcache/${extInfo.sha}.hex`
@@ -1176,7 +1453,7 @@ namespace pxt.hex {
                 });
         }
 
-        if (!Cloud.localToken || !window || !Cloud.isLocalHost()) {
+        if (!Cloud.localToken || !window || !pxt.BrowserUtils.isLocalHost()) {
             return Promise.resolve(undefined);
         }
 
@@ -1212,7 +1489,7 @@ namespace pxt.hex {
                 keys.unshift(newkey)
                 let todel = keys.slice(maxLen)
                 keys = keys.slice(0, maxLen)
-                return Promise.map(todel, e => host.cacheStoreAsync(e, null))
+                return U.promiseMapAll(todel, e => host.cacheStoreAsync(e, "[]"))
                     .then(() => host.cacheStoreAsync(idxkey, JSON.stringify(keys)))
             })
     }
@@ -1241,8 +1518,9 @@ namespace pxt.hex {
         if (!extInfo.sha)
             return Promise.resolve<any>(null)
 
-        if (pxtc.hex.isSetupFor(extInfo))
-            return Promise.resolve(pxtc.hex.currentHexInfo)
+        const cached = hexInfoMemCache[extInfo.sha]
+        if (cached)
+            return Promise.resolve(cached)
 
         pxt.debug("get hex info: " + extInfo.sha)
 
@@ -1277,6 +1555,14 @@ namespace pxt.hex {
                         })
                 }
             })
+            .then(res => {
+                if (res) {
+                    if (Object.keys(hexInfoMemCache).length > 20)
+                        hexInfoMemCache = {}
+                    hexInfoMemCache[extInfo.sha] = res
+                }
+                return res
+            })
     }
 
     function decompressHex(hex: string[]) {
@@ -1297,9 +1583,9 @@ namespace pxt.hex {
                 buf = ""
                 let cnt = parseInt(nxt, 16)
                 while (cnt-- > 0) {
-                    /* tslint:disable:no-octal-literal */
+                    /* eslint-disable no-octal */
                     buf += "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"
-                    /* tslint:enable:no-octal-literal */
+                    /* eslint-enable no-octal */
                 }
             } else {
                 buf = ts.pxtc.decodeBase64(nxt)

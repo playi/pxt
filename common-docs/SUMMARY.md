@@ -2,10 +2,10 @@
 
 * [About](/about)
 * [FAQ](/faq)
+* [Projects](/projects)
+* [GitHub](/github)
 
 ## #support
-
-## #projects
 
 ## #examples
 
@@ -23,6 +23,7 @@
         * [repeat](/blocks/loops/repeat)
         * [for](/blocks/loops/for)
         * [while](/blocks/loops/while)
+        * [for of](/blocks/loops/for-of)
     * [Logic](/blocks/logic)
         * [if](/blocks/logic/if)
         * [Boolean](/blocks/logic/boolean)
@@ -33,6 +34,17 @@
     * [Math](/blocks/math)
     * [JavaScript blocks](/blocks/javascript-blocks)
     * [Custom blocks](/blocks/custom)
+
+## Python #python
+
+* [Python](/python)
+    * [Calling](/python/call)
+    * [Sequencing](/python/sequence)
+    * [Variables](/python/variables)
+    * [Operators](/python/operators)
+    * [Statements](/python/statements)
+    * [Functions](/python/functions)
+    * [Classes](/python/classes)
 
 ## JavaScript #javaScript
 
@@ -68,6 +80,7 @@
     * [Sharing projects](/share)
     * [Offline support](/offline)
     * [Save](/save)
+    * [Home page content](/homepage-content)
 
 ## Developers #devs
 

@@ -1,16 +1,23 @@
 {
     "compilerOptions": {
-        "target": "es5",
+        "target": "es2017",
         "noImplicitAny": true,
         "noImplicitReturns": true,
         "declaration": true,
-        "outDir": "../../built/tests/format-test",
+        "outDir": "../../built/tests",
         "newLine": "LF",
         "module": "commonjs",
-        "types": ["chai", "mocha", "node", "bluebird"],
-        "sourceMap": false
+        "types": [
+            "chai",
+            "mocha",
+            "node"
+        ],
+        "sourceMap": false,
+        "skipLibCheck": true
     },
     "files": [
-        "formatrunner.ts"
+        "formatrunner.ts",
+        "../common/testUtils.ts",
+        "../common/testHost.ts"
     ]
 }

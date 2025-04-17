@@ -1,15 +1,38 @@
-# MakeCode Language: Static TypeScript
+# MakeCode Languages: Blocks, Static TypeScript and Static Python
 
-PXT programs are written in a subset of [TypeScript](https://www.typescriptlang.org)
-called Static TypeScript.  Currently, we are using TypeScript version 2.6.1.
-TypeScript itself is a superset of JavaScript, and many PXT programs,
-especially at the beginner's level, are also just plain JavaScript.
+MakeCode programs can be authored in **Blocks**, **Static TypeScript** or **Static Python**.
 
-PXT is meant for teaching programming first, and JavaScript second. For this
+Both Blocks and Static Python are converted to Static TypeScript before being compiled to lower-level languages.
+Blocks is implemented using Google Blockly.
+
+Static TypeScript is a subset of [TypeScript](https://www.typescriptlang.org). 
+Currently, we are using TypeScript version 2.6.1. TypeScript itself is a superset of JavaScript, 
+and many MakeCode programs, especially at the beginner's level, are also just plain JavaScript.
+There are more technical details about the language and the compiler in 
+[this MPLR 2019 paper](https://www.microsoft.com/en-us/research/publication/static-typescript/).
+
+MakeCode is meant for teaching programming first, and JavaScript second. For this
 reason, we have stayed away from concepts that are specific to JavaScript (for
 example, prototype inheritance), and instead focused on ones common to most
 modern programming languages (for example, loops, lexically scoped variables,
 functions, lambdas, classes).
+
+## ~ hint
+
+Support for Static Python may still be 
+experimental for some MakeCode editors. 
+If Python isn't shown as a language choice 
+in the editor you're using, you can enable 
+it by clicking the gear icon ⚙️, going to 
+`About` , then clicking `Experiments`.
+Experiments are released selectively, so 
+if an experiment you want does not show yet, 
+please be patient — it will be rolled 
+out to your editor soon!
+
+## ~
+
+# Static TypeScript
 
 ## Supported language features
 
@@ -39,40 +62,40 @@ functions, lambdas, classes).
 * class inheritance
 * classes implementing interfaces (explicitly and implicitly)
 * object literals `{ foo: 1, bar: "two" }`
+* `typeof` expression
+* `public`/`private` annotations on constructor arguments (syntactic sugar to make them into fields)
+* initializers for class fields
+* lambda functions with more than three arguments
+* using generic functions as values and nested generic functions
+* binding with arrays or objects: `let [a, b] = ...; let { x, y } = ...`
+* exceptions (`throw`, `try ... catch`, `try ... finally`)
+* downcasts of a superclass to a subclass
+* function parameter bi-variance
+* explicit or implicit use of the `any` type
+* `union` or `intersection` types
+* using a generic function as a value
+* class inheritance for generic classes and methods
+* `delete` statement (on object created with `{...}`)
+* object destructuring with initializers
+* shorthand properties (`{a, b: 1}` parsed as `{a: a, b: 1}`)
+* computed property names (`{[foo()]: 1, bar: 2}`)
 
 ## Unsupported language features
 
-Static TypeScript has a more restrictive type checker than TypeScript. In particular, it does not support:
-* explicit or implicit use of the `any` type
-* `union` or `intersection` types
+Static TypeScript has *nominal typing* for classes, rather than the *structural typing* of TypeScript. In particular, it does not support:
 * `interface` with same name as a `class`
 * casts of a non-`class` type to a `class`
-* downcasts of a superclass to a subclass
-* extending a `class` by an `interface`
-* function parameter bi-variance (parameter subtyping is contra-variant)
+* `interface` that extends a a `class`
 * inheriting from a built-in type
-* using a built-in or generic function as a value
 * `this` used outside of a method
 * function overloading
 
-Static TypeScript enforces *nominal typing* of classes, rather than the *structural typing* of TypeScript.
+Things you may miss and we may implement:
 
-We generally stay away from the more dynamic parts of JavaScript.  Things you may miss and we may implement:
-
-* object destructuring with initializers
-* shorthand properties
-* exceptions (`throw`, `try ... catch`, `try ... finally`)
-* using generic functions as values and nested generic functions
-* class inheritance for generic classes and methods
-* initializers for class fields
-* `public`/`private` annotations on constructor arguments (syntactic sugar to make them into fields)
-* binding with arrays or objects: `let [a, b] = ...; let { x, y } = ...`
-* `delete` statement (on object literals)
 * spread and reset operators (statically typed)
 * support of `enums` as run-time arrays
-* lambda functions with more than three arguments
 * `new` on non-class types
-* `typeof` expression
+* using a built-in function as a value
 
 Things that we are not very likely to implement due to the scope of the project
 or other constraints (note that if you don't know what a given feature is, you're
@@ -81,14 +104,40 @@ unlikely to miss it):
 * file-based modules (`import * from ...`, `module.exports` etc); we do support namespaces
 * `yield` expression and ``function*``
 * `await` expression and `async function`
-* `typeof` expression
-* tagged templates ``tag `text ${expression} more text` ``; regular templates are supported
+* tagged templates ``tag `text ${expression} more text` `` are limited to special compiler features
+  like image literals; regular templates are supported
 * `with` statement
 * `eval`
 * `for ... in` statements (`for ... of` is supported)
 * prototype-based inheritance; `this` pointer outside classes
 * `arguments` keyword; `.apply` method
 * JSX (HTML fragments as part of JavaScript)
+
+Static TypeScript has somewhat stricter ideas of scoping than regular TypeScript.
+In particular `var` is not allowed (`let` and `const` are supported),
+and identifiers defined with `function` can only be used after all variables
+from outer scopes have been defined.
+(The closure objects for functions that are used before definition
+is constructed right after last used variable have been defined.
+For functions defined before usage, the closure is constructed at the
+point of definition.)
+Both of the following examples will yield a compile error.
+
+```typescript
+function foo1() {
+    bar()
+    let x = 1
+    function bar() {
+        let y = x // runtime error in JavaScript
+    } 
+}
+function foo1() {
+    const tmp = bar
+    let x = 1
+    tmp() // no runtime error in JavaScript
+    function bar() { let y = x } 
+}
+```
 
 For JS-only targets we may implement the following:
 
@@ -101,18 +150,34 @@ Note, that you can use all of these while implementing your runtime environment
 
 As such, it isn't really feasible to run a full JavaScript virtual machine
 in 3k of RAM, and thus PXT programs are statically compiled to native code to run efficiently.
-There are two compilation strategies available - the legacy strategy used by the current
-micro:bit target, and a tagged strategy used by the upcoming SAMD21 targets, as well as all
-the other targets going forward (possibly including new version of the micro:bit target).
 
-In the **legacy strategy**, there are some semantic differences with JavaScript,
-particularly:
-* numbers are 32 bit signed integers with wrap-around semantics; 
-  in JavaScript they are 64 bit floating points
-* JavaScript doesn't have types, and therefore every value can be `undefined` or `null` 
-  (which are two different values, distinct from `0` or `false`); 
-  in PXT `0`, `false`, `null`, and `undefined` all have the same underlying
-  representation (32 zero bits) and thus will test as equal
+PXT used to support a *legacy compilation strategy*, where numbers were represented
+as 32 bit signed integers, and all types were static.
+This is used by the `v0` branch of micro:bit (but not the current `v1`) 
+and the Chibitronics editors, but is no longer included in the main PXT code base.
+
+PXT follows nominal typing for classes.
+This means that if you declare `x` to be of class type `C`, and at runtime
+it happens to be not of this type, then when you try to access fields
+or methods of `x` you will get an exception, just as if `x` was `null`.
+
+It is also impossible to 
+[monkey-patch](https://en.wikipedia.org/wiki/Monkey_patch)
+classes by overriding methods on class instance.
+As prototype chains are not accessible or even used, it's also not possible to
+monkey-patch these.
+
+Finally, classes are currently not extensible with arbitrary fields.
+We might lift this in future.
+
+`Object.keys(x)` is not yet supported when `x` is dynamically a class type.
+It is supported when `x` was created with an object literal (eg., `{}` or `{ a: 1, b: "foo" }`).
+The order in which properties are returned is order of insertion with no
+special regard for keys that looks like integer (JavaScript has 
+[really counter-intuitive behavior](https://www.stefanjudis.com/today-i-learned/property-order-is-predictable-in-javascript-objects-since-es2015/)
+here).
+When we support `Object.keys()` on class types, the order will be the static order of
+field definition.
 
 ## Execution environments
 
@@ -142,16 +207,17 @@ On the plus side, this allows for [handling of async calls](/async), even if the
 doesn't support `yield` statement, as well as cross-browser and remote
 debugging. On the other hand, the generated code is not really human readable.
 
-In the [tagged strategy](/js/values), numbers are either tagged 31-bit signed
-integers, or if they do not fit boxed doubles. Special constants like `false`, `null` and
+Numbers are either [tagged 31-bit signed integers](/js/values), 
+or if they do not fit boxed doubles. Special constants like `false`, `null` and
 `undefined` are given special values and can be distinguished.
 We're aiming at full JavaScript compatibility here.
 
 ## Static compilation vs a dynamic VM
 
-PXT programs are compiled to native code. The native targets include ARM Thumb,
-and an unfinished AVR port. The information below concerns the tagged compilation
-strategy.
+PXT programs are compiled to native code. The only currently supported
+native target is ARM Thumb.
+PXT used to support two different AVR ports, but these have been
+removed together with the legacy compilation strategy.
 
 Compared to a typical dynamic JavaScript engine, PXT compiles code statically,
 giving rise to significant time and space performance improvements:
@@ -210,3 +276,73 @@ In legacy strategy, `number` is equivalent to `int32`, and there is no `uint32`.
 
 * arrays of int types are currently not supported; you can use a `Buffer` instead
 * locals and parameters of int types are not supported
+
+## Near future work
+
+There are following differences currently, which should be fixed soon.
+They are mostly missing bridges between static, nominally typed classes,
+and dynamic maps.
+
+* default parameters are resolved at call site; they should be resolved in the
+  called method so eg. virtual methods can have different defaults
+* `x.foo`, where `x` is class and `foo` is method cannot be currently used as a value;
+  we could make it equivalent to JavaScript's `x.foo.bind(x)`
+* `Object.keys()` is currently not implemented for classes; when it will be
+  the order of fields will be static declaration order
+* how to validate types of C++ classes (Pin mostly)?
+
+# Python
+
+## Supported language features
+The following language features should be fully supported and work according to the Python 3 language specification.
+
+* lists
+* dictionaries
+* function definitions
+* function calling
+* method calling
+* calling into any MakeCode library code
+* literals: strings, numbers, boolean, None
+* many list methods: pop, clear, index, count, len
+* many string methods: casefold, capitalize, center, count, endswith, find, index, isalnum, isalph, isascii, isdigit, isnumeric, isspace, isdecimal, isidentifier, islower, isprintable, istitle, issupper, join, ljust, lower, lstrip, replace, rfind, rindex, rjust, rsplit, rstrip, split, splitlines, startswith, strip, swapcase, title, upper, zfill, ord
+* many math functions: int, min, max, abs, randint
+* while loop
+* for-in loop with range(), array or string literal
+* break, continue
+* conditional statements (if, elif, else)
+* pass statement
+* variables*
+* if expression / ternary operator
+* comparison (in, notin)
+* byte literal
+* type annotations using ":" syntax
+* slice notation**
+* lambda
+
+*: variable semantics have slightly different scoping rules than Python 3 and global & nonlocal keywords are unsupported.
+**: some slice notation is not yet supported
+
+## Not supported language features
+The following language features are not yet supported.
+
+* with
+* assert
+* classes
+* __constructor
+* super()
+* global & nonlocal
+* raise
+* try
+* generators
+* attributes
+* import, import from
+* sets
+* list comprehensions
+* set comprehensions
+* dictionary comprehensions
+* await
+* yield, yield from
+* format strings
+* arrays
+* all list, string, math methods not listed above
+* *args / varargs

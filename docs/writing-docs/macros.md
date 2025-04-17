@@ -1,16 +1,40 @@
 # Macros
 
-The following macros are custom extensions to markdown.
+MakeCode has several custom macros that extend regular markdown. These provide extra style features and code / blocks rendering in the document pages.
+
+The following macros are the MakeCode custom extensions to markdown.
 
 ## Checkboxes in bullet points
 
 Use ``* [ ]`` to create a bullet point with a square and ``* [x]`` for a checked bullet point
 
+### Checked bullets
+
 * [ ] unchecked bullet point
 * [x] checked bullet point
+
+```
+* [ ] unchecked bullet point
+* [x] checked bullet point
+```
+
+### Regular bullets
+
 * a regular bullet point
 
+```
+* a regular bullet point
+```
+
 ## avatar
+
+MakeCode targets have avatar icons that help express a more personalized message to a user. The avatar icon is specified by its ``class`` name.
+
+### ~avatar avatar
+
+Hi! Writing docs for MakeCode is great!
+
+### ~
 
 ```
 ### ~avatar [class]
@@ -23,163 +47,120 @@ Use ``* [ ]`` to create a bullet point with a square and ``* [x]`` for a checked
 **Example:** the [blink lesson](https://makecode.microbit.org/lessons/blink/activity)
 and it's [markdown](https://github.com/Microsoft/pxt-microbit/blob/master/docs/lessons/blink/activity.md) source.
 
-## Inline button rendering
+## Message Boxes
 
-Use ``` ``|primary button|`` ``` or ``` ``||secondary button||`` ``` to render a button like element.
+Message boxes bring special attention to an idea or to something that the user must take note of. There are several types of message boxes.
 
+### hint
 
-## Inline code snippets
+### ~hint
 
-If an inline code snippet start with `[` and ends with `]`, the doc engine will try to render it as a block. It must contain a valid API call
-to the desired block.
+#### Hint Title
+[content]
 
-To change the inline code snippet color to reflect the namespace color, use this format:
+### ~
 
 ```
-``|namespace.block name|``
+### ~hint
+
+#### Hint Title
+[content]
+
+### ~
 ```
 
-## Code snippets
+### tutorialhint
 
-To avoid changing screenshots, PXT automatically renders code snippets to blocks or javascript. This is done by specifying a language on code blocks.
+Tutorial hints accept but do not require a closing ``#### ~`` tag. They terminate automatically on the next heading with an equal or lesser level.
 
-### dependencies
+#### ~tutorialhint
 
-You need declare the packages required to load your snippet, unless they are part of the default empty template.
-Simple provide a list of package name using the ``package`` macro.
+##### Hint Title
+[content]
 
-    ```package
-    microbit-devices
-    microbit-bluetooth
-    ```
+#### ~
 
-### features
+```
+#### ~hint
 
-You can specify required "features" for a given documentation page. In the case of a multi-board editor,
-MakeCode will match the feature set with existing boards.
+##### Hint Title
+[content]
+```
 
-    ```config
-    feature=pinsled
-    feature=pinsd1
-    ```
 
-### blocks
+### reminder
 
-The **blocks** language renders a JavaScript snippet into blocks and provide a simulator if needed.
+### ~reminder
 
-    ```blocks
-    basic.showNumber(5)
-    ```
+#### Reminder Title
+[content]
 
-**Example:** the [forever](https://makecode.microbit.org/reference/basic/forever) reference doc
-and it's [markdown](https://github.com/Microsoft/pxt-microbit/blob/master/docs/reference/basic/forever.md) source.
+### ~
 
-### project
+```
+### ~reminder
 
-The **project** language is similar to blocks but renders a published project.
+#### Reminder Title
+[content]
 
-    ```project
-    twejlyucio
-    ```
+### ~
+```
+### alert
 
-### sig
+### ~alert
 
-The **sig** displays a signature of the first function call in the snippet.
+#### Alert Title
+[content]
 
-    ```sig
-    basic.showNumber(5)
-    ```
+### ~
+```
+### ~alert
 
-**Example:** the [forever](https://makecode.microbit.org/reference/basic/forever) reference doc
-and it's [markdown](https://github.com/Microsoft/pxt-microbit/blob/master/docs/reference/basic/forever.md) source.
+#### Alert Title
+[content]
 
-### cards
+### ~
+```
 
-The **cards** language displays a code card for each function call.
+### tip
 
-    ```cards
-    basic.showNumber(0);
-    basic.showLeds(`
-    . . . . .
-    . . . . .
-    . . # . .
-    . . . . .
-    . . . . .
-    `);
-    basic.showString("Hello!");
-    basic.clearScreen();
-    ```
+### ~tip
 
-**Example:** the [basic](https://makecode.micorbit.org/reference/basic) reference doc
-and it's [markdown](https://github.com/Microsoft/pxt-microbit/blob/master/docs/reference/basic.md) source.
+#### Tip Title
+[content]
 
-### namespaces
+### ~
+```
+### ~tip
 
-The **namespaces** language display a code card for the first symbol of each namespace.
+#### Tip Title
+[content]
 
-    ```namespaces
-    basic.showNumber(0);
-    input.onButtonPressed(() => {});
-    ```
+### ~
+```
 
-**Example:** the [reference](https://makecode.microbit.org/reference) namespaces doc
-and it's [markdown](https://github.com/Microsoft/pxt-microbit/blob/master/docs/reference.md) source.
+## Buttons
 
-### block
+As a navigation aid, the button macro is used to move to another page within the target's document tree.
 
-The **block** language renders a JavaScript snippet into blocks without any simulator.
+### ~button /writing-docs/tutorials
 
-    ```block
-    basic.showNumber(5)
-    ```
+NEXT: Tutorials
 
-### javascript
+### ~
 
-If you need a rendering of typescript, javascript code, specify the language as typescript
+```
+## ~button /writing-docs/tutorials
 
-    ```typescript
-    let x = 0;
-    ```
+NEXT: Tutorials
 
-### codecard
+## ~
+```
 
-Renders one or more codecards as JSON into cards
+### autoOpen
 
-    ```codecard
-    [{
-        "title": "A card",
-        "url": "...."
-    }, {
-        "title": "Another card",
-        "url": "...."
-    }]
-    ```
+To disable auto-opening the README file in MakeCode, add
 
-### ignore #ignore
-
-Append `-ignore` to any of the above to ignore a snippet in automated testing:
-
-    ```typescript-ignore
-    // You can include illegal TS in here, e.g. to showcase concepts/psuedocode 
-    for (initialization; check; update) {
-        ...
-    }
-    ```
-
-### invalid
-
-You can use `typescript-invalid` to showcase typescript that is **incorrect**:
-
-    ```typescript-invalid
-    // You can include illegal TS in here, e.g. to document syntax errors
-    callFunction(;
-    ```
-
-### valid
-
-You can use `typescript-valid` to showcase typescript that is **correct**:
-
-    ```typescript-valid
-    // You can include any TS in here, e.g. to showcase correct syntax
-    callFunction();
-    ```
+```
+### @autoOpen false
+```

@@ -1,6 +1,6 @@
 
 //% color="#FFAB19"
-namespace control {
+namespace time {
 
     //% block="pause $ms"
     //% ms.shadow="timePicker"
@@ -14,13 +14,15 @@ namespace control {
 
     /**
       * Get the word field editor
-      * @param word eg: Hello
+      * @param word
       */
     //% blockId=wordPicker block="$word"
     //% blockHidden=true
     //% colorSecondary="#FFFFFF"
-    //% word.fieldEditor="textdropdown" word.fieldOptions.decompileLiterals=true
-    //% word.fieldOptions.values='[["Hi"], ["How are you?"]]'
+    //% word.fieldEditor="textdropdown"
+    //% word.fieldOptions.decompileLiterals=true
+    //% word.fieldOptions.values='hi,hello'
+    //% word.defl='hello'
     export function __wordPicker(word: string): string {
         return word;
     }

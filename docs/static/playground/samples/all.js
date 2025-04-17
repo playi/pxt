@@ -21,7 +21,7 @@
         },
         {
             chapter: "Basic",
-            name: "Setting namespace color",
+            name: "Set namespace color",
             id: "basic-ns-color",
             path: "basic/ns-color"
         },
@@ -39,15 +39,15 @@
         },
         {
             chapter: "Basic",
-            name: "Types of Blocks",
+            name: "Types of blocks",
             id: "basic-types",
             path: "basic/types"
         },
         {
             chapter: "Basic",
-            name: "Inline input",
-            id: "basic-inline",
-            path: "basic/inline"
+            name: "Input format",
+            id: "basic-input-format",
+            path: "basic/input-format"
         },
         {
             chapter: "Basic",
@@ -57,9 +57,15 @@
         },
         {
             chapter: "Basic",
-            name: "Setting Variable Names",
+            name: "Set variable names",
             id: "basic-variable-names",
             path: "basic/variable-names"
+        },
+        {
+            chapter: "Basic",
+            name: "Array default values",
+            id: "basic-array-default-values",
+            path: "basic/array-default-values"
         },
         {
             chapter: "Field editors",
@@ -111,7 +117,7 @@
         },
         {
             chapter: "Field editors",
-            name: "Turn Ratio",
+            name: "Turn ratio",
             id: "field-editors-turn-ratio",
             path: "field-editors/turnratio"
         },
@@ -129,7 +135,7 @@
         },
         {
             chapter: "Language",
-            name: "Create Enums from Blocks",
+            name: "Creating enums",
             id: "language-create-enums",
             path: "language/create-enums"
         },
@@ -144,6 +150,12 @@
             name: "Factories",
             id: "factories",
             path: "language/factories"
+        },
+        {
+            chapter: "Language",
+            name: "Fixed Instances",
+            id: "fixed-instances",
+            path: "language/fixed-instances"
         }
     ];
 

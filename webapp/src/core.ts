@@ -6,6 +6,10 @@ import * as data from "./data";
 import * as sui from "./sui";
 
 import * as coretsx from "./coretsx";
+import * as auth from "./auth";
+
+
+import { pushNotificationMessage } from "../../react-common/components/Notification";
 
 import Cloud = pxt.Cloud;
 import Util = pxt.Util;
@@ -17,11 +21,16 @@ export type Component<S, T> = data.Component<S, T>;
 ////////////       Loading spinner            /////////////
 ///////////////////////////////////////////////////////////
 
+interface LoadingSection {
+    displayText: string,
+    percentComplete?: number;
+}
+
 let dimmerInitialized = false;
 let loadingDimmer: coretsx.LoadingDimmer;
 
 let loadingQueue: string[] = [];
-let loadingQueueMsg: pxt.Map<string> = {};
+let loadingQueueMsg: pxt.Map<LoadingSection> = {};
 
 export function isLoading() {
     return loadingDimmer && loadingDimmer.isVisible();
@@ -29,6 +38,7 @@ export function isLoading() {
 
 export function hideLoading(id: string) {
     pxt.debug("hideloading: " + id);
+    pxt.perf.recordMilestone(`loading done #${id}`)
     if (loadingQueueMsg[id] != undefined) {
         // loading exists, remove from queue
         const index = loadingQueue.indexOf(id);
@@ -59,21 +69,45 @@ export function killLoadingQueue() {
     }
 }
 
-export function showLoading(id: string, msg: string) {
+export function showLoading(id: string, msg: string, percentComplete?: number) {
     pxt.debug("showloading: " + id);
     if (loadingQueueMsg[id]) return; // already loading?
+    pxt.perf.recordMilestone(`loading started #${id}`)
     initializeDimmer();
-    loadingDimmer.show(lf("Please wait"));
+    loadingDimmer.show(
+        "initializing-loader",
+        lf("Please wait"),
+    );
     loadingQueue.push(id);
-    loadingQueueMsg[id] = msg;
+    loadingQueueMsg[id] = {
+        displayText: msg,
+        percentComplete,
+    };
     displayNextLoading();
+}
+
+export function updateLoadingCompletion(id: string, percentComplete: number) {
+    const msg = loadingQueueMsg[id];
+    if (!msg) {
+        pxt.debug("Loading not in queue, disregard: " + id);
+        return;
+    }
+
+    msg.percentComplete = percentComplete;
+    if (loadingDimmer?.currentlyLoading() === id) {
+        loadingDimmer.setPercentLoaded(percentComplete);
+    }
 }
 
 function displayNextLoading() {
     if (!loadingQueue.length) return;
     const id = loadingQueue[loadingQueue.length - 1]; // get last item
     const msg = loadingQueueMsg[id];
-    loadingDimmer.show(msg);
+    loadingDimmer.show(
+        id,
+        msg.displayText,
+        msg.percentComplete,
+    );
 }
 
 function initializeDimmer() {
@@ -85,7 +119,7 @@ function initializeDimmer() {
 
 let asyncLoadingTimeout: pxt.Map<number> = {};
 
-export function showLoadingAsync(id: string, msg: string, operation: Promise<any>, delay: number = 700) {
+export function showLoadingAsync(id: string, msg: string, operation: Promise<any>, delay: number = 700): Promise<void> {
     clearTimeout(asyncLoadingTimeout[id]);
     asyncLoadingTimeout[id] = setTimeout(function () {
         showLoading(id, msg);
@@ -106,7 +140,7 @@ export function cancelAsyncLoading(id: string) {
 ///////////////////////////////////////////////////////////
 
 function showNotificationMsg(kind: string, msg: string) {
-    coretsx.pushNotificationMessage({ kind: kind, text: msg, hc: highContrast });
+    pushNotificationMessage({ kind: kind, text: msg, hc: getHighContrastOnce() });
 }
 
 export function errorNotification(msg: string) {
@@ -138,7 +172,10 @@ export interface ConfirmOptions extends DialogOptions {
 }
 
 export interface PromptOptions extends ConfirmOptions {
-    defaultValue: string;
+    initialValue?: string;
+    placeholder?: string;
+    onInputChanged?: (newValue?: string) => void;
+    onInputValidation?: (newValue?: string) => string; // return error if any
 }
 
 export interface DialogOptions {
@@ -150,20 +187,30 @@ export interface DialogOptions {
     logos?: string[];
     className?: string;
     header: string;
+    headerIcon?: string;
     body?: string;
     jsx?: JSX.Element;
-    htmlBody?: string;
+    jsxd?: () => JSX.Element; // dynamic-er version of jsx
     copyable?: string;
-    size?: string; // defaults to "small"
+    size?: "" | "small" | "fullscreen" | "large" | "mini" | "tiny"; // defaults to "small"
     onLoaded?: (_: HTMLElement) => void;
     buttons?: sui.ModalButton[];
     timeout?: number;
     modalContext?: string;
     hasCloseIcon?: boolean;
+    helpUrl?: string;
+    bigHelpButton?: boolean;
+    confirmationText?: string;      // Display a text input the user must type to confirm.
+    confirmationCheckbox?: string;  // Display a checkbox the user must check to confirm.
+    confirmationGranted?: boolean;
+    onClose?: () => void;
 }
 
 export function dialogAsync(options: DialogOptions): Promise<void> {
+    if (!options.buttons) options.buttons = [];
     if (!options.type) options.type = 'dialog';
+    if (options.hasCloseIcon)
+        options.hideCancel = true;
     if (!options.hideCancel) {
         if (!options.buttons) options.buttons = [];
         options.buttons.push({
@@ -172,11 +219,34 @@ export function dialogAsync(options: DialogOptions): Promise<void> {
             icon: options.disagreeIcon || "cancel"
         })
     }
+    if (options.helpUrl) {
+        if (options.bigHelpButton) {
+            options.buttons.unshift({
+                className: "dialog-help-large help",
+                urlButton: true,
+                label: lf("Help"),
+                title: lf("Help"),
+                url: options.helpUrl
+            });
+        }
+        else {
+            options.buttons.unshift({
+                className: "circular help",
+                title: lf("Help"),
+                icon: "help",
+                url: options.helpUrl
+            });
+        }
+    }
     return coretsx.renderConfirmDialogAsync(options as PromptOptions);
 }
 
 export function hideDialog() {
     coretsx.hideDialog();
+}
+
+export function forceUpdate() {
+    coretsx.forceUpdate();
 }
 
 export function confirmAsync(options: ConfirmOptions): Promise<number> {
@@ -190,6 +260,7 @@ export function confirmAsync(options: ConfirmOptions): Promise<number> {
             label: options.agreeLbl || lf("Go ahead!"),
             className: options.agreeClass,
             icon: options.agreeIcon || "checkmark",
+            approveButton: true,
             onclick: () => {
                 result = 1;
             }
@@ -211,83 +282,68 @@ export function confirmAsync(options: ConfirmOptions): Promise<number> {
         .then(() => result)
 }
 
-export function confirmDelete(what: string, cb: () => Promise<void>) {
+export function confirmDelete(what: string, cb: () => Promise<void>, multiDelete?: boolean) {
     confirmAsync({
-        header: lf("Would you like to delete '{0}'?", what),
+        header: multiDelete ?
+            lf("Would you like to delete {0} projects?", what) :
+            lf("Would you like to delete '{0}'?", what),
         body: lf("It will be deleted for good. No undo."),
         agreeLbl: lf("Delete"),
         agreeClass: "red",
         agreeIcon: "trash",
     }).then(res => {
         if (res) {
-            cb().done()
+            cb()
         }
-    }).done()
+    })
 }
 
 export function promptAsync(options: PromptOptions): Promise<string> {
     options.type = 'prompt';
     if (!options.buttons) options.buttons = []
 
-    let result = "";
-    let cancelled: boolean = false;
+    let result = options.initialValue || "";
+    let oked: boolean = false;
+
+    options.onInputChanged = (v: string) => { result = v };
 
     if (!options.hideAgree) {
         options.buttons.push({
             label: options.agreeLbl || lf("Go ahead!"),
             className: options.agreeClass,
             icon: options.agreeIcon || "checkmark",
-            onclick: () => {
-                let dialogInput = document.getElementById('promptDialogInput') as HTMLInputElement;
-                result = dialogInput.value;
-            }
+            approveButton: true,
+            onclick: () => { oked = true }
         })
     }
 
-    if (!options.hideCancel) {
-        // Replace the default cancel button with our own
-        options.buttons.push({
-            label: options.disagreeLbl || lf("Cancel"),
-            className: (options.disagreeClass || "cancel"),
-            icon: options.disagreeIcon || "cancel",
-            onclick: () => {
-                cancelled = true;
-            }
-        });
-        options.hideCancel = true;
-    }
-
-    options.onLoaded = (ref: HTMLElement) => {
-        let dialogInput = document.getElementById('promptDialogInput') as HTMLInputElement;
-        if (dialogInput) {
-            dialogInput.setSelectionRange(0, 9999);
-            dialogInput.onkeyup = (e: KeyboardEvent) => {
-                const charCode = keyCodeFromEvent(e);
-                if (charCode === ENTER_KEY) {
-                    e.preventDefault();
-                    const firstButton = ref.getElementsByClassName("approve positive").item(0) as HTMLElement;
-                    if (firstButton) firstButton.click();
-                }
-            }
-        }
-    };
-
     return dialogAsync(options)
-        .then(() => cancelled ? null : result);
+        .then(() => oked ? result : null);
 }
 
 ///////////////////////////////////////////////////////////
 ////////////         Accessibility            /////////////
 ///////////////////////////////////////////////////////////
 
-export let highContrast: boolean;
 export const TAB_KEY = 9;
 export const ESC_KEY = 27;
 export const ENTER_KEY = 13;
 export const SPACE_KEY = 32;
 
-export function setHighContrast(on: boolean) {
-    highContrast = on;
+export function getHighContrastOnce(): boolean {
+    return data.getData<boolean>(auth.HIGHCONTRAST) || false
+}
+export function toggleHighContrast() {
+    setHighContrast(!getHighContrastOnce())
+}
+export async function setHighContrast(on: boolean) {
+    await auth.setHighContrastPrefAsync(on);
+}
+
+export async function setLanguage(lang: string) {
+    pxt.BrowserUtils.setCookieLang(lang);
+    pxt.Util.setUserLanguage(lang);
+    await auth.setLanguagePrefAsync(lang);
 }
 
 export function resetFocus() {
@@ -311,30 +367,9 @@ export function navigateInWindow(url: string) {
 }
 
 export function findChild(c: React.Component<any, any>, selector: string): Element[] {
-    let self = ReactDOM.findDOMNode(c);
+    let self = ReactDOM.findDOMNode(c) as Element;
     if (!selector) return [self]
     return pxt.Util.toArray(self.querySelectorAll(selector));
-}
-
-export function parseQueryString(qs: string) {
-    let r: pxt.Map<string> = {}
-    qs.replace(/\+/g, " ").replace(/([^&=]+)=?([^&]*)/g, (f: string, k: string, v: string) => {
-        r[decodeURIComponent(k)] = decodeURIComponent(v)
-        return ""
-    })
-    return r
-}
-
-export function stringifyQueryString(url: string, qs: any) {
-    for (let k of Object.keys(qs)) {
-        if (url.indexOf("?") >= 0) {
-            url += "&"
-        } else {
-            url += "?"
-        }
-        url += encodeURIComponent(k) + "=" + encodeURIComponent(qs[k])
-    }
-    return url
 }
 
 export function handleNetworkError(e: any, ignoredCodes?: number[]) {

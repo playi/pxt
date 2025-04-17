@@ -1,19 +1,23 @@
 import * as React from "react";
 import * as core from "./core";
 
-export type Action = () => void;
-export type AnyComponent = Component<any, any>;
-
 import Cloud = pxt.Cloud;
 import Util = pxt.Util;
 
-interface CacheEntry {
+
+export type Action = () => void;
+export type DataSubscriber = {
+    subscriptions: CacheEntry[];
+    onDataChanged: (path: string) => void;
+};
+
+export interface CacheEntry {
     path: string;
     data: any;
     lastRefresh: number;
     queued: boolean;
     callbackOnce: Action[];
-    components: AnyComponent[];
+    components: DataSubscriber[];
     api: VirtualApi;
 }
 
@@ -29,80 +33,10 @@ export interface DataFetchResult<T> {
     status: FetchStatus;
 }
 
-const virtualApis: pxt.Map<VirtualApi> = {}
-let targetConfig: pxt.TargetConfig = undefined;
-
-mountVirtualApi("cloud", {
-    getAsync: p => Cloud.privateGetAsync(stripProtocol(p)).catch(core.handleNetworkError),
-    expirationTime: p => 60 * 1000,
-    isOffline: () => !Cloud.isOnline(),
-})
-
-mountVirtualApi("cloud-search", {
-    getAsync: p => Cloud.privateGetAsync(stripProtocol(p)).catch(e => {
-        core.handleNetworkError(e, [404])
-        return { statusCode: 404, headers: {}, json: {} }
-    }),
-    expirationTime: p => 60 * 1000,
-    isOffline: () => !Cloud.isOnline(),
-})
-
-mountVirtualApi("gallery", {
-    getAsync: p => pxt.gallery.loadGalleryAsync(stripProtocol(decodeURIComponent(p))).catch((e) => {
-        return Promise.resolve(e);
-    }),
-    expirationTime: p => 3600 * 1000
-})
-
-mountVirtualApi("td-cloud", {
-    getAsync: p =>
-        Util.httpGetJsonAsync("https://www.touchdevelop.com/api/" + stripProtocol(p))
-            .catch(core.handleNetworkError),
-    expirationTime: p => 60 * 1000,
-})
-
-mountVirtualApi("gh-search", {
-    getAsync: query => pxt.targetConfigAsync()
-        .then(config => pxt.github.searchAsync(stripProtocol(query), config ? config.packages : undefined))
-        .catch(core.handleNetworkError),
-    expirationTime: p => 60 * 1000,
-    isOffline: () => !Cloud.isOnline(),
-})
-
-mountVirtualApi("gh-pkgcfg", {
-    getAsync: query =>
-        pxt.github.pkgConfigAsync(stripProtocol(query)).catch(core.handleNetworkError),
-    expirationTime: p => 60 * 1000,
-    isOffline: () => !Cloud.isOnline(),
-})
-
-let targetConfigPromise: Promise<pxt.TargetConfig> = undefined;
-mountVirtualApi("target-config", {
-    getAsync: query => {
-        if (!targetConfigPromise)
-            targetConfigPromise = pxt.targetConfigAsync()
-                .then(js => {
-                    if (js) {
-                        pxt.storage.setLocal("targetconfig", JSON.stringify(js))
-                        invalidate("target-config");
-                        invalidate("gh-search");
-                        invalidate("gh-pkgcfg");
-                    }
-                    return js;
-                })
-                .catch(core.handleNetworkError);
-        // return cached value or try again
-        const cfg = JSON.parse(pxt.storage.getLocal("targetconfig") || "null") as pxt.TargetConfig;
-        if (cfg) return Promise.resolve(cfg);
-        return targetConfigPromise;
-    },
-    expirationTime: p => 24 * 3600 * 1000,
-    isOffline: () => !Cloud.isOnline()
-})
-
+const virtualApis: pxt.Map<VirtualApi> = {};
 let cachedData: pxt.Map<CacheEntry> = {};
 
-function subscribe(component: AnyComponent, path: string) {
+export function subscribe(component: DataSubscriber, path: string) {
     let e = lookup(path)
     let lst = e.components
     if (lst.indexOf(component) < 0) {
@@ -111,7 +45,7 @@ function subscribe(component: AnyComponent, path: string) {
     }
 }
 
-function unsubscribe(component: AnyComponent) {
+export function unsubscribe(component: DataSubscriber) {
     let lst = component.subscriptions
     if (lst.length == 0) return
     component.subscriptions = []
@@ -123,7 +57,7 @@ function unsubscribe(component: AnyComponent) {
 
 function expired(ce: CacheEntry) {
     if (!ce.api.expirationTime)
-        return ce.data != null;
+        return !ce.lastRefresh; // needs to be refreshed at least once
     return ce.data == null || (Date.now() - ce.lastRefresh) > ce.api.expirationTime(ce.path)
 }
 
@@ -137,11 +71,11 @@ export function clearCache() {
     saveCache();
 }
 
-function loadCache() {
+export function loadCache() {
     JSON.parse(pxt.storage.getLocal("apiCache2") || "[]").forEach((e: any) => {
         let ce = lookup(e.path)
         ce.data = e.data
-    })
+    });
 }
 
 function saveCache() {
@@ -150,15 +84,24 @@ function saveCache() {
             path: e.path,
             data: e.data
         }
-    })
-    pxt.storage.setLocal("apiCache2", JSON.stringify(obj))
+    });
+    pxt.storage.setLocal("apiCache2", JSON.stringify(obj));
 }
 
 function matches(ce: CacheEntry, prefix: string) {
-    return ce.path.slice(0, prefix.length) == prefix;
+    if (ce.path.slice(0, prefix.length) == prefix) {
+        // exact match
+        return true;
+    } else if (ce.path.endsWith(":*")) {
+        // ce.path is a wildcard
+        const [ce_proto] = ce.path.split(':');
+        const [prefix_proto] = prefix.split(':');
+        return ce_proto == prefix_proto;
+    }
+    return false;
 }
 
-function notify(ce: CacheEntry) {
+function notify(ce: CacheEntry, path: string) {
     if (shouldCache(ce)) saveCache();
 
     let lst = ce.callbackOnce
@@ -168,7 +111,7 @@ function notify(ce: CacheEntry) {
     }
 
     if (ce.components.length > 0)
-        ce.components.forEach(c => Util.nextTick(() => c.forceUpdate()))
+        ce.components.forEach(c => Util.nextTick(() => c.onDataChanged(path)))
 }
 
 function getVirtualApi(path: string) {
@@ -178,7 +121,7 @@ function getVirtualApi(path: string) {
     return virtualApis[m[1]]
 }
 
-function queue(ce: CacheEntry) {
+function queueNotify(ce: CacheEntry, path: string) {
     if (ce.queued) return
 
     if (ce.api.isOffline && ce.api.isOffline())
@@ -188,15 +131,17 @@ function queue(ce: CacheEntry) {
 
     let final = (res: any) => {
         ce.data = res
-        ce.lastRefresh = Date.now()
+        ce.lastRefresh = pxt.Util.now()
         ce.queued = false
-        notify(ce)
+        notify(ce, path)
     }
 
     if (ce.api.isSync)
         final(ce.api.getSync(ce.path))
-    else
-        ce.api.getAsync(ce.path).done(final)
+    else {
+        const p = ce.api.getAsync(ce.path);
+        p.then(final)
+    }
 }
 
 function lookup(path: string) {
@@ -213,31 +158,9 @@ function lookup(path: string) {
     return cachedData[path]
 }
 
-function getCached(component: AnyComponent, path: string): DataFetchResult<any> {
+export function getCached(component: DataSubscriber, path: string): DataFetchResult<any> {
     subscribe(component, path)
-    let r = lookup(path)
-    if (r.api.isSync)
-        return {
-            data: r.api.getSync(r.path),
-            status: FetchStatus.Complete
-        }
-
-    let fetchRes: DataFetchResult<any> = {
-        data: r.data,
-        status: FetchStatus.Complete
-    };
-
-    if (expired(r) || r.data instanceof Error) {
-        fetchRes.status = r.data instanceof Error ? FetchStatus.Error : FetchStatus.Pending;
-        if (r.api.isOffline && r.api.isOffline()) {
-            // The request will not be requeued so we don't want to show it as pending
-            fetchRes.status = FetchStatus.Offline;
-        } else {
-            queue(r)
-        }
-    }
-
-    return fetchRes;
+    return getDataWithStatus(path);
 }
 
 //
@@ -250,6 +173,7 @@ export interface VirtualApi {
     isSync?: boolean;
     expirationTime?(path: string): number; // in milliseconds
     isOffline?: () => boolean;
+    onInvalidated?: (path: string) => void;
 }
 
 export function mountVirtualApi(protocol: string, handler: VirtualApi) {
@@ -267,17 +191,21 @@ export function stripProtocol(path: string) {
     return path
 }
 
-export function invalidate(prefix: string) {
+export function invalidate(path: string) {
+    const prefix = path.replace(/:\*$/, ':'); // remove trailing "*";
     Util.values(cachedData).forEach(ce => {
         if (matches(ce, prefix)) {
             ce.lastRefresh = 0;
             if (ce.components.length > 0)
-                queue(lookup(ce.path))
+                queueNotify(lookup(ce.path), path)
+            if (ce.api.onInvalidated) {
+                ce.api.onInvalidated(path);
+            }
         }
     })
 }
 
-export function getAsync(path: string) {
+export function getAsync<T = any>(path: string): Promise<T> {
     let ce = lookup(path)
 
     if (ce.api.isSync)
@@ -286,15 +214,127 @@ export function getAsync(path: string) {
     if (!Cloud.isOnline() || !expired(ce))
         return Promise.resolve(ce.data)
 
-    return new Promise((resolve, reject) => {
+    return new Promise<T>((resolve, reject) => {
         ce.callbackOnce.push(() => {
             resolve(ce.data)
         })
-        queue(ce)
+        queueNotify(ce, path)
     })
 }
 
-export class Component<TProps, TState> extends React.Component<TProps, TState> {
+export function getData<T>(path: string): T {
+    return getDataWithStatus<T>(path).data;
+}
+
+export function getDataWithStatus<T>(path: string): DataFetchResult<T> {
+    let r = lookup(path)
+    if (r.api.isSync)
+        return {
+            data: r.api.getSync(r.path),
+            status: FetchStatus.Complete
+        }
+
+    // cache async values
+    let fetchRes: DataFetchResult<T> = {
+        data: r.data,
+        status: FetchStatus.Complete
+    };
+
+    if (expired(r) || r.data instanceof Error) {
+        fetchRes.status = r.data instanceof Error ? FetchStatus.Error : FetchStatus.Pending;
+        if (r.api.isOffline && r.api.isOffline()) {
+            // The request will not be requeued so we don't want to show it as pending
+            fetchRes.status = FetchStatus.Offline;
+        } else {
+            queueNotify(r, path)
+        }
+    }
+
+    return fetchRes;
+}
+
+
+mountVirtualApi("cloud", {
+    getAsync: p => Cloud.privateGetAsync(stripProtocol(p)).catch(core.handleNetworkError),
+    expirationTime: p => 60 * 1000,
+    isOffline: () => !Cloud.isOnline(),
+})
+
+mountVirtualApi("cloud-search", {
+    getAsync: p => Cloud.privateGetAsync(stripProtocol(p)).catch(e => {
+        core.handleNetworkError(e, [404])
+        return { statusCode: 404, headers: {}, json: {} }
+    }),
+    expirationTime: p => 60 * 1000,
+    isOffline: () => !Cloud.isOnline(),
+})
+
+mountVirtualApi("extension-search", {
+    getAsync: query => pxt.targetConfigAsync()
+        .then(config => pxt.github.searchAsync(stripProtocol(query), config?.packages))
+        .catch(core.handleNetworkError),
+    expirationTime: p => 3600 * 1000,
+    isOffline: () => !Cloud.isOnline(),
+})
+
+mountVirtualApi("gallery", {
+    getAsync: p => pxt.gallery.loadGalleryAsync(stripProtocol(decodeURIComponent(p))).catch((e) => {
+        return Promise.resolve(e);
+    }),
+    expirationTime: p => 3600 * 1000
+})
+
+mountVirtualApi("gh-search", {
+    getAsync: query => pxt.targetConfigAsync()
+        .then(config => pxt.github.searchAsync(stripProtocol(query), config?.packages))
+        .catch(core.handleNetworkError),
+    expirationTime: p => 360 * 1000,
+    isOffline: () => !Cloud.isOnline(),
+})
+
+// gh-commits:repo#sha
+mountVirtualApi("gh-commits", {
+    getAsync: query => {
+        const p = stripProtocol(query);
+        const [repo, sha] = p.split('#', 2)
+        return pxt.github.getCommitsAsync(repo, sha).catch(e => {
+            core.handleNetworkError(e);
+            return [];
+        })
+    },
+    expirationTime: p => 60 * 1000,
+    isOffline: () => !Cloud.isOnline(),
+})
+
+let targetConfigPromise: Promise<pxt.TargetConfig> = undefined;
+mountVirtualApi("target-config", {
+    getAsync: query => {
+        if (!targetConfigPromise)
+            targetConfigPromise = pxt.targetConfigAsync()
+                .then(js => {
+                    if (js) {
+                        pxt.storage.setLocal("targetconfig", JSON.stringify(js))
+                        invalidate("target-config");
+                        invalidate("gh-search");
+                    }
+                    return js;
+                })
+                .catch(core.handleNetworkError);
+        // return cached value or try again
+        const cfg = JSON.parse(pxt.storage.getLocal("targetconfig") || "null") as pxt.TargetConfig;
+        if (cfg) return Promise.resolve(cfg);
+        return targetConfigPromise;
+    },
+    expirationTime: p => 24 * 3600 * 1000,
+    isOffline: () => !Cloud.isOnline()
+})
+
+export function invalidateHeader(prefix: string, hd: pxt.workspace.Header) {
+    if (hd)
+        invalidate(prefix + ':' + hd.id);
+}
+
+export class Component<TProps, TState> extends React.Component<TProps, TState> implements DataSubscriber {
     subscriptions: CacheEntry[] = [];
     renderCoreOk = false;
 
@@ -303,18 +343,22 @@ export class Component<TProps, TState> extends React.Component<TProps, TState> {
         this.state = <any>{}
     }
 
-    getData(path: string) {
-        const fetchResult = this.getDataWithStatus(path);
-        return fetchResult.data;
+    getData<T = any>(path: string) {
+        const fetchResult = this.getDataWithStatus<T>(path);
+        return fetchResult.data as T;
     }
 
     /**
      * Like getData, but the data is wrapped in a result object that indicates the status of the fetch operation
      */
-    getDataWithStatus(path: string): DataFetchResult<any> {
+    getDataWithStatus<T = any>(path: string): DataFetchResult<T> {
         if (!this.renderCoreOk)
             Util.oops("Override renderCore() not render()")
         return getCached(this, path)
+    }
+
+    onDataChanged(): void {
+        this.forceUpdate();
     }
 
     componentWillUnmount(): void {
@@ -333,6 +377,14 @@ export class Component<TProps, TState> extends React.Component<TProps, TState> {
         unsubscribe(this)
         this.renderCoreOk = true;
         return this.renderCore();
+    }
+
+    setStateAsync<K extends keyof TState>(state: Pick<TState, K>): Promise<void> {
+        return new Promise((resolve, reject) => {
+            this.setState(state, () => {
+                resolve();
+            })
+        })
     }
 }
 

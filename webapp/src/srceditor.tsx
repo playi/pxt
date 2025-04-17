@@ -1,22 +1,28 @@
 import * as pkg from "./package";
+import * as core from "./core";
 import * as React from "react";
 
+import IEditor = pxt.editor.IEditor;
+import IProjectView = pxt.editor.IProjectView;
+
 export type ViewState = any;
-export type ProjectView = pxt.editor.IProjectView;
 
 export interface ParentProps {
-    parent: ProjectView;
+    parent: IProjectView;
 }
 
-export class Editor implements pxt.editor.IEditor {
+export class Editor implements IEditor {
     protected currSource: string;
     isVisible = false;
-    constructor(public parent: ProjectView) {
+    constructor(public parent: IProjectView) {
     }
     changeCallback = () => { };
     setVisible(v: boolean) {
         this.isVisible = v;
     }
+    simStateChanged() { }
+
+    onPageVisibilityChanged(isVisible: boolean) {}
 
     /*******************************
      Methods called before loadFile
@@ -36,13 +42,18 @@ export class Editor implements pxt.editor.IEditor {
         return this.currSource
     }
 
+    getStyle(style?: any) {
+        let display = { display: this.isVisible ? "block" : "none" };
+        return Object.assign(display, style);
+    }
+
     getId() {
         return "editor"
     }
 
-    displayOuter() {
+    displayOuter(style?: any) {
         return (
-            <div className='full-abs' key={this.getId() } id={this.getId() } style={{ display: this.isVisible ? "block" : "none" }}>
+            <div className='full-abs' key={this.getId() } id={this.getId() } style={this.getStyle(style)}>
                 {this.display() }
             </div>
         )
@@ -80,7 +91,7 @@ export class Editor implements pxt.editor.IEditor {
     setScale(scale: number) { }
 
     closeFlyout() { }
-
+    clearCaches() { }
     /*******************************
      loadFile
     *******************************/
@@ -101,8 +112,12 @@ export class Editor implements pxt.editor.IEditor {
     setDiagnostics(file: pkg.File, snapshot: any): void { }
     setViewState(view: ViewState): void { }
 
-    saveToTypeScript(): Promise<string> {
-        return Promise.resolve('');
+    /**
+     * Serializes code to typescript.
+     * @returns undefined if there is nothing to save
+     */
+    saveToTypeScriptAsync(willOpenTypeScript = false): Promise<string> {
+        return Promise.resolve(undefined);
     }
 
     highlightStatement(stmt: pxtc.LocationInfo, brk?: pxsim.DebuggerBreakpointMessage): boolean { return false; }
@@ -115,9 +130,24 @@ export class Editor implements pxt.editor.IEditor {
         return true
     }
 
-    filterToolbox(filters?: pxt.editor.ProjectFilters, showCategories?: boolean) {
+    filterToolbox(showCategories?: boolean) {
     }
 
     insertBreakpoint() {
+    }
+
+    updateBreakpoints() {
+    }
+
+    getBreakpoints(): number[] {
+        return [];
+    }
+
+    updateToolbox() {
+    }
+
+    // allows all editors to send exceptions to error list
+    onExceptionDetected(exception: pxsim.DebuggerBreakpointMessage) {
+        core.warningNotification(lf("Program Error: {0}", exception?.exceptionMessage));
     }
 }

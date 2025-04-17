@@ -4,7 +4,7 @@
 
 Look for these specific issues with Internet Explorer.
 
-* Discrepancies in CSS rendering - colors, alignement, font sizes
+* Discrepancies in CSS rendering - colors, alignment, font sizes
 * Block rendering
 
 ## Known limitations
@@ -31,9 +31,7 @@ Open @homeurl@ in **Internet Explorer**.
 Open @homeurl@ in **Internet Explorer** in **InPrivate** mode.
 
 * Editor loads without issues
-* Cookie banner is visible
 * Click "Create New Project"
-* Cookie banner disappears
 * Click Download
 * File gets downloaded and save menu displays at bottom
 

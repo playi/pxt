@@ -4,6 +4,9 @@
 import * as core from "./core";
 import * as coretsx from "./coretsx";
 import U = pxt.U
+import { postHostMessageAsync, shouldPostHostMessages } from "../../pxteditor";
+
+
 
 interface SimulatorConfig {
     // return true if a visible breakpoint was found
@@ -11,6 +14,9 @@ interface SimulatorConfig {
     highlightStatement(stmt: pxtc.LocationInfo, brk?: pxsim.DebuggerBreakpointMessage): boolean;
     restartSimulator(): void;
     onStateChanged(state: pxsim.SimulatorState): void;
+    onSimulatorReady(): void;
+    setState(key: string, value: any): void;
+    onMuteButtonStateChange(state: pxt.editor.MuteState): void;
     editor: string;
 }
 
@@ -18,17 +24,16 @@ export const FAST_TRACE_INTERVAL = 100;
 export const SLOW_TRACE_INTERVAL = 500;
 
 export let driver: pxsim.SimulatorDriver;
-let nextFrameId: number = 0;
-const themes = ["blue", "red", "green", "yellow"];
 let config: SimulatorConfig;
 let lastCompileResult: pxtc.CompileResult;
-let tutorialMode: boolean;
 let displayedModals: pxt.Map<boolean> = {};
 export let simTranslations: pxt.Map<string>;
-let dirty = false;
 
 export function setTranslations(translations: pxt.Map<string>) {
-    simTranslations = translations;
+    if (simTranslations !== translations) {
+        simTranslations = translations;
+        setDirty();
+    }
 }
 
 export function init(root: HTMLElement, cfg: SimulatorConfig) {
@@ -43,16 +48,35 @@ export function init(root: HTMLElement, cfg: SimulatorConfig) {
     debuggerDiv.className = 'ui item landscape only';
     root.appendChild(debuggerDiv);
 
+    const nestedEditorSim = /nestededitorsim=1/i.test(window.location.href);
+    const mpRole = /[\&\?]mp=(server|client)/i.exec(window.location.href)?.[1]?.toLowerCase();
+    let parentOrigin: string = null;
+    if (window.parent !== window) {
+        const searchParams = new URLSearchParams(window.location.search);
+        const origin = searchParams.get("parentOrigin")
+
+        // validate the URI
+        if (!!origin) {
+            try {
+                const originUrl = new URL(origin);
+                parentOrigin = originUrl.origin
+            } catch (e) {
+                console.error(`Invalid parent origin: ${origin}`)
+            }
+        }
+    }
+
     let options: pxsim.SimulatorDriverOptions = {
+        restart: () => cfg.restartSimulator(),
         revealElement: (el) => {
-            if (pxt.options.light) return;
+            if (pxt.options.light || driver.isLoanedSimulator(el)) return;
             // Play enter animation
             const animation = pxt.appTarget.appTheme.simAnimationEnter || 'fly right in';
             el.style.animationDuration = '500ms';
             const animationClasses = `${animation} visible transition animating`;
             pxsim.U.addClass(el, animationClasses);
 
-            Promise.resolve().delay(500).then(() => {
+            pxt.Util.delay(500).then(() => {
                 pxsim.U.removeClass(el, animationClasses);
                 el.style.animationDuration = '';
 
@@ -84,7 +108,7 @@ export function init(root: HTMLElement, cfg: SimulatorConfig) {
                 el.style.animationDuration = '500ms';
                 const animationClasses = `${animation} visible transition animating`;
                 pxsim.U.addClass(el, animationClasses);
-                Promise.resolve().delay(500).then(() => {
+                pxt.Util.delay(500).then(() => {
                     pxsim.U.removeClass(el, `animating`);
                     el.style.animationDuration = '';
 
@@ -135,7 +159,7 @@ export function init(root: HTMLElement, cfg: SimulatorConfig) {
         },
         onTraceMessage: function (msg) {
             let brkInfo = lastCompileResult.breakpoints[msg.breakpointId]
-            if (config) config.highlightStatement(brkInfo)
+            if (config) config.highlightStatement(brkInfo, msg)
         },
         onDebuggerWarning: function (wrn) {
             for (let id of wrn.breakpointIds) {
@@ -160,8 +184,15 @@ export function init(root: HTMLElement, cfg: SimulatorConfig) {
             }
             cfg.onStateChanged(state);
         },
+        onSimulatorReady: function () {
+            pxt.perf.recordMilestone("simulator ready")
+            cfg.onSimulatorReady();
+        },
         onSimulatorCommand: (msg: pxsim.SimulatorCommandMessage): void => {
             switch (msg.command) {
+                case "setstate":
+                    cfg.setState(msg.stateKey, msg.stateValue);
+                    break
                 case "restart":
                     cfg.restartSimulator();
                     break;
@@ -195,8 +226,7 @@ export function init(root: HTMLElement, cfg: SimulatorConfig) {
                                 if (hasTrustedLink && selection == 1) {
                                     window.open(msg.linkButtonHref, '_blank');
                                 }
-                            })
-                            .done();
+                            });
                     }
                     break;
             }
@@ -204,15 +234,21 @@ export function init(root: HTMLElement, cfg: SimulatorConfig) {
         onTopLevelCodeEnd: () => {
             postSimEditorEvent("toplevelfinished");
         },
-        stoppedClass: getStoppedClass()
+        onMuteButtonStateChange: cfg.onMuteButtonStateChange,
+        stoppedClass: pxt.appTarget.simulator && pxt.appTarget.simulator.stoppedClass,
+        invalidatedClass: pxt.appTarget.simulator && pxt.appTarget.simulator.invalidatedClass,
+        nestedEditorSim,
+        parentOrigin,
+        mpRole,
+        messageSimulators: pxt.appTarget?.simulator?.messageSimulators
     };
     driver = new pxsim.SimulatorDriver(document.getElementById('simulators'), options);
     config = cfg
 }
 
 function postSimEditorEvent(subtype: string, exception?: string) {
-    if (pxt.appTarget.appTheme.allowParentController && pxt.BrowserUtils.isIFrame()) {
-        pxt.editor.postHostMessageAsync({
+    if (shouldPostHostMessages()) {
+        postHostMessageAsync({
             type: "pxthost",
             action: "simevent",
             subtype: subtype as any,
@@ -221,6 +257,7 @@ function postSimEditorEvent(subtype: string, exception?: string) {
     }
 }
 
+let tutorialMode: boolean = false;
 export function setState(editor: string, tutMode?: boolean) {
     if (config && config.editor != editor) {
         config.editor = editor;
@@ -230,38 +267,58 @@ export function setState(editor: string, tutMode?: boolean) {
     tutorialMode = tutMode;
 }
 
-export function makeDirty() { // running outdated code
-    pxsim.U.addClass(driver.container, getInvalidatedClass());
-    dirty = true;
-
-    // We suspend the simulator here to stop it from running without
-    // interfering with the user's stopped state. We're not doing this check
-    // in the driver because the driver should be able to switch from any state
-    // to the suspend state, but in this codepath we only want to switch to the
-    // suspended state if we're running
-    if (driver.state == pxsim.SimulatorState.Running) driver.suspend();
+export function setDirty() { // running outdated code
+    if (driver) driver.setDirty();
 }
 
-export function isDirty(): boolean { // in need of a restart?
-    return dirty;
+export function setPending() {
+    if (driver) driver.setPending();
+}
+
+export interface RunOptions {
+    mute?: boolean;
+    highContrast?: boolean;
+    light?: boolean;
+    clickTrigger?: boolean;
+    storedState?: pxt.Map<any>;
+    autoRun?: boolean;
 }
 
 export function run(pkg: pxt.MainPackage, debug: boolean,
-    res: pxtc.CompileResult, mute?: boolean,
-    highContrast?: boolean, light?: boolean,
-    clickTrigger?: boolean) {
-    makeClean();
-    const js = res.outfiles[pxtc.BINARY_JS]
+    res: pxtc.CompileResult, options: RunOptions, trace: boolean) {
     const boardDefinition = pxt.appTarget.simulator.boardDefinition;
-    const parts = pxtc.computeUsedParts(res, true);
-    const fnArgs = res.usedArguments;
+    const {
+        js,
+        fnArgs,
+        parts,
+        usedBuiltinParts,
+        allParts
+    } = pxtc.buildSimJsInfo(res);
     lastCompileResult = res;
+    const { mute, highContrast, light, clickTrigger, storedState, autoRun } = options;
+    const isIpcRenderer = pxt.BrowserUtils.isIpcRenderer() || undefined;
+    const dependencies: pxt.Map<string> = {}
+    for (const dep of pkg.sortedDeps())
+        dependencies[dep.id] = dep.version()
+
+    const playerNumber = allParts && allParts.indexOf("multiplayer") >= 0 ? 1 : undefined;
+    if (playerNumber) {
+        const root = document.getElementById("root");
+        for (let i = 1; i <= 4; i++) {
+            const cssVar = `--multiplayer-presence-icon-${i}`;
+            root?.style?.removeProperty(cssVar);
+        }
+    }
+
+    const theme = pkg.config.theme || (pxt.appTarget.appTheme.matchWebUSBDeviceInSim && pxt.packetio.isConnected() && pxt.packetio.deviceVariant());
 
     const opts: pxsim.SimulatorRunOptions = {
         boardDefinition: boardDefinition,
         mute,
         parts,
+        builtinParts: usedBuiltinParts,
         debug,
+        trace,
         fnArgs,
         highContrast,
         light,
@@ -271,49 +328,54 @@ export function run(pkg: pxt.MainPackage, debug: boolean,
         localizedStrings: simTranslations,
         refCountingDebug: pxt.options.debug,
         version: pkg.version(),
-        clickTrigger: clickTrigger
+        clickTrigger: clickTrigger,
+        breakOnStart: debug,
+        storedState: storedState,
+        autoRun,
+        ipc: isIpcRenderer,
+        dependencies,
+        activePlayer: playerNumber,
+        theme: theme,
     }
+    //if (pxt.options.debug)
+    //    pxt.debug(JSON.stringify(opts, null, 2))
     postSimEditorEvent("started");
 
     driver.run(js, opts);
 }
 
 export function mute(mute: boolean) {
+    if (!driver) return;
     driver.mute(mute);
 }
 
-export function stop(unload?: boolean) {
+export function stop(unload?: boolean, starting?: boolean) {
     if (!driver) return;
-
-    makeClean();
-    driver.stop(unload);
+    driver.stop(unload, starting);
 }
 
 export function suspend() {
     if (!driver) return;
-
-    makeClean();
     driver.suspend();
 }
 
 export function hide(completeHandler?: () => void) {
-    if (!pxt.appTarget.simulator.headless) {
-        makeDirty();
-    }
+    if (!driver) return;
     driver.hide(completeHandler);
 }
 
 export function unhide() {
+    if (!driver) return;
     driver.unhide();
 }
 
 export function setTraceInterval(intervalMs: number) {
+    if (!driver) return;
     driver.setTraceInterval(intervalMs);
 }
 
 export function proxy(message: pxsim.SimulatorCustomMessage) {
     if (!driver) return;
-
     driver.postMessage(message);
 }
 
@@ -341,23 +403,4 @@ export function dbgStepOut() {
     if (driver.state == pxsim.SimulatorState.Paused) {
         driver.resume(pxsim.SimulatorDebuggerCommand.StepOut);
     }
-}
-
-function makeClean() {
-    pxsim.U.removeClass(driver.container, getInvalidatedClass());
-    dirty = false;
-}
-
-function getInvalidatedClass() {
-    if (pxt.appTarget.simulator && pxt.appTarget.simulator.invalidatedClass) {
-        return pxt.appTarget.simulator.invalidatedClass;
-    }
-    return "sepia";
-}
-
-function getStoppedClass() {
-    if (pxt.appTarget.simulator && pxt.appTarget.simulator.stoppedClass) {
-        return pxt.appTarget.simulator.stoppedClass;
-    }
-    return undefined;
 }

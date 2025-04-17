@@ -1,25 +1,16 @@
-/// <reference path="blockly.d.ts" />
+import * as pxtblockly from "../built/pxtblocks/index";
+import * as Blockly from "blockly";
+type pxtblockly_ = typeof pxtblockly;
+type Blockly_ = typeof Blockly;
 
-declare namespace Blockly {
+declare global {
+    namespace pxt.blocks {
+        interface PxtBlockly extends pxtblockly_ {
 
-    interface FieldCustomOptions {
-        blocksInfo: any;
-        colour?: string | number;
-        label?: string;
-        type?: string;
-    }
+        }
 
-    interface FieldCustomDropdownOptions extends FieldCustomOptions {
-        data?: any;
-    }
+        interface BlocklyModule extends Blockly_ {
 
-    interface FieldCustom extends Field {
-        isFieldCustom_: boolean;
-        saveOptions?(): pxt.Map<string | number | boolean>;
-        restoreOptions?(map: pxt.Map<string | number | boolean>): void;
-    }
-
-    interface FieldCustomConstructor {
-        new(text: string, options: FieldCustomOptions, validator?: Function): FieldCustom;
+        }
     }
 }

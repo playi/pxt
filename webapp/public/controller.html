@@ -64,7 +64,19 @@
             logs.innerText += "filter: " + filter + "\n";
         }
 
+        var languageRestrictions = [
+            "python-only",
+            "javascript-only",
+            "blocks-only",
+            "no-blocks",
+            "no-python",
+            "no-javascript",
+            ""
+        ];
+        var languageRestrictionIndex = 0;
+
         var pendingMsgs = {};
+        var fullScreen = false;
         function sendMessage(action) {
             console.log('send ' + action)
             var logs = document.getElementById("logs");
@@ -88,6 +100,12 @@
             }
             else if (action == 'settracestate') {
                 msg.enabled = true;
+            } else if (action == 'setsimulatorfullscreen') {
+                msg.enabled = fullScreen = !fullScreen;
+            }
+            else if (action == 'setlanguagerestriction') {
+                msg.restriction = languageRestrictions[languageRestrictionIndex];
+                languageRestrictionIndex = (languageRestrictionIndex + 1) % languageRestrictions.length;
             }
             if (msg.response)
                 pendingMsgs[msg.id] = msg;
@@ -157,6 +175,7 @@
     <div id="buttons" class="ui buttons">
         <button class="ui button" onclick="sendMessage('switchblocks')">switch to blocks</button>
         <button class="ui button" onclick="sendMessage('switchjavascript')">switch to javascript</button>
+        <button class="ui button" onclick="sendMessage('setlanguagerestriction')">restrict language</button>
         <button class="ui button" onclick="sendMessage('startsimulator')">start sim</button>
         <button class="ui button" onclick="sendMessage('restartsimulator')">reset sim</button>
         <button class="ui button" onclick="sendMessage('stopsimulator')">stop sim</button>
@@ -169,6 +188,12 @@
         <button class="ui button" onclick="sendMessage('redo')">redo</button>
         <button class="ui button" onclick="sendMessage('renderblocks')">renderblocks</button>
         <button class="ui button" onclick="sendMessage('closeflyout')">close flyout</button>
+        <button class="ui button" onclick="sendMessage('setsimulatorfullscreen')">set sim full screen</button>
+        <button class="ui button" onclick="sendMessage('togglehighcontrast')">toggle high contrast</button>
+        <button class="ui button" onclick="sendMessage('togglegreenscreen')">toggle green screen</button>
+        <button class="ui button" onclick="sendMessage('print')">print</button>
+        <button class="ui button" onclick="sendMessage('pair')">pair</button>
+        <button class="ui button" onclick="sendMessage('info')">info</button>
         <br/>
         <input id="hexfile" class="ui input" type="file" />
         <button class="ui button" onclick="importHexFile()">import hex</button>

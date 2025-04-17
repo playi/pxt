@@ -1,5 +1,6 @@
 /// <reference path="..\..\built\pxtlib.d.ts" />
-/// <reference path="..\..\built\pxtblocks.d.ts" />
+
+import * as pxtblockly from "../../pxtblocks";
 
 describe("field user enum (when picking new enum values)", () => {
     it("should start at 0 if no flag is set", () => {
@@ -49,7 +50,8 @@ function basicEnumTest(existing: number[], expected: number) {
         promptHint: "",
         initialMembers: ["does", "not", "matter"],
         blockId: "",
-        isBitMask: false
+        isBitMask: false,
+        isHash: false,
     }, existing, expected);
 }
 
@@ -60,7 +62,8 @@ function bitmaskEnumTest(existing: number[], expected: number) {
         promptHint: "",
         initialMembers: ["does", "not", "matter"],
         blockId: "",
-        isBitMask: true
+        isBitMask: true,
+        isHash: false,
     }, existing, expected);
 }
 
@@ -72,6 +75,7 @@ function startValueEnumTest(existing: number[], expected: number) {
         initialMembers: ["does", "not", "matter"],
         blockId: "",
         isBitMask: false,
+        isHash: false,
         firstValue: 3
     }, existing, expected);
 }

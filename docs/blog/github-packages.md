@@ -1,6 +1,16 @@
-# GitHub package authoring
+# GitHub Extensions authoring
 
 **Posted on August 1, 2018 by [mmoskal](https://github.com/mmoskal)**
+
+## ~ hint
+
+**Update**: Read part 3 at [MakeCode with GitHub](/blog/makecode-with-github).
+
+**Update**: Read part 2 at [GitHub Extensions Reloaded](/blog/github-extensions-episode-2).
+
+**Update**: This feature is now documented in [GitHub extension authoring](/extensions/github-authoring).
+
+## ~
 
 MakeCode is a platform with an easy level of entry, even for middle-schoolers, but allowing nearly unlimited creativity and complexity available to advanced users for writing programs in [TypeScript](https://www.typescriptlang.org/). Our [subset of TypeScript](https://makecode.com/language) supports most of the regular language features of TypeScript, but can be efficiently compiled to run on extremely resource constrained devices like the micro:bit (your phone literally has a _million times_ more available memory than a micro:bit!). In fact, most of the runtime libraries in our editors are implemented in Static TypeScript including all of the defined blocks. We also pack a [full-featured Monaco text editor](https://makecode.com/js/editor) into our web app.
 

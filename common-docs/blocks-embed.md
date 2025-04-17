@@ -16,11 +16,30 @@ A quick solution is take screenshots of the snippets but that approach can quick
 
 The MakeCode approach to solving this issue is to render the **JavaScript** code snippets on the client using the same block rendering engine as the editor. Under the hood, an ``iframe`` from the MakeCode editor will render the blocks for you.
 
-## Plugins
+## GitHub pages #githubpages
 
-Here are some integration samples for various documentation/blogging engines.
+You can use [GitHub pages](https://help.github.com/en/github/working-with-github-pages) to render your README.md file as a web site. Within the README.md you can enable rendering of blocks.
 
-* [GitBook plugin](https://plugins.gitbook.com/plugin/pxt)
+* enable [GitHub pages](https://help.github.com/en/github/working-with-github-pages/creating-a-github-pages-site#creating-your-site) on your repository
+* add the following entry in the ``_config.yml``
+
+```yml
+  makecode:
+    home_url: @homeurl@
+```
+
+* copy the following text at the bottom of your ``README.md`` file
+
+```html
+<script src="https://makecode.com/gh-pages-embed.js"></script><script>makeCodeRender("{{ site.makecode.home_url }}", "{{ site.github.owner_name }}/{{ site.github.repository_name }}");</script>
+```
+
+## Other Plugins
+
+Here are some other integration samples:
+
+* [React component](https://github.com/microsoft/pxt-react-extension-template/blob/master/src/components/snippet.tsx)
+* [HTML only](https://jsfiddle.net/L8msdjpu/2/)
 * [MkDocs plugin](https://microsoft.github.io/pxt-mkdocs-sample/)
 
 ## Custom rendering
@@ -29,7 +48,9 @@ To render blocks in your own HTML documents or to make plugins for a document pl
 
 ### ~ hint
 
-Try this [fiddle](https://jsfiddle.net/ndyz1d57/80/) to see an embedded blocks rendering example.
+#### Try it out
+
+Try this [fiddle](https://jsfiddle.net/nq0hyz97/) to see an embedded blocks rendering example in action.
 
 ### ~
 
@@ -63,13 +84,15 @@ export interface RenderBlocksRequestMessage extends SimulatorMessage {
     code: string;
     options?: {
         package?: string;
+        packageId?: string;
         snippetMode?: boolean;
     }
 }
 ```
 
 * ``id``: The identifer of the snippet element. This is used to match the document element of the snippet with the rendered blocks returned later.
-* ``code``: The text of the code snippet to send, compile, and render.
+* ``code``: The text of the code snippet to send, compile, and render. The snippet may be JavaScript or the Blockly XML payload.
+* ``packageId``: the identifier of a project shared in the editor (without the ``https://makecode.com/`` prefix)
 
 #### Render Blocks Response message
 
@@ -86,6 +109,7 @@ export interface RenderBlocksResponseMessage extends SimulatorMessage {
     uri?: string;
     width?: number;
     height?: number;
+    error?: string;
 }
 ```
 
@@ -107,13 +131,13 @@ When the ``renderready`` response is received, the document can begin collecting
 
 #### Responding to ``renderblocks``
 
-The ``renderblocks`` message is received as a response to a previous ``renderblocks`` request sent by the document. The message contains an image of the rendered blocks if compilation of the code snippet sent was successful. The image can be inserted into the DOM by matching the ``id`` of the original snippet element with the ``id`` in the message. The image is provided as both SVG and ``img`` data. The implentation can decide which form it wants to use. Depending on how the blocks are to be displayed, the original snippet elements are replaced by the blocks image or the blocks are added to the DOM next to them.
+The ``renderblocks`` message is received as a response to a previous ``renderblocks`` request sent by the document. The message contains an image of the rendered blocks if compilation of the code snippet sent was successful. The image can be inserted into the DOM by matching the ``id`` of the original snippet element with the ``id`` in the message. The image is provided as both SVG and ``img`` data. The implementation can decide which form it wants to use. Depending on how the blocks are to be displayed, the original snippet elements are replaced by the blocks image or the blocks are added to the DOM next to them.
 
 #### Handler example
 
 As an example, let's say that a document has all of its code snippets contained in ``pre`` elements:
 
-```
+```html
 <pre>
 basic.showString("Hello World")
 </pre>
@@ -192,9 +216,9 @@ Once this ``iframe`` loads, it sends the ``renderready`` message to the register
 
 ### Putting it together #example
 
-This HTML document example contains three ``pre`` elements with code snippets. Only two are sent to the renderer since they're filtered on their class as ``blocks``. Each element sent is given an identifier to match up with the rendered block that is returned. JQuery is used in this example but another framework or stadard DOM mehtods could be used too.
+This HTML document example contains three ``pre`` elements with code snippets. Only two are sent to the renderer since they're filtered on their class as ``blocks``. Each element sent is given an identifier to match up with the rendered block that is returned. JQuery is used in this example but another framework or standard DOM methods could be used too.
 
-```
+```html
 <html lang="en">
 <head>
     <title>Blocks Embedding Test Page</title>
@@ -319,6 +343,58 @@ $(function () {
 </html>
 ```
 
-## Laziness
+## Rendering blocks from extensions
 
-You can detect whether you have any snippet on your page before loading the rendering iFrame.
+If you also want to render blocks from an extension, include the path for the extension in the `options.package` data field. For example, if you want to show a block from the `neopixel` extension, like the block for `setPixelColor`:
+
+```html
+<pre>
+strip.setPixelColor(0, NeoPixelColors.White)
+</pre>
+```
+
+Add the `options.package` field and set it to the extension path specifier such as `neopixel=github:microsoft/pxt-neopixel` for the `neopixel` extension ([`neopixel`](https://github.com/microsoft/pxt-neopixel/blob/master/pxt.json) is the name of the extension and `github:microsoft/pxt-neopixel` is the GitHub path, see [package specs](https://makecode.com/writing-docs/snippets#package)): 
+
+```typescript-ignore
+function makeCodeRenderPre(pre) {
+    var f = document.getElementById("makecoderenderer");
+    f.contentWindow.postMessage({
+        type: "renderblocks",
+        id: pre.id,
+        code: pre.innerText,
+        options: {
+            package: "neopixel=github:microsoft/pxt-neopixel"
+        }
+    }, "@homeurl@");
+}
+```
+
+## Rendering shared projects
+
+Rendering a shared project is accomplished in almost the same manner as the embedded blocks method. In this case though,
+leave the ``code`` attribute empty and pass the shared project id in a ``options.packageId`` data field.
+
+In the HTML, you can store the shared project id in a ``pre`` element as a data attribute.
+
+```html
+<pre data-packageid="_HjWJo9eHjXwP"></pre>
+```
+
+Then, read the ``data-packageid`` attribute and pass it along as the ``packageId`` field in the ``options`` of the ``renderblocks`` message.
+
+```typescript-ignore
+f.contentWindow.postMessage({
+    type: "renderblocks",
+    id: pre.id,
+    code: "",
+    options: {
+    	packageId: pre.getAttribute("data-packageid")
+    }
+}, "@homeurl@");
+```
+
+See this [HTML](https://jsfiddle.net/L8msdjpu/3/) example.
+
+## Lazy loading
+
+You can detect whether you have any snippet on your page before loading the rendering ``iframe``.

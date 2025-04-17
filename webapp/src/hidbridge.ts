@@ -13,7 +13,6 @@ interface HidDevice {
     release: number; // 0x4201
 }
 
-
 export class HIDError extends Error {
     constructor(msg: string) {
         super(msg)
@@ -43,23 +42,19 @@ function onOOB(v: OOB) {
     }
 }
 
-function init() {
+export function shouldUse() {
+    let serial = pxt.appTarget.serial
+    return serial && serial.useHF2 && (pxt.BrowserUtils.isLocalHost() && !!Cloud.localToken);
+}
+
+export function mkHIDBridgePacketIOAsync(): Promise<pxt.packetio.PacketIO> {
     if (!iface) {
-        if (!Cloud.isLocalHost() || !Cloud.localToken)
-            return;
+        if (!pxt.BrowserUtils.isLocalHost() || !Cloud.localToken)
+            return Promise.resolve(undefined);
         pxt.debug('initializing hid pipe');
         iface = pxt.worker.makeWebSocket(
             `ws://localhost:${pxt.options.wsPort}/${Cloud.localToken}/hid`, onOOB)
     }
-}
-
-export function shouldUse() {
-    let serial = pxt.appTarget.serial
-    return serial && serial.useHF2 && (Cloud.isLocalHost() && !!Cloud.localToken || pxt.winrt.isWinRT());
-}
-
-function mkBridgeAsync(): Promise<pxt.HF2.PacketIO> {
-    init()
     let raw = false
     if (pxt.appTarget.serial && pxt.appTarget.serial.rawHID)
         raw = true
@@ -68,18 +63,32 @@ function mkBridgeAsync(): Promise<pxt.HF2.PacketIO> {
         .then(() => b);
 }
 
-pxt.HF2.mkPacketIOAsync = mkBridgeAsync;
-
-class BridgeIO implements pxt.HF2.PacketIO {
+class BridgeIO implements pxt.packetio.PacketIO {
+    onDeviceConnectionChanged = (connect: boolean) => { };
+    onConnectionChanged = () => { };
     onData = (v: Uint8Array) => { };
     onEvent = (v: Uint8Array) => { };
     onError = (e: Error) => { };
     onSerial = (v: Uint8Array, isErr: boolean) => { };
     public dev: HidDevice;
+    private connected: boolean;
+    private connecting = false;
 
     constructor(public rawMode = false) {
         if (rawMode)
             this.onEvent = v => this.onData(v)
+    }
+
+    disposeAsync(): Promise<void> {
+        return Promise.resolve();
+    }
+
+    isConnecting(): boolean {
+        return this.connecting;
+    }
+
+    isConnected(): boolean {
+        return !!this.dev && this.connected;
     }
 
     onOOB(v: OOB) {
@@ -90,7 +99,7 @@ class BridgeIO implements pxt.HF2.PacketIO {
         }
     }
 
-    talksAsync(cmds: pxt.HF2.TalkArgs[]): Promise<Uint8Array[]> {
+    talksAsync(cmds: pxt.packetio.TalkArgs[]): Promise<Uint8Array[]> {
         return iface.opAsync("talk", {
             path: this.dev.path,
             cmds: cmds.map(c => ({ cmd: c.cmd, data: c.data ? U.toHex(c.data) : "" }))
@@ -101,6 +110,7 @@ class BridgeIO implements pxt.HF2.PacketIO {
     }
 
     error(msg: string) {
+        this.connected = false;
         throw new HIDError(U.lf("USB/HID error on device {0} ({1})", this.dev.product, msg))
     }
 
@@ -109,8 +119,12 @@ class BridgeIO implements pxt.HF2.PacketIO {
     }
 
     disconnectAsync(): Promise<void> {
+        this.connected = false;
         return iface.opAsync("disconnect", {
             path: this.dev.path
+        }).finally(() => {
+            if (this.onConnectionChanged)
+                this.onConnectionChanged();
         })
     }
 
@@ -133,6 +147,8 @@ class BridgeIO implements pxt.HF2.PacketIO {
     }
 
     initAsync(): Promise<void> {
+        this.connected = false;
+        this.connecting = true;
         return iface.opAsync("list", {})
             .then((devs0: any) => {
                 let devs = devs0.devices as HidDevice[]
@@ -151,55 +167,13 @@ class BridgeIO implements pxt.HF2.PacketIO {
                 path: this.dev.path,
                 raw: this.rawMode,
             }))
-    }
-}
-
-let uf2Wrapper: pxt.HF2.Wrapper;
-let initPromise: Promise<pxt.HF2.Wrapper>;
-let serialHandler: (buf: Uint8Array, isStderr: boolean) => void;
-
-function hf2Async() {
-    return pxt.HF2.mkPacketIOAsync()
-        .then(h => {
-            uf2Wrapper = new pxt.HF2.Wrapper(h);
-            if (serialHandler) {
-                uf2Wrapper.onSerial = serialHandler;
-            }
-            return uf2Wrapper.reconnectAsync(true)
-                .then(() => uf2Wrapper)
-        })
-}
-
-export function configureHidSerial(serialCb: (buf: Uint8Array, isStderr: boolean) => void): void {
-    serialHandler = serialCb;
-    if (uf2Wrapper) {
-        uf2Wrapper.onSerial = serialHandler;
-    }
-}
-
-export function disconnectWrapperAsync(): Promise<void> {
-    if (uf2Wrapper) {
-        return uf2Wrapper.disconnectAsync();
-    }
-    return Promise.resolve();
-}
-
-export function initAsync(force = false) {
-    if (!initPromise) {
-        initPromise = hf2Async()
-            .catch(err => {
-                initPromise = null
-                return Promise.reject(err)
+            .then(() => {
+                this.connected = true;
+            })
+            .finally(() => {
+                this.connecting = false;
+                if (this.onConnectionChanged)
+                    this.onConnectionChanged();
             })
     }
-    let wrapper: pxt.HF2.Wrapper;
-    return initPromise
-        .then((w) => {
-            wrapper = w;
-            if (force) {
-                return wrapper.reconnectAsync();
-            }
-            return Promise.resolve();
-        })
-        .then(() => wrapper);
 }

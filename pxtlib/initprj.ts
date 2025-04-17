@@ -1,21 +1,31 @@
-namespace pxt {
-    export const defaultFiles: Map<string> = {
-        "tsconfig.json":
-            `{
+namespace pxt.template {
+    export const TS_CONFIG = `{
     "compilerOptions": {
-        "target": "es5",
+        "target": "ES5",
         "noImplicitAny": true,
         "outDir": "built",
         "rootDir": "."
     },
     "exclude": ["pxt_modules/**/*test.ts"]
 }
-`,
+`;
+    export function defaultFiles(): Map<string> {
+        const files: Map<string> = {
+            "tsconfig.json": TS_CONFIG,
 
-        "test.ts": `// tests go here; this will not be compiled when this package is used as a library
+            "test.ts": `// ${lf("tests go here; this will not be compiled when this package is used as an extension.")}
 `,
-
-        "Makefile": `all: deploy
+            "_config.yml":
+                `makecode:
+  target: @TARGET@
+  platform: @PLATFORM@
+  home_url: @HOMEURL@
+theme: jekyll-theme-slate
+include:
+  - assets
+  - README.md
+`,
+            "Makefile": `all: deploy
 
 build:
 \tpxt build
@@ -26,45 +36,52 @@ deploy:
 test:
 \tpxt test
 `,
+            "Gemfile": `source 'https://rubygems.org'
+gem 'github-pages', group: :jekyll_plugins`,
+            "README.md": `
+> ${lf("Open this page at {0}",
+                "[https://@REPOOWNER@.github.io/@REPONAME@/](https://@REPOOWNER@.github.io/@REPONAME@/)"
+            )}
 
-        "README.md": `# @NAME@
+## ${lf("Use as Extension")}
 
-@DESCRIPTION@
+${lf("This repository can be added as an **extension** in MakeCode.")}
 
-## TODO
+* ${lf("open [@HOMEURL@](@HOMEURL@)")}
+* ${lf("click on **New Project**")}
+* ${lf("click on **Extensions** under the gearwheel menu")}
+* ${lf("search for **https://github.com/@REPO@** and import")}
 
-- [ ] Add a reference for your blocks here
-- [ ] Add "icon.png" image (300x200) in the root folder
-- [ ] Add "- beta" to the GitHub project description if you are still iterating it.
-- [ ] Turn on your automated build on https://travis-ci.org
-- [ ] Use "pxt bump" to create a tagged release on GitHub
-- [ ] Get your package reviewed and approved @DOCS@packages/approval
+## ${lf("Edit this project")}
 
-Read more at @DOCS@packages/build-your-own
+${lf("To edit this repository in MakeCode.")}
 
-## License
+* ${lf("open [@HOMEURL@](@HOMEURL@)")}
+* ${lf("click on **Import** then click on **Import URL**")}
+* ${lf("paste **https://github.com/@REPO@** and click import")}
 
-@LICENSE@
-
-## Supported targets
+#### ${lf("Metadata (used for search, rendering)")}
 
 * for PXT/@TARGET@
-(The metadata above is needed for package search.)
-
+<script src="https://makecode.com/gh-pages-embed.js"></script><script>makeCodeRender("{{ site.makecode.home_url }}", "{{ site.github.owner_name }}/{{ site.github.repository_name }}");</script>
 `,
 
-        ".gitignore":
-            `built
+            ".gitignore":
+                `# MakeCode
+built
 node_modules
 yotta_modules
 yotta_targets
 pxt_modules
+.pxt
+_site
 *.db
 *.tgz
 .header.json
+.simstate.json
 `,
-        ".vscode/settings.json":
-            `{
+            ".vscode/settings.json":
+                `{
     "editor.formatOnType": true,
     "files.autoSave": "afterDelay",
     "files.watcherExclude": {
@@ -73,7 +90,8 @@ pxt_modules
         "**/node_modules/**": true,
         "**/yotta_modules/**": true,
         "**/yotta_targets": true,
-        "**/pxt_modules/**": true
+        "**/pxt_modules/**": true,
+        "**/.pxt/**": true
     },
     "files.associations": {
         "*.blocks": "html",
@@ -84,128 +102,87 @@ pxt_modules
         "**/node_modules": true,
         "**/yotta_modules": true,
         "**/yotta_targets": true,
-        "**/pxt_modules": true
+        "**/pxt_modules": true,
+        "**/.pxt": true
+    },
+    "files.exclude": {
+        "**/pxt_modules": true,
+        "**/.pxt": true
     }
 }`,
-        ".travis.yml": `language: node_js
-node_js:
-    - "8.9.4"
-script:
-    - "npm install -g pxt"
-    - "pxt target @TARGET@"
-    - "pxt install"
-    - "pxt build"
-sudo: false
-cache:
-    directories:
-    - npm_modules
-    - pxt_modules`,
-        ".vscode/tasks.json":
-            `
-// A task runner that calls the MakeCode (PXT) compiler
-{
-    "version": "2.0.0",
-    "tasks": [{
-        "label": "pxt deploy",
-        "type": "shell",
-        "command": "pxt deploy",
-        "group": "build",
-        "problemMatcher": [ "$tsc" ]
-    }, {
-        "label": "pxt build",
-        "type": "shell",
-        "command": "pxt build",
-        "group": "test",
-        "problemMatcher": [ "$tsc" ]
-    }, {
-        "label": "pxt clean",
-        "type": "shell",
-        "command": "pxt clean",
-        "group": "test",
-        "problemMatcher": [ "$tsc" ]
-    }, {
-        "label": "pxt serial",
-        "type": "shell",
-        "command": "pxt serial",
-        "group": "test",
-        "problemMatcher": [ "$tsc" ]
-    }]
-}
-`
-    }
+            ".vscode/extensions.json":
+            `{
+    "recommendations": ["ms-edu.pxt-vscode-web"]
+}`,
+        };
 
-
-    export function packageFiles(name: string) {
-        let prj = pxt.appTarget.tsprj || pxt.appTarget.blocksprj;
-        let config = U.clone(prj.config);
-        // remove blocks file
-        Object.keys(prj.files)
-            .filter(f => /\.blocks$/.test(f))
-            .forEach(f => delete prj.files[f]);
-        config.files = config.files.filter(f => !/\.blocks$/.test(f));
-
-        config.name = name;
-        // by default, projects are not public
-        config.public = false;
-
-        if (!config.version) {
-            config.version = "0.0.0"
+        // override files from target
+        const overrides = targetTemplateFiles();
+        if (overrides) {
+            Object.keys(overrides)
+                .forEach(k => files[k] = overrides[k]);
         }
 
+        return files;
+    }
+
+    export function targetTemplateFiles(): pxt.Map<string> {
+        const overrides = pxt.appTarget.bundledpkgs[pxt.template.TEMPLATE_PRJ];
+        if (overrides) {
+            const r = Util.clone(overrides);
+            delete r[pxt.CONFIG_NAME];
+            return r;
+        }
+        return undefined;
+    }
+
+    export const TEMPLATE_PRJ = "template";
+
+    export function packageFiles(name: string): pxt.Map<string> {
+        const prj = pxt.appTarget.blocksprj || pxt.appTarget.tsprj;
+        const config = U.clone(prj.config);
+        // clean up
+        delete (<any>config).installedVersion;
+        delete config.additionalFilePath;
+        delete config.additionalFilePaths;
+        // (keep blocks files)
+        config.preferredEditor = config.files.find(f => /\.blocks$/.test(f))
+            ? pxt.BLOCKS_PROJECT_NAME : pxt.JAVASCRIPT_PROJECT_NAME;
+        config.name = name;
+        config.public = true;
+        if (!config.version)
+            config.version = "0.0.0"
         const files: Map<string> = {};
-        for (const f in defaultFiles)
-            files[f] = defaultFiles[f];
+        const defFiles = defaultFiles();
+        for (const f in defFiles)
+            files[f] = defFiles[f];
         for (const f in prj.files)
             if (f != "README.md") // this one we need to keep
                 files[f] = prj.files[f];
 
         const pkgFiles = Object.keys(files).filter(s =>
-            /\.(md|ts|asm|cpp|h)$/.test(s))
-
-        const fieldsOrder = [
-            "name",
-            "version",
-            "description",
-            "license",
-            "dependencies",
-            "files",
-            "testFiles",
-            "testDependencies",
-            "public",
-            "targetVersions"
-        ]
+            /\.(blocks|md|ts|asm|cpp|h|py)$/.test(s))
 
         config.files = pkgFiles.filter(s => !/test/.test(s));
         config.testFiles = pkgFiles.filter(s => /test/.test(s));
+        config.supportedTargets = [pxt.appTarget.id];
 
-        let configMap: Map<string> = config as any
-        // make it look nice
-        const newCfg: any = {}
-        for (const f of fieldsOrder) {
-            if (configMap.hasOwnProperty(f))
-                newCfg[f] = configMap[f]
-        }
-        for (const f of Object.keys(configMap)) {
-            if (!newCfg.hasOwnProperty(f))
-                newCfg[f] = configMap[f]
-        }
-
-        files[pxt.CONFIG_NAME] = JSON.stringify(newCfg, null, 4)
+        files[pxt.CONFIG_NAME] = pxt.Package.stringifyConfig(config);
 
         return files
     }
 
-    export function packageFilesFixup(files: Map<string>, removeSubdirs = false) {
+    export function packageFilesFixup(files: Map<string>, options?: pxt.Map<string>) {
         const configMap = JSON.parse(files[pxt.CONFIG_NAME])
-        configMap["target"] = pxt.appTarget.platformid || pxt.appTarget.id
-        configMap["docs"] = pxt.appTarget.appTheme.homeUrl || "./";
-
-        if (removeSubdirs)
-            for (let k of Object.keys(files)) {
-                if (k.indexOf("/") >= 0)
-                    delete files[k]
-            }
-
+        if (options)
+            Util.jsonMergeFrom(configMap, options);
+        if (pxt.webConfig) { // CLI
+            Object.keys(pxt.webConfig).forEach(k => configMap[k.toLowerCase()] = (<any>pxt.webConfig)[k]);
+            configMap["platform"] = pxt.appTarget.platformid || pxt.appTarget.id
+            configMap["target"] = pxt.appTarget.id
+            configMap["docs"] = pxt.appTarget.appTheme.homeUrl || "./";
+            configMap["homeurl"] = pxt.appTarget.appTheme.homeUrl || "???";
+        }
         U.iterMap(files, (k, v) => {
             v = v.replace(/@([A-Z]+)@/g, (f, n) => configMap[n.toLowerCase()] || "")
             files[k] = v

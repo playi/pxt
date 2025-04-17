@@ -9,8 +9,6 @@ import * as crypto from 'crypto';
 import * as path from 'path';
 import * as os from 'os';
 
-Promise = require("bluebird");
-
 import Util = pxt.Util;
 
 export interface SpawnOptions {
@@ -21,11 +19,26 @@ export interface SpawnOptions {
     pipe?: boolean;
     input?: string;
     silent?: boolean;
+    envOverrides?: pxt.Map<string>;
+    allowNonZeroExit?: boolean;
 }
 
 //This should be correct at startup when running from command line
 export let targetDir: string = process.cwd();
 export let pxtCoreDir: string = path.join(__dirname, "..");
+
+export let cliFinalizers: (() => Promise<void>)[] = [];
+
+export function addCliFinalizer(f: () => Promise<void>) {
+    cliFinalizers.push(f)
+}
+
+export function runCliFinalizersAsync() {
+    let fins = cliFinalizers
+    cliFinalizers = []
+    return pxt.Util.promiseMapAllSeries(fins, f => f())
+        .then(() => { })
+}
 
 export function setTargetDir(dir: string) {
     targetDir = dir;
@@ -37,7 +50,7 @@ export function readResAsync(g: events.EventEmitter) {
         let bufs: Buffer[] = []
         g.on('data', (c: any) => {
             if (typeof c === "string")
-                bufs.push(new Buffer(c, "utf8"))
+                bufs.push(Buffer.from(c, "utf8"))
             else
                 bufs.push(c)
         });
@@ -62,7 +75,7 @@ export function spawnWithPipeAsync(opts: SpawnOptions) {
     return new Promise<Buffer>((resolve, reject) => {
         let ch = child_process.spawn(opts.cmd, opts.args, {
             cwd: opts.cwd,
-            env: process.env,
+            env: opts.envOverrides ? extendEnv(process.env, opts.envOverrides) : process.env,
             stdio: opts.pipe ? [opts.input == null ? process.stdin : "pipe", "pipe", process.stderr] : "inherit",
             shell: opts.shell || false
         } as any)
@@ -75,13 +88,20 @@ export function spawnWithPipeAsync(opts: SpawnOptions) {
                 }
             })
         ch.on('close', (code: number) => {
-            if (code != 0)
+            if (code != 0 && !opts.allowNonZeroExit)
                 reject(new Error("Exit code: " + code + " from " + info))
             resolve(Buffer.concat(bufs))
         });
         if (opts.input != null)
             ch.stdin.end(opts.input, "utf8")
     })
+}
+
+function extendEnv(base: any, overrides: any) {
+    let res: any = {};
+    Object.keys(base).forEach(key => res[key] = base[key])
+    Object.keys(overrides).forEach(key => res[key] = overrides[key])
+    return res;
 }
 
 export function addCmd(name: string) {
@@ -158,9 +178,7 @@ function nodeHttpRequestAsync(options: Util.HttpRequestOptions): Promise<Util.Ht
     let u = <http.RequestOptions><any>url.parse(options.url)
 
     if (u.protocol == "https:") isHttps = true
-    /* tslint:disable:no-http-string */
     else if (u.protocol == "http:") isHttps = false
-    /* tslint:enable:no-http-string */
     else return Promise.reject("bad protocol: " + u.protocol)
 
     u.headers = Util.clone(options.headers) || {}
@@ -178,11 +196,11 @@ function nodeHttpRequestAsync(options: Util.HttpRequestOptions): Promise<Util.Ht
         if (Buffer.isBuffer(data)) {
             buf = data;
         } else if (typeof data == "object") {
-            buf = new Buffer(JSON.stringify(data), "utf8")
+            buf = Buffer.from(JSON.stringify(data), "utf8")
             u.headers["content-type"] = "application/json; charset=utf8"
             if (options.allowGzipPost) gzipContent = true
         } else if (typeof data == "string") {
-            buf = new Buffer(data, "utf8")
+            buf = Buffer.from(data, "utf8")
             if (options.allowGzipPost) gzipContent = true
         } else {
             Util.oops("bad data")
@@ -238,21 +256,29 @@ function sha256(hashData: string): string {
 
 
 function init() {
-    // no, please, I want to handle my errors myself
-    let async = (<any>Promise)._async
-    async.fatalError = (e: any) => async.throwLater(e);
-
+    require("promise.prototype.finally").shim();
+    // Make unhandled async rejections throw
+    process.on(
+        'unhandledRejection',
+        e => {
+            throw e
+        }
+    );
     Util.isNodeJS = true;
     Util.httpRequestCoreAsync = nodeHttpRequestAsync;
     Util.sha256 = sha256;
+    Util.cpuUs = () => {
+        const p = process.cpuUsage()
+        return p.system + p.user
+    }
     Util.getRandomBuf = buf => {
         let tmp = crypto.randomBytes(buf.length)
         for (let i = 0; i < buf.length; ++i)
             buf[i] = tmp[i]
     }
 
-    (global as any).btoa = (str: string) => new Buffer(str, "binary").toString("base64");
-    (global as any).atob = (str: string) => new Buffer(str, "base64").toString("binary");
+    (global as any).btoa = (str: string) => Buffer.from(str, "binary").toString("base64");
+    (global as any).atob = (str: string) => Buffer.from(str, "base64").toString("binary");
 }
 
 export function sanitizePath(path: string) {
@@ -263,14 +289,20 @@ export function readJson(fn: string) {
     return JSON.parse(fs.readFileSync(fn, "utf8"))
 }
 
+export function readText(fn: string) {
+    return fs.readFileSync(fn, "utf8");
+}
+
 export function readPkgConfig(dir: string) {
-    pxt.debug("readPkgConfig in " + dir)
+    //pxt.debug("readPkgConfig in " + dir)
     const fn = path.join(dir, pxt.CONFIG_NAME)
     const js: pxt.PackageConfig = readJson(fn)
 
     const ap = js.additionalFilePath
     if (ap) {
-        const adddir = path.join(dir, ap)
+        let adddir = path.join(dir, ap);
+        if (!existsDirSync(adddir))
+            pxt.U.userError(`additional pxt.json not found: ${adddir} in ${dir} + ${ap}`)
         pxt.debug("additional pxt.json: " + adddir)
         const js2 = readPkgConfig(adddir)
         for (let k of Object.keys(js2)) {
@@ -303,7 +335,7 @@ export function pathToPtr(path: string) {
 }
 
 export function mkdirP(thePath: string) {
-    if (thePath == ".") return;
+    if (thePath == "." || !thePath) return;
     if (!fs.existsSync(thePath)) {
         mkdirP(path.dirname(thePath))
         fs.mkdirSync(thePath)
@@ -312,7 +344,7 @@ export function mkdirP(thePath: string) {
 
 export function cpR(src: string, dst: string, maxDepth = 8) {
     src = path.resolve(src)
-    let files = allFiles(src, maxDepth)
+    let files = allFiles(src, { maxDepth })
     let dirs: pxt.Map<boolean> = {}
     for (let f of files) {
         let bn = f.slice(src.length)
@@ -327,23 +359,44 @@ export function cpR(src: string, dst: string, maxDepth = 8) {
     }
 }
 
-export function cp(srcFile: string, destDirectory: string) {
+export function cp(srcFile: string, destDirectory: string, destName?: string) {
     mkdirP(destDirectory);
-    let dest = path.resolve(destDirectory, path.basename(srcFile));
+    let dest = path.resolve(destDirectory, destName || path.basename(srcFile));
     let buf = fs.readFileSync(path.resolve(srcFile));
     fs.writeFileSync(dest, buf);
 }
 
-export function allFiles(top: string, maxDepth = 8, allowMissing = false, includeDirs = false): string[] {
+interface AllFilesOpts {
+    maxDepth?: number;
+    allowMissing?: boolean;
+    includeDirs?: boolean;
+    ignoredFileMarker?: string;
+    includeHiddenFiles?: boolean;
+}
+export function allFiles(top: string, opts: AllFilesOpts = {}) {
+    const {
+        maxDepth,
+        allowMissing,
+        includeDirs,
+        ignoredFileMarker,
+        includeHiddenFiles
+    } = {
+        maxDepth: 8,
+        ...opts
+    };
+
     let res: string[] = []
     if (allowMissing && !existsDirSync(top)) return res
     for (const p of fs.readdirSync(top)) {
-        if (p[0] == ".") continue;
+        if (p[0] == "." && !includeHiddenFiles) continue;
         const inner = path.join(top, p)
         const st = fs.statSync(inner)
         if (st.isDirectory()) {
+            // check for ingored folder marker
+            if (ignoredFileMarker && fs.existsSync(path.join(inner, ignoredFileMarker)))
+                continue;
             if (maxDepth > 1)
-                Util.pushRange(res, allFiles(inner, maxDepth - 1))
+                Util.pushRange(res, allFiles(inner, { ...opts, maxDepth: maxDepth - 1 }))
             if (includeDirs)
                 res.push(inner);
         } else {
@@ -363,11 +416,12 @@ export function existsDirSync(name: string): boolean {
     }
 }
 
-export function writeFileSync(path: string, data: any, options?: { encoding?: string | null; mode?: number | string; flag?: string; } | string | null) {
-    fs.writeFileSync(path, data, options);
+export function writeFileSync(p: string, data: any, options?: { encoding?: string | null; mode?: number | string; flag?: string; } | string | null) {
+    mkdirP(path.dirname(p));
+    fs.writeFileSync(p, data, options);
     if (pxt.options.debug) {
-        const stats = fs.statSync(path);
-        pxt.log(`  + ${path} ${stats.size > 1000000 ? (stats.size / 1000000).toFixed(2) + ' m' : stats.size > 1000 ? (stats.size / 1000).toFixed(2) + 'k' : stats.size}b`)
+        const stats = fs.statSync(p);
+        pxt.log(`  + ${p} ${stats.size > 1000000 ? (stats.size / 1000000).toFixed(2) + ' m' : stats.size > 1000 ? (stats.size / 1000).toFixed(2) + 'k' : stats.size}b`)
     }
 }
 
@@ -457,11 +511,10 @@ export function fileExistsSync(p: string): boolean {
 export let lastResolveMdDirs: string[] = []
 
 // returns undefined if not found
-export function resolveMd(root: string, pathname: string): string {
-
+export function resolveMd(root: string, pathname: string, md?: string): string {
     const docs = path.join(root, "docs");
 
-    let tryRead = (fn: string) => {
+    const tryRead = (fn: string) => {
         if (fileExistsSync(fn + ".md"))
             return fs.readFileSync(fn + ".md", "utf8")
         if (fileExistsSync(fn + "/index.md"))
@@ -469,29 +522,73 @@ export function resolveMd(root: string, pathname: string): string {
         return null
     }
 
-    let targetMd = tryRead(path.join(docs, pathname))
+    const targetMd = md ? md : tryRead(path.join(docs, pathname))
     if (targetMd && !/^\s*#+\s+@extends/m.test(targetMd))
         return targetMd
 
-    let dirs = [
+    const dirs = [
         path.join(root, "/node_modules/pxt-core/common-docs"),
-    ]
-    lastResolveMdDirs = dirs
-    for (let pkg of pxt.appTarget.bundleddirs) {
-        let d = path.join(pkg, "docs");
-        if (!path.isAbsolute(d)) d = path.join(root, d);
-        dirs.push(d)
+        ...getBundledPackagesDocs()
+    ];
 
-        let cfg = readPkgConfig(path.join(d, ".."))
-        for (let add of cfg.additionalFilePaths)
-            dirs.push(path.join(d, "..", add, "docs"))
-    }
-    for (let d of dirs) {
-        let template = tryRead(path.join(d, pathname))
+    for (const d of dirs) {
+        const template = tryRead(path.join(d, pathname))
         if (template)
             return pxt.docs.augmentDocs(template, targetMd)
     }
     return undefined;
+}
+
+export function getBundledPackagesDocs(): string[] {
+    const handledDirectories = {};
+    const outputDocFolders: string[] = [];
+
+    for (const bundledDir of pxt.appTarget.bundleddirs || []) {
+        getPackageDocs(bundledDir, outputDocFolders, handledDirectories);
+    }
+
+    return outputDocFolders;
+
+    /**
+     * This needs to produce a topologically sorted array of the docs of `dir` and any required packages,
+     * such that any package listed as a dependency / additionalFilePath of another
+     * package is added to `folders` before the one that requires it.
+     */
+    function getPackageDocs(packageDir: string, folders: string[], resolvedDirs: pxt.Map<boolean>) {
+        if (resolvedDirs[packageDir])
+            return;
+        resolvedDirs[packageDir] = true;
+
+        const jsonDir = path.join(packageDir, "pxt.json");
+        const pxtjson = fs.existsSync(jsonDir) && (readJson(jsonDir) as pxt.PackageConfig);
+
+        // before adding this package, include the docs of any package this one depends upon.
+        if (pxtjson) {
+            /**
+             * include the package this extends from first;
+             * that may have dependencies that overlap with this one or that will later be
+             * overwritten by this one
+             **/
+            if (pxtjson.additionalFilePath) {
+                getPackageDocs(path.join(packageDir, pxtjson.additionalFilePath), folders, resolvedDirs);
+            }
+
+            if (pxtjson.dependencies) {
+                Object.keys(pxtjson.dependencies).forEach(dep => {
+                    const parts = /^file:(.+)$/i.exec(pxtjson.dependencies[dep]);
+                    if (parts) {
+                        getPackageDocs(path.join(packageDir, parts[1]), folders, resolvedDirs);
+                    }
+                });
+            }
+        }
+
+        const docsDir = path.join(packageDir, "docs");
+
+        if (fs.existsSync(docsDir)) {
+            folders.push(docsDir);
+        }
+    }
 }
 
 export function lazyDependencies(): pxt.Map<string> {
@@ -505,7 +602,6 @@ export function lazyDependencies(): pxt.Map<string> {
 }
 
 export function lazyRequire(name: string, install = false): any {
-    /* tslint:disable:non-literal-require */
     let r: any;
     try {
         r = require(name);
@@ -517,7 +613,13 @@ export function lazyRequire(name: string, install = false): any {
     if (!r && install)
         pxt.log(`package "${name}" failed to load, run "pxt npminstallnative" to install native depencencies`)
     return r;
-    /* tslint:enable:non-literal-require */
+}
+
+export function stringify(content: any) {
+    if (process.env["PXT_ENV"] === "production") {
+        return JSON.stringify(content);
+    }
+    return JSON.stringify(content, null, 4);
 }
 
 init();

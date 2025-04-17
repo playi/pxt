@@ -21,15 +21,35 @@ namespace pxsim {
         return res;
     }
 
-    export class EventBusGeneric<T> {
-        private queues: Map<EventQueue<T>> = {};
+    export class EventBus {
+        private queues: Map<EventQueue> = {};
         private notifyID: number;
         private notifyOneID: number;
+        private schedulerID: number;
+        private idleEventID: number;
         private lastEventValue: string | number;
         private lastEventTimestampUs: number;
         private backgroundHandlerFlag: boolean = false;
 
         public nextNotifyEvent = 1024;
+
+        constructor(
+            private readonly runtime: Runtime,
+            private readonly board: BaseBoard,
+            private readonly valueToArgs?: EventValueToActionArgs
+        ) {
+            this.schedulerID = 15; // DEVICE_ID_SCHEDULER
+            this.idleEventID = 2; // DEVICE_SCHEDULER_EVT_IDLE
+
+            this.board.addMessageListener(this.handleMessage.bind(this));
+        }
+
+        private handleMessage(msg: pxsim.SimulatorMessage) {
+            if (msg.type === "eventbus") {
+                const ev = <SimulatorEventBusMessage>msg;
+                this.queue(ev.id, ev.eventid, ev.value);
+            }
+        }
 
         public setBackgroundHandlerFlag() {
             this.backgroundHandlerFlag = true;
@@ -40,17 +60,23 @@ namespace pxsim {
             this.notifyOneID = notifyOneID;
         }
 
-        constructor(private runtime: Runtime, private valueToArgs?: EventValueToActionArgs<T>) { }
-
-        private start(id: number | string, evid: number | string, create: boolean, background: boolean) {
-            let k = (background ? "back:" : "") + id + ":" + evid;
-            let queue = this.queues[k];
-            if (!queue) queue = this.queues[k] = new EventQueue<T>(this.runtime, this.valueToArgs);
-            return queue;
+        public setIdle(schedulerID: number, idleEventID: number) {
+            this.schedulerID = schedulerID;
+            this.idleEventID = idleEventID;
         }
 
-        listen(id: number | string, evid: number | string, handler: RefAction) {
-            let q = this.start(id, evid, true, this.backgroundHandlerFlag);
+        private start(id: EventIDType, evid: EventIDType, background: boolean, create: boolean = false) {
+            let key = (background ? "back" : "fore") + ":" + id + ":" + evid
+            if (!this.queues[key] && create) this.queues[key] = new EventQueue(this.runtime, this.valueToArgs);
+            return this.queues[key];
+        }
+
+        listen(id: EventIDType, evid: EventIDType, handler: RefAction) {
+            // special handle for idle, start the idle timeout
+            if (id == this.schedulerID && evid == this.idleEventID)
+                this.runtime.startIdle();
+
+            let q = this.start(id, evid, this.backgroundHandlerFlag, true);
             if (this.backgroundHandlerFlag)
                 q.addHandler(handler);
             else
@@ -61,32 +87,48 @@ namespace pxsim {
         removeBackgroundHandler(handler: RefAction) {
             Object.keys(this.queues).forEach((k: string) => {
                 if (k.startsWith("back:"))
-                    this.queues[k].removeHandler(handler);
+                    this.queues[k].removeHandler(handler)
             });
         }
 
-        queue(id: number | string, evid: number | string, value: T = null) {
+        // this handles ANY (0) semantics for id and evid
+        private getQueues(id: EventIDType, evid: EventIDType, bg: boolean) {
+            let ret = [this.start(0, 0, bg)]
+            if (id == 0 && evid == 0)
+                return ret
+            if (evid)
+                ret.push(this.start(0, evid, bg))
+            if (id)
+                ret.push(this.start(id, 0, bg))
+            if (id && evid)
+                ret.push(this.start(id, evid, bg))
+            return ret
+        }
+
+        queue(id: EventIDType, evid: EventIDType, value: EventIDType = null) {
+            if (runtime.pausedOnBreakpoint) return;
             // special handling for notify one
             const notifyOne = this.notifyID && this.notifyOneID && id == this.notifyOneID;
             if (notifyOne)
                 id = this.notifyID;
-            let qBackground = this.start(id, evid, false, true);
-            let qForeground = this.start(id, evid, false, false);
-            if (qBackground || qForeground) {
-                this.lastEventValue = evid;
-                this.lastEventTimestampUs = U.perfNowUs();
-                let promise: Promise<void> = Promise.resolve();
-                if (qBackground)
-                    promise = qBackground.push(value, notifyOne);
-                // do the foreground handler after the background handlers
-                if (qForeground)
-                    promise.then(() => { qForeground.push(value, notifyOne) })
-            }
+            let queues = this.getQueues(id, evid, true).concat(this.getQueues(id, evid, false))
+            this.lastEventValue = evid;
+            this.lastEventTimestampUs = U.perfNowUs();
+
+            U.promiseMapAllSeries(queues, q => {
+                if (q) return q.push(value, notifyOne);
+                else return Promise.resolve()
+            })
+        }
+
+        queueIdle() {
+            if (this.schedulerID && this.idleEventID)
+                this.queue(this.schedulerID, this.idleEventID);
         }
 
         // only for foreground handlers
         wait(id: number | string, evid: number | string, cb: (value?: any) => void) {
-            let q = this.start(id, evid, true, false);
+            let q = this.start(id, evid, false, true);
             q.addAwaiter(cb);
         }
 
@@ -99,18 +141,12 @@ namespace pxsim {
         }
     }
 
-    export class EventBus extends EventBusGeneric<number> {
-        // queue(id: number | string, evid: number | string, value: number = 0) {
-        //     super.queue(id, evid, value);
-        // }
-    }
-
     export interface AnimationOptions {
         interval: number;
         // false means last frame
         frame: () => boolean;
         whenDone?: (cancelled: boolean) => void;
-        setTimeoutHandle?: number;
+        setTimeoutHandle?: any;
     }
 
     export class AnimationQueue {
@@ -181,18 +217,41 @@ namespace pxsim {
 
     export namespace AudioContextManager {
         let _frequency = 0;
-        let _context: any; // AudioContext
-        let _vco: any; // OscillatorNode;
-        let _vca: any; // GainNode;
+        let _context: AudioContext;
+        let _vco: OscillatorNode;
+        let _vca: GainNode;
 
         let _mute = false; //mute audio
 
-        function context(): any {
-            if (!_context) _context = freshContext();
+        // for playing WAV
+        let audio: HTMLAudioElement;
+
+        const channels: Channel[] = []
+        let stopAllListeners: (() => void)[] = [];
+
+        // All other nodes get connected to this node which is connected to the actual
+        // destination. Used for muting
+        let destination: GainNode;
+
+        export function isAudioElementActive() {
+            return !!_vca;
+        }
+
+        export let soundEventCallback: (ev: "playinstructions" | "muteallchannels", data?: Uint8Array) => void;
+
+        function context(): AudioContext {
+            if (!_context) {
+                _context = freshContext();
+                if (_context) {
+                    destination = _context.createGain();
+                    destination.connect(_context.destination);
+                    destination.gain.setValueAtTime(1, 0);
+                }
+            }
             return _context;
         }
 
-        function freshContext(): any {
+        function freshContext(): AudioContext {
             (<any>window).AudioContext = (<any>window).AudioContext || (<any>window).webkitAudioContext;
             if ((<any>window).AudioContext) {
                 try {
@@ -206,48 +265,294 @@ namespace pxsim {
 
         export function mute(mute: boolean) {
             _mute = mute;
-            stop();
+
+            const ctx = context();
+            if (mute) {
+                destination.gain.setTargetAtTime(0, ctx.currentTime, 0.015);
+            }
+            else {
+                destination.gain.setTargetAtTime(1, ctx.currentTime, 0.015);
+            }
+
+            if (!mute && ctx && ctx.state === "suspended")
+                ctx.resume();
+        }
+
+        export function isMuted() {
+            return _mute;
         }
 
         function stopTone() {
-            if (_vca) _vca.gain.value = 0;
+            setCurrentToneGain(0);
             _frequency = 0;
             if (audio) {
                 audio.pause();
             }
         }
 
+        export function stopAll() {
+            stopTone();
+            muteAllChannels();
+
+            for (const handler of stopAllListeners) {
+                handler();
+            }
+        }
+
         export function stop() {
             stopTone();
+            clearVca();
+        }
+
+        export function onStopAll(handler: () => void) {
+            stopAllListeners.push(handler);
+        }
+
+        function clearVca() {
+            if (_vca) {
+                try {
+                    disconnectVca(_vca, _vco);
+                } catch { }
+                _vca = undefined;
+                _vco = undefined;
+            }
+        }
+
+        function disconnectVca(gain: GainNode, osc?: AudioNode) {
+            if (gain.gain.value) {
+                gain.gain.setTargetAtTime(0, context().currentTime, 0.015);
+            }
+
+            setTimeout(() => {
+                gain.disconnect();
+                if (osc) osc.disconnect();
+            }, 450)
         }
 
         export function frequency(): number {
             return _frequency;
         }
 
+        const waveForms: OscillatorType[] = [null, "triangle", "sawtooth", "sine"]
+        let noiseBuffer: AudioBuffer
+        let rectNoiseBuffer: AudioBuffer
+        let cycleNoiseBuffer: AudioBuffer[] = []
+        let squareBuffer: AudioBuffer[] = []
+
+        function getNoiseBuffer() {
+            if (!noiseBuffer) {
+                const bufferSize = 100000;
+                noiseBuffer = context().createBuffer(1, bufferSize, context().sampleRate);
+                const output = noiseBuffer.getChannelData(0);
+
+                let x = 0xf01ba80;
+                for (let i = 0; i < bufferSize; i++) {
+                    x ^= x << 13;
+                    x ^= x >> 17;
+                    x ^= x << 5;
+                    output[i] = ((x & 1023) / 512.0) - 1.0;
+                }
+            }
+            return noiseBuffer
+        }
+
+        function getRectNoiseBuffer() {
+            // Create a square wave filtered by a pseudorandom bit sequence.
+            // This uses four samples per cycle to create square-ish waves.
+            // The Web Audio API's frequency scaling may be using linear
+            // interpolation which would turn a two-sample wave into a triangle.
+            if (!rectNoiseBuffer) {
+                const bufferSize = 131072; // must be a multiple of 4
+                rectNoiseBuffer = context().createBuffer(1, bufferSize, context().sampleRate);
+                const output = rectNoiseBuffer.getChannelData(0);
+
+                let x = 0xf01ba80;
+                for (let i = 0; i < bufferSize; i += 4) {
+                    // see https://en.wikipedia.org/wiki/Xorshift
+                    x ^= x << 13;
+                    x ^= x >> 17;
+                    x ^= x << 5;
+                    if (x & 0x8000) {
+                        output[i] = 1.0;
+                        output[i + 1] = 1.0;
+                        output[i + 2] = -1.0;
+                        output[i + 3] = -1.0;
+                    } else {
+                        output[i] = 0.0;
+                        output[i + 1] = 0.0;
+                        output[i + 2] = 0.0;
+                        output[i + 3] = 0.0;
+                    }
+                }
+            }
+            return rectNoiseBuffer
+        }
+
+        function getCycleNoiseBuffer(bits: number) {
+            if (!cycleNoiseBuffer[bits]) {
+                // Buffer size needs to be a multiple of 4x the largest cycle length,
+                // 4*64 in this case.
+                const bufferSize = 1024;
+                const buf = context().createBuffer(1, bufferSize, context().sampleRate);
+                const output = buf.getChannelData(0);
+
+                // See pxt-common-packages's libs/mixer/melody.cpp for details.
+                // "bits" must be in the range 4..6.
+                const cycle_bits: number[] = [0x2df0eb47, 0xc8165a93];
+                const mask_456: number[] = [0xf, 0x1f, 0x3f];
+                for (let i = 0; i < bufferSize; i += 4) {
+                    let cycle: number = i / 4;
+                    let is_on: boolean;
+                    let cycle_mask = mask_456[bits - 4];
+                    cycle &= cycle_mask;
+                    is_on = (cycle_bits[cycle >> 5] & (1 << (cycle & 0x1f))) != 0;
+                    if (is_on) {
+                        output[i] = 1.0;
+                        output[i + 1] = 1.0;
+                        output[i + 2] = -1.0;
+                        output[i + 3] = -1.0;
+                    } else {
+                        output[i] = 0.0;
+                        output[i + 1] = 0.0;
+                        output[i + 2] = 0.0;
+                        output[i + 3] = 0.0;
+                    }
+                }
+                cycleNoiseBuffer[bits] = buf
+            }
+            return cycleNoiseBuffer[bits]
+        }
+
+        function getSquareBuffer(param: number) {
+            if (!squareBuffer[param]) {
+                const bufferSize = 1024;
+                const buf = context().createBuffer(1, bufferSize, context().sampleRate);
+                const output = buf.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    output[i] = i < (param / 100 * bufferSize) ? 1 : -1;
+                }
+                squareBuffer[param] = buf
+            }
+            return squareBuffer[param]
+        }
+
+        /*
+        #define SW_TRIANGLE 1
+        #define SW_SAWTOOTH 2
+        #define SW_SINE 3
+        #define SW_TUNEDNOISE 4
+        #define SW_NOISE 5
+        #define SW_SQUARE_10 11
+        #define SW_SQUARE_50 15
+        #define SW_SQUARE_CYCLE_16 16
+        #define SW_SQUARE_CYCLE_32 17
+        #define SW_SQUARE_CYCLE_64 18
+        */
+
+
+        /*
+         struct SoundInstruction {
+             uint8_t soundWave;
+             uint8_t flags;
+             uint16_t frequency;
+             uint16_t duration;
+             uint16_t startVolume;
+             uint16_t endVolume;
+         };
+         */
+
+        function getGenerator(waveFormIdx: number, hz: number): OscillatorNode | AudioBufferSourceNode {
+            let form = waveForms[waveFormIdx]
+            if (form) {
+                let src = context().createOscillator()
+                src.type = form
+                src.frequency.value = hz
+                return src
+            }
+
+            let buffer: AudioBuffer
+            if (waveFormIdx == 4)
+                buffer = getRectNoiseBuffer()
+            else if (waveFormIdx == 5)
+                buffer = getNoiseBuffer()
+            else if (11 <= waveFormIdx && waveFormIdx <= 15)
+                buffer = getSquareBuffer((waveFormIdx - 10) * 10)
+            else if (16 <= waveFormIdx && waveFormIdx <= 18)
+                buffer = getCycleNoiseBuffer((waveFormIdx - 16) + 4)
+            else
+                return null
+
+            let node = context().createBufferSource();
+            node.buffer = buffer;
+            node.loop = true;
+            const isFilteredNoise = waveFormIdx == 4 || (16 <= waveFormIdx && waveFormIdx <= 18);
+            if (isFilteredNoise)
+                node.playbackRate.value = hz / (context().sampleRate / 4);
+            else if (waveFormIdx != 5)
+                node.playbackRate.value = hz / (context().sampleRate / 1024);
+
+            return node
+        }
+
+        class Channel {
+            generator: OscillatorNode | AudioBufferSourceNode;
+            gain: GainNode
+            disconnectNodes() {
+                if (this.gain)
+                    disconnectVca(this.gain, this.generator)
+                else if (this.generator) {
+                    this.generator.stop()
+                    this.generator.disconnect()
+                }
+                this.gain = null
+                this.generator = null
+            }
+            remove() {
+                const idx = channels.indexOf(this)
+                if (idx >= 0) channels.splice(idx, 1)
+                this.disconnectNodes()
+            }
+        }
+
+        let instrStopId = 1
+        export function muteAllChannels() {
+            soundEventCallback?.("muteallchannels");
+            instrStopId++
+            while (channels.length)
+                channels[0].remove()
+        }
+
+        export function queuePlayInstructions(when: number, b: RefBuffer) {
+            const prevStop = instrStopId
+            U.delay(when)
+                .then(() => {
+                    if (prevStop != instrStopId)
+                        return Promise.resolve()
+                    return playInstructionsAsync(b.data)
+                });
+
+        }
+
         export function tone(frequency: number, gain: number) {
-            if (_mute) return;
-            if (frequency <= 0) return;
+            if (frequency < 0) return;
             _frequency = frequency;
 
             let ctx = context();
             if (!ctx) return;
 
-            if (_vco) {
-                _vco.stop();
-                _vco.disconnect();
-                _vco = undefined;
-            }
 
             gain = Math.max(0, Math.min(1, gain));
             try {
-                _vco = ctx.createOscillator();
-                _vca = ctx.createGain();
-                _vco.type = 'triangle';
-                _vco.connect(_vca);
-                _vca.connect(ctx.destination);
-                _vca.gain.value = gain;
-                _vco.start(0);
+                if (!_vco) {
+                    _vco = ctx.createOscillator();
+                    _vca = ctx.createGain();
+                    _vca.gain.value = 0;
+                    _vco.type = 'triangle';
+                    _vco.connect(_vca);
+                    _vca.connect(destination);
+                    _vco.start(0);
+                }
+                setCurrentToneGain(gain);
             } catch (e) {
                 _vco = undefined;
                 _vca = undefined;
@@ -255,7 +560,13 @@ namespace pxsim {
             }
 
             _vco.frequency.value = frequency;
-            _vca.gain.value = gain;
+            setCurrentToneGain(gain);
+        }
+
+        export function setCurrentToneGain(gain: number) {
+            if (_vca?.gain) {
+                _vca.gain.setTargetAtTime(gain, _context.currentTime, 0.015)
+            }
         }
 
         function uint8ArrayToString(input: Uint8Array) {
@@ -266,7 +577,6 @@ namespace pxsim {
             return res;
         }
 
-        let audio: HTMLAudioElement;
         export function playBufferAsync(buf: RefBuffer) {
             if (!buf) return Promise.resolve();
 
@@ -286,8 +596,243 @@ namespace pxsim {
             })
         }
 
+        const MAX_SCHEDULED_BUFFER_NODES = 3;
+
+        export function playPCMBufferStreamAsync(pull: () => Float32Array, sampleRate: number, volume = 0.3, isCancelled?: () => boolean) {
+            return new Promise<void>(resolve => {
+                let nodes: AudioBufferSourceNode[] = [];
+                let nextTime = context().currentTime;
+                let allScheduled = false;
+                const channel = new Channel();
+
+                channel.gain = context().createGain();
+                channel.gain.gain.value = 0;
+                channel.gain.gain.setValueAtTime(volume, context().currentTime);
+                channel.gain.connect(destination);
+
+                if (channels.length > 20)
+                    channels[0].remove()
+                channels.push(channel);
+
+                const checkCancel = () => {
+                    if (isCancelled && isCancelled() || !channel.gain) {
+                        if (resolve) resolve();
+                        resolve = undefined;
+                        channel.remove();
+                        return true;
+                    }
+                    return false;
+                }
+
+                // Every time we pull a buffer, schedule a node in the future to play it.
+                // Scheduling the nodes ahead of time sounds much smoother than trying to
+                // do it when the previous node completes (which sounds SUPER choppy in
+                // FireFox).
+                function playNext() {
+                    while (!allScheduled && nodes.length < MAX_SCHEDULED_BUFFER_NODES && !checkCancel()) {
+                        const data = pull();
+                        if (!data || !data.length) {
+                            allScheduled = true;
+                            break;
+                        }
+                        play(data);
+                    }
+
+                    if ((allScheduled && nodes.length === 0)) {
+                        channel.remove();
+                        if (resolve) resolve();
+                        resolve = undefined;
+                    }
+                }
+
+                function play(data: Float32Array) {
+                    if (checkCancel()) return;
+
+                    const buff = context().createBuffer(1, data.length, sampleRate);
+                    if (buff.copyToChannel) {
+                        buff.copyToChannel(data, 0);
+                    }
+                    else {
+                        const channelBuffer = buff.getChannelData(0);
+                        for (let i = 0; i < data.length; i++) {
+                            channelBuffer[i] = data[i];
+                        }
+                    }
+
+                    // Audio buffer source nodes are supposedly very cheap, so no need to reuse them
+                    const newNode = context().createBufferSource();
+                    nodes.push(newNode);
+                    newNode.connect(channel.gain);
+                    newNode.buffer = buff;
+                    newNode.addEventListener("ended", () => {
+                        nodes.shift().disconnect();
+                        playNext();
+                    });
+                    newNode.start(nextTime);
+                    nextTime += buff.duration;
+                }
+
+                playNext();
+            });
+        }
+
         function frequencyFromMidiNoteNumber(note: number) {
             return 440 * Math.pow(2, (note - 69) / 12);
+        }
+
+        export function playInstructionsAsync(instructions: Uint8Array, isCancelled?: () => boolean, onPull?: (freq: number, volume: number) => void) {
+            return new Promise<void>(async resolve => {
+                soundEventCallback?.("playinstructions", instructions);
+                let resolved = false;
+                let ctx = context();
+                let channel = new Channel()
+
+                if (channels.length > 20)
+                    channels[0].remove()
+                channels.push(channel);
+
+
+                channel.gain = ctx.createGain();
+                channel.gain.gain.value = 1;
+
+                channel.gain.connect(destination);
+
+                const oscillators: pxt.Map<OscillatorNode | AudioBufferSourceNode> = {};
+                const gains: pxt.Map<GainNode> = {};
+                let startTime = ctx.currentTime;
+                let currentTime = startTime;
+                let currentWave = 0;
+
+                let totalDuration = 0;
+
+                /** Square waves are perceved as much louder than other sounds, so scale it down a bit to make it less jarring **/
+                const scaleVol = (n: number, isSqWave?: boolean) => (n / 1024) / 4 * (isSqWave ? .5 : 1);
+
+                const disconnectNodes = () => {
+                    if (resolved) return;
+                    resolved = true;
+                    channel.disconnectNodes();
+
+                    for (const wave of Object.keys(oscillators)) {
+                        oscillators[wave].stop();
+                        oscillators[wave].disconnect();
+                        gains[wave].disconnect();
+                    }
+                    resolve();
+                }
+
+                for (let i = 0; i < instructions.length; i += 12) {
+                    const wave = instructions[i];
+                    const startFrequency = readUint16(instructions, i + 2);
+                    const duration = readUint16(instructions, i + 4) / 1000;
+                    const startVolume = readUint16(instructions, i + 6);
+                    const endVolume = readUint16(instructions, i + 8);
+                    const endFrequency = readUint16(instructions, i + 10);
+                    totalDuration += duration
+
+                    if (wave === 0) {
+                        currentTime += duration;
+                        continue;
+                    }
+
+                    const isSquareWave = 11 <= wave && wave <= 15;
+
+                    if (!oscillators[wave]) {
+                        oscillators[wave] = getGenerator(wave, startFrequency);
+                        gains[wave] = ctx.createGain();
+                        gains[wave].gain.value = 0;
+                        gains[wave].connect(channel.gain);
+                        oscillators[wave].connect(gains[wave]);
+                        oscillators[wave].start();
+                    }
+
+                    if (currentWave && wave !== currentWave) {
+                        gains[currentWave].gain.setTargetAtTime(0, currentTime, 0.015);
+                    }
+
+                    const osc = oscillators[wave];
+                    const gain = gains[wave];
+
+                    if (osc instanceof OscillatorNode) {
+                        osc.frequency.setValueAtTime(startFrequency, currentTime);
+                        osc.frequency.linearRampToValueAtTime(endFrequency, currentTime + duration);
+                    }
+                    else {
+                        const isFilteredNoise = wave == 4 || (16 <= wave && wave <= 18);
+
+                        if (isFilteredNoise)
+                            osc.playbackRate.linearRampToValueAtTime(endFrequency / (ctx.sampleRate / 4), currentTime + duration);
+                        else if (wave != 5)
+                            osc.playbackRate.linearRampToValueAtTime(endFrequency / (ctx.sampleRate / 1024), currentTime + duration);
+                    }
+                    gain.gain.setValueAtTime(scaleVol(startVolume, isSquareWave), currentTime);
+                    gain.gain.linearRampToValueAtTime(scaleVol(endVolume, isSquareWave), currentTime + duration);
+
+                    currentWave = wave;
+                    currentTime += duration;
+                }
+                channel.gain.gain.setTargetAtTime(0, currentTime, 0.015);
+
+                if (isCancelled || onPull) {
+                    const handleAnimationFrame = () => {
+                        const time = ctx.currentTime;
+                        if (time > startTime + totalDuration) {
+                            return;
+                        }
+
+
+                        if (isCancelled && isCancelled()) {
+                            disconnectNodes();
+                            return;
+                        }
+
+                        const { frequency, volume } = findFrequencyAndVolumeAtTime((time - startTime) * 1000, instructions);
+                        if (onPull) onPull(frequency, volume / 1024);
+
+                        requestAnimationFrame(handleAnimationFrame)
+                    }
+                    requestAnimationFrame(handleAnimationFrame);
+                }
+
+                await U.delay(totalDuration * 1000)
+                disconnectNodes();
+            })
+        }
+
+        function readUint16(buf: Uint8Array, offset: number) {
+            const temp = new Uint8Array(2);
+            temp[0] = buf[offset];
+            temp[1] = buf[offset + 1];
+            return new Uint16Array(temp.buffer)[0];
+        }
+
+        function findFrequencyAndVolumeAtTime(millis: number, instructions: Uint8Array) {
+            let currentTime = 0;
+
+            for (let i = 0; i < instructions.length; i += 12) {
+                const startFrequency = readUint16(instructions, i + 2);
+                const duration = readUint16(instructions, i + 4);
+                const startVolume = readUint16(instructions, i + 6);
+                const endVolume = readUint16(instructions, i + 8);
+                const endFrequency = readUint16(instructions, i + 10);
+
+                if (currentTime + duration < millis) {
+                    currentTime += duration;
+                    continue;
+                }
+
+                const offset = (millis - currentTime) / duration;
+
+                return {
+                    frequency: startFrequency + (endFrequency - startFrequency) * offset,
+                    volume: startVolume + (endVolume - startVolume) * offset,
+                }
+            }
+
+            return {
+                frequency: -1,
+                volume: -1
+            };
         }
 
         export function sendMidiMessage(buf: RefBuffer) {
@@ -503,7 +1048,7 @@ namespace pxsim.visuals {
             style: `font-size:${size}px;`,
             transform: `translate(${cx} ${cy}) rotate(${rot}) translate(${xOff} ${yOff})`
         });
-        svg.addClass(el, "noselect");
+        pxsim.U.addClass(el, "noselect");
         el.textContent = txt;
         return el;
     }

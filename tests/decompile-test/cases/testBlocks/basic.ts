@@ -33,10 +33,12 @@ namespace testNamespace {
 
     //% blockId=test_callback
     //% block="Callback"
+    //% blockAllowMultiple
     export function withCallback(body: () => void): void {}
 
     //% blockId=test_callback_with_argument
     //% block="Callback with|enum %arg1|and number %arg2"
+    //% blockAllowMultiple
     export function withCallbackAndArguments(arg1: TestEnum, arg2: number, body: () => void): void {}
 
     //% blockId=test_number_with_enum_shadow
@@ -55,9 +57,17 @@ namespace testNamespace {
     //% block="Output Boolean arg %arg=logic_boolean"
     export function booleanArgumentOutput(arg: boolean): boolean { return true; }
 
+    //% blockId=test_inferred_boolean_argument_output
+    //% block="Output inferred boolean"
+    export function inferredBooleanOutput() { return true; }
+
     //% blockId=test_number_argument_output
     //% block="Output Number arg %arg"
     export function numberArgumentOutput(arg: number): number { return 0; }
+
+    //% blockId=test_inferred_number_argument_output
+    //% block="Output inferred number"
+    export function inferredNumberOutput() { return 0; }
 
     //% blockId=test_string_argument_output
     //% block="Output String arg %arg"
@@ -89,19 +99,28 @@ namespace testNamespace {
 
     //% blockId=test_optional_argument_2
     //% block="Callback with optional arg"
+    //% blockAllowMultiple
     export function optionalArgumentWithCallback(arg1: () => void, arg2?: number) { }
 
     //% blockId=test_handler_arguments
     //% block="Handler arguments"
+    //% blockAllowMultiple
     export function callbackWithArguments(cb: (a: number, b: number) => void) {}
 
     //% blockId=test_handler_arguments2 optionalVariableArgs=true
     //% block="Handler with optioinal arguments"
+    //% blockAllowMultiple
     export function callbackWithIgnoredArguments(cb: (c: number, d: number) => void) {}
 
     //% blockId=test_handler_arguments3 draggableParameters=1
     //% block="Handler with draggable arguments"
+    //% blockAllowMultiple
     export function callbackWithDraggableParams(cb: (c: number, d: number) => void) {}
+
+    //% blockId=test_handler_arguments4 draggableParameters="reporter"
+    //% block="Handler with draggable reporters"
+    //% blockAllowMultiple
+    export function callbackWithDraggableParamsReporters(cb: (c: string, d: number, e: boolean, f: TestClass) => void) {}
 
     /**
      * Enum value function
@@ -149,6 +168,7 @@ namespace testNamespace {
     //% block="object destructure: "
     //% mutate="objectdestructuring""
     //% mutateText="Visible properties""
+    //% blockAllowMultiple
     export function objectDestructuringTest(cb: (a: SomeBagOfProperties) => void): void { }
 
     export class Anotherclass {
@@ -168,6 +188,10 @@ namespace testNamespace {
     /**
      * Field Editors
      */
+
+    //% blockId=test_sliderFieldEditor block="%value"
+    //% value.min=0 value.max=500
+    export function sliderFieldEditor(value: number): void {  }
 
     //% blockId=test_customFieldEditor block="%value=test_customShadowField"
     export function customFieldEditor(value: number): void {  }
@@ -207,6 +231,15 @@ namespace testNamespace {
     export function toStringArg(msg: string) {
 
     }
+
+    //% blockId=test_callback_with_argument_no_multi
+    //% block="Callback with|enum %arg1|and number %arg2"
+    export function callbackNoMultiple(arg1: TestEnum, arg2: number, body: () => void): void {}
+
+    //% blockId=test_callback_with_argument_no_multi_key
+    //% block="Callback with|enum %arg1|and number %arg2"
+    //% blockHandlerKey=somevalue
+    export function callbackNoMultipleKey(arg1: TestEnum, arg2: number, body: () => void): void {}
 }
 
 //% color=#0078D7 weight=100
@@ -238,3 +271,24 @@ enum EnumWithValueBlock {
     //% block=value2
     testValue2 = 5
 }
+
+enum EnumWithAlias {
+    //% alias=FOO
+    Foo
+}
+
+const FOO = EnumWithAlias.Foo;
+
+namespace namespaceWithAlias {
+    //% block
+    export function argsWithAlias(f: EnumWithAlias) {
+
+    }
+
+    //% alias=BAR block
+    export function functionWithAlias() {
+
+    }
+}
+
+const BAR = namespaceWithAlias.functionWithAlias

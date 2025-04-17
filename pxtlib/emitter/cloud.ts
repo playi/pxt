@@ -1,8 +1,9 @@
+/// <reference path="../../localtypings/projectheader.d.ts"/>
 namespace pxt.Cloud {
     import Util = pxtc.Util;
 
-    // hit /api/ to stay on same domain and avoid CORS
-    export let apiRoot = isLocalHost() || Util.isNodeJS ? "https://www.makecode.com/api/" : "/api/";
+    export let apiRoot = (pxt.BrowserUtils.isLocalHost() || Util.isNodeJS) ? "https://www.makecode.com/api/" : "/api/";
+
     export let accessToken = "";
     export let localToken = "";
     let _isOnline = true;
@@ -11,19 +12,11 @@ namespace pxt.Cloud {
     function offlineError(url: string) {
         let e: any = new Error(Util.lf("Cannot access {0} while offline", url));
         e.isOffline = true;
-        return Promise.delay(1000).then(() => Promise.reject(e))
+        return U.delay(1000).then(() => Promise.reject(e))
     }
 
     export function hasAccessToken() {
         return !!accessToken
-    }
-
-    export function isLocalHost(): boolean {
-        try {
-            return /^http:\/\/(localhost|127\.0\.0\.1):\d+\//.test(window.location.href)
-                && !/nolocalhost=1/.test(window.location.href)
-                && !(pxt.webConfig && pxt.webConfig.isStatic);
-        } catch (e) { return false; }
     }
 
     export function localRequestAsync(path: string, data?: any) {
@@ -36,31 +29,62 @@ namespace pxt.Cloud {
         })
     }
 
+    export function useCdnApi() {
+        return pxt.webConfig && !pxt.webConfig.isStatic
+            && !BrowserUtils.isLocalHost() && !!pxt.webConfig.cdnUrl
+    }
+
+    export function cdnApiUrl(url: string) {
+        url = url.replace(/^\//, '');
+        if (!useCdnApi())
+            return apiRoot + url;
+
+        const d = new Date()
+        const timestamp = d.getUTCFullYear() + ("0" + (d.getUTCMonth() + 1)).slice(-2) + ("0" + d.getUTCDate()).slice(-2)
+        if (url.indexOf("?") < 0)
+            url += "?"
+        else
+            url += "&"
+        url += "cdn=" + timestamp
+        // url = url.replace("?", "$")
+        return pxt.webConfig.cdnUrl + "/api/" + url
+    }
+
+    export function apiRequestWithCdnAsync(options: Util.HttpRequestOptions) {
+        if (!useCdnApi())
+            return privateRequestAsync(options)
+        options.url = cdnApiUrl(options.url)
+        return Util.requestAsync(options)
+            .catch(e => handleNetworkError(options, e))
+    }
+
+    function handleNetworkError(options: Util.HttpRequestOptions, e: any) {
+        if (e.statusCode == 0) {
+            if (_isOnline) {
+                _isOnline = false;
+                onOffline();
+            }
+            return offlineError(options.url)
+        } else {
+            return Promise.reject(e)
+        }
+    }
+
     export function privateRequestAsync(options: Util.HttpRequestOptions) {
-        options.url = pxt.webConfig && pxt.webConfig.isStatic && !options.forceLiveEndpoint ? pxt.webConfig.relprefix + options.url : apiRoot + options.url;
+        options.url = pxt.webConfig?.isStatic && !options.forceLiveEndpoint ? pxt.webConfig.relprefix + options.url : apiRoot + options.url;
         options.allowGzipPost = true
-        if (!Cloud.isOnline()) {
+        if (!Cloud.isOnline() && !pxt.BrowserUtils.isPxtElectron()) {
             return offlineError(options.url);
         }
         if (!options.headers) options.headers = {}
-        if (pxt.Cloud.isLocalHost()) {
+        if (pxt.BrowserUtils.isLocalHost()) {
             if (Cloud.localToken)
                 options.headers["Authorization"] = Cloud.localToken;
         } else if (accessToken) {
             options.headers["x-td-access-token"] = accessToken
         }
         return Util.requestAsync(options)
-            .catch(e => {
-                if (e.statusCode == 0) {
-                    if (_isOnline) {
-                        _isOnline = false;
-                        onOffline();
-                    }
-                    return offlineError(options.url)
-                } else {
-                    return Promise.reject(e)
-                }
-            })
+            .catch(e => handleNetworkError(options, e))
     }
 
     export function privateGetTextAsync(path: string, headers?: pxt.Map<string>): Promise<string> {
@@ -77,44 +101,97 @@ namespace pxt.Cloud {
 
         const targetVersion = pxt.appTarget.versions && pxt.appTarget.versions.target;
         const url = pxt.webConfig && pxt.webConfig.isStatic ? `targetconfig.json` : `config/${pxt.appTarget.id}/targetconfig${targetVersion ? `/v${targetVersion}` : ''}`;
-        if (Cloud.isLocalHost())
+        if (pxt.BrowserUtils.isLocalHost())
             return localRequestAsync(url).then(r => r ? r.json : undefined)
         else
-            return Cloud.privateGetAsync(url);
+            return apiRequestWithCdnAsync({ url }).then(r => r.json)
     }
 
-    export function downloadScriptFilesAsync(id: string) {
-        return privateRequestAsync({ url: id + "/text", forceLiveEndpoint: true }).then(resp => {
+    export function downloadScriptFilesAsync(id: string): Promise<Map<string>> {
+        return privateRequestAsync({
+            url: id + "/text" + (id.startsWith("S") ? `?time=${Date.now()}` : ""),
+            forceLiveEndpoint: true,
+        }).then(resp => {
             return JSON.parse(resp.text)
         })
     }
 
-    // 1h check on markdown content
-    const MARKDOWN_EXPIRATION = 1 * 60 * 60 * 1000;
-    export function markdownAsync(docid: string, locale?: string, live?: boolean): Promise<string> {
-        const branch = "";
-        return pxt.BrowserUtils.translationDbAsync()
-            .then(db => db.getAsync(locale, docid, "")
-                .then(entry => {
-                    if (entry && Date.now() - entry.time > MARKDOWN_EXPIRATION)
-                        // background update,
-                        downloadMarkdownAsync(docid, locale, live, entry.etag)
-                            .then(r => db.setAsync(locale, docid, branch, r.etag, undefined, r.md || entry.md))
-                            .catch(() => { }) // swallow errors
-                            .done();
-                    // return cached entry
-                    if (entry && entry.md)
-                        return entry.md;
-                    // download and cache
-                    else return downloadMarkdownAsync(docid, locale, live)
-                        .then(r => db.setAsync(locale, docid, branch, r.etag, undefined, r.md)
-                            .then(() => r.md))
-                        .catch(() => ""); // no translation
-                }))
+    export function downloadScriptMetaAsync(id: string): Promise<JsonScriptMeta> {
+        return privateRequestAsync({
+            url: id + (id.startsWith("S") ? `?time=${Date.now()}` : ""),
+            forceLiveEndpoint: true,
+        }).then(resp => {
+            return JSON.parse(resp.text).meta;
+        })
     }
 
-    function downloadMarkdownAsync(docid: string, locale?: string, live?: boolean, etag?: string): Promise<{ md: string; etag?: string; }> {
-        const packaged = pxt.webConfig && pxt.webConfig.isStatic;
+    export async function downloadBuiltSimJsInfoAsync(id: string): Promise<pxtc.BuiltSimJsInfo> {
+        const targetVersion = pxt.appTarget.versions && pxt.appTarget.versions.target || "";
+        const url = pxt.U.stringifyQueryString(id + "/js", { v: "v" + targetVersion }) + (id.startsWith("S") ? `&time=${Date.now()}` : "");
+        const resp = await privateRequestAsync({
+            url,
+            forceLiveEndpoint: true,
+        });
+        return resp.json;
+    }
+
+    export async function markdownAsync(docid: string, locale?: string, propagateExceptions?: boolean): Promise<string> {
+        // 1h check on markdown content if not on development server
+        const MARKDOWN_EXPIRATION = pxt.BrowserUtils.isLocalHostDev() ? 0 : 1 * 60 * 60 * 1000;
+        // 1w check don't use cached version and wait for new content
+        const FORCE_MARKDOWN_UPDATE = MARKDOWN_EXPIRATION * 24 * 7;
+
+        locale = locale || pxt.Util.userLanguage();
+        const branch = "";
+
+        const db = await pxt.BrowserUtils.translationDbAsync();
+        const entry = await db.getAsync(locale, docid, branch);
+
+        const downloadAndSetMarkdownAsync = async () => {
+            try {
+                const r = await downloadMarkdownAsync(docid, locale, entry?.etag);
+                // TODO directly compare the entry/response etags after backend change
+                if (!entry || (r.md && entry.md !== r.md)) {
+                    await db.setAsync(locale, docid, branch, r.etag, undefined, r.md);
+                    return r.md;
+                }
+                return entry.md;
+            } catch (e) {
+                if (propagateExceptions) {
+                    throw e;
+                } else {
+                    return ""; // no translation
+                }
+            }
+        };
+
+        if (entry) {
+            const timeDiff = Date.now() - entry.time;
+            const shouldFetchInBackground = timeDiff > MARKDOWN_EXPIRATION;
+            const shouldWaitForNewContent = timeDiff > FORCE_MARKDOWN_UPDATE;
+
+            if (!shouldWaitForNewContent) {
+                if (shouldFetchInBackground) {
+                    pxt.tickEvent("markdown.update.background");
+                    // background update, do not wait
+                    downloadAndSetMarkdownAsync();
+                }
+
+                // return cached entry
+                if (entry.md) {
+                    return entry.md;
+                }
+            } else {
+                pxt.tickEvent("markdown.update.wait");
+            }
+        }
+
+        // download and cache
+        return downloadAndSetMarkdownAsync();
+    }
+
+    function downloadMarkdownAsync(docid: string, locale?: string, etag?: string): Promise<{ md: string; etag?: string; }> {
+        const packaged = pxt.webConfig?.isStatic;
         const targetVersion = pxt.appTarget.versions && pxt.appTarget.versions.target || '?';
         let url: string;
 
@@ -123,7 +200,8 @@ namespace pxt.Cloud {
             const isUnderDocs = /\/?docs\//.test(url);
             const hasExt = /\.\w+$/.test(url);
             if (!isUnderDocs) {
-                url = `docs/${url}`;
+                const hasLeadingSlash = url[0] === "/";
+                url = `docs${hasLeadingSlash ? "" : "/"}${url}`;
             }
             if (!hasExt) {
                 url = `${url}.md`;
@@ -131,21 +209,20 @@ namespace pxt.Cloud {
         } else {
             url = `md/${pxt.appTarget.id}/${docid.replace(/^\//, "")}?targetVersion=${encodeURIComponent(targetVersion)}`;
         }
-        if (!packaged && locale != "en") {
-            url += `&lang=${encodeURIComponent(Util.userLanguage())}`
-            if (live) url += "&live=1"
+        if (locale != "en") {
+            url += `${packaged ? "?" : "&"}lang=${encodeURIComponent(locale)}`
         }
-        if (Cloud.isLocalHost() && !live)
+        if (pxt.BrowserUtils.isLocalHost() && !pxt.Util.liveLocalizationEnabled()) {
             return localRequestAsync(url).then(resp => {
                 if (resp.statusCode == 404)
                     return privateRequestAsync({ url, method: "GET" })
-                        .then(resp => { return { md: resp.text, etag: resp.headers["etag"] }; });
+                        .then(resp => { return { md: resp.text, etag: <string>resp.headers["etag"] }; });
                 else return { md: resp.text, etag: undefined };
             });
-        else {
-            const headers: pxt.Map<string> = etag ? { "If-None-Match": etag } : undefined;
-            return privateRequestAsync({ url, method: "GET", headers })
-                .then(resp => { return { md: resp.text, etag: resp.headers["etag"] }; });
+        } else {
+            const headers: pxt.Map<string> = etag && !useCdnApi() ? { "If-None-Match": etag } : undefined;
+            return apiRequestWithCdnAsync({ url, method: "GET", headers })
+                .then(resp => { return { md: resp.text, etag: <string>resp.headers["etag"] }; });
         }
     }
 
@@ -182,7 +259,7 @@ namespace pxt.Cloud {
 
     export function parseScriptId(uri: string): string {
         const target = pxt.appTarget;
-        if (!uri || !target.appTheme || !target.cloud || !target.cloud.sharing) return undefined;
+        if (!uri || !target.appTheme || !target.cloud?.sharing) return undefined;
 
         let domains = ["makecode.com"];
         if (target.appTheme.embedUrl)
@@ -190,16 +267,15 @@ namespace pxt.Cloud {
         if (target.appTheme.shareUrl)
             domains.push(target.appTheme.shareUrl);
         domains = Util.unique(domains, d => d).map(d => Util.escapeForRegex(Util.stripUrlProtocol(d).replace(/\/$/, '')).toLowerCase());
-        const rx = `^((https:\/\/)?(?:${domains.join('|')})\/)?(api\/oembed\?url=.*%2F([^&]*)&.*?|([a-z0-9\-_]+))$`;
-        const m = new RegExp(rx, 'i').exec(uri.trim());
-        const scriptid = m && (!m[1] || domains.indexOf(Util.escapeForRegex(m[1].replace(/https:\/\//, '').replace(/\/$/, '')).toLowerCase()) >= 0) && (m[3] || m[4]) ? (m[3] ? m[3] : m[4]) : null
+        const domainCheck = `(?:(?:https:\/\/)?(?:${domains.join('|')})\/)`;
+        const versionRefCheck = "(?:v[0-9]+\/)";
+        const oembedCheck = "api\/oembed\\?url=.*%2F([^&#]*)&.*";
+        const sharePageCheck = "\/?([a-z0-9\\-_]+)(?:[#?&].*)?";
+        const scriptIdCheck = `^${domainCheck}?${versionRefCheck}?(?:(?:${oembedCheck})|(?:${sharePageCheck}))$`;
+        const m = new RegExp(scriptIdCheck, 'i').exec(uri.trim());
+        const scriptid = m?.[1] /** oembed res **/ || m?.[2] /** share page res **/;
 
-        if (!scriptid) return undefined;
-
-        if (scriptid[0] == "_" && scriptid.length == 13)
-            return scriptid;
-
-        if (scriptid.length == 23 && /^[0-9\-]+$/.test(scriptid))
+        if (/^(_.{12}|S?[0-9\-]{23})$/.test(scriptid))
             return scriptid;
 
         return undefined;
@@ -218,12 +294,6 @@ namespace pxt.Cloud {
         time: number; // time when publication was created
     }
 
-    export interface JsonScriptMeta {
-        blocksWidth?: number;
-        blocksHeight?: number;
-        versions?: TargetVersions
-    }
-
     export interface JsonScript extends JsonPublication {
         shortid?: string;
         name: string;
@@ -232,5 +302,19 @@ namespace pxt.Cloud {
         target?: string;
         targetVersion?: string;
         meta?: JsonScriptMeta; // only in lite, bag of metadata
+        thumb?: boolean;
+        persistId?: string;
+    }
+
+    export interface JsonText {
+        "Readme.md"?: string;
+        "assets.json"?: string;
+        "images.g.jres"?: string;
+        "images.g.ts"?: string;
+        "main.blocks"?: string;
+        "main.ts"?: string;
+        "pxt.json"?: string;
+        "tilemap.g.jres"?: string;
+        "tilemap.g.ts"?: string;
     }
 }

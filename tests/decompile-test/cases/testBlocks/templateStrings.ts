@@ -11,6 +11,8 @@ declare interface Fixed {
     whatever(): void;
 }
 
+function hex(lits: any, ...args: any[]): Buffer { return null }
+
 //% shim=@f4 helper=image::ofBuffer
 //% groups=["0.","1#","2T","3t","4N","5n","6G","7g","8","9","aAR","bBP","cCp","dDO","eEY","fFW"]
 function img(lits: any, ...args: any[]): Image { return null }
@@ -51,6 +53,18 @@ namespace template {
         return img;
     }
 
+
+    /**
+     * Image editor...
+     * @param img the iamge
+     */
+    //% blockId=imageeditor2 block="%img" shim=TD_ID
+    //% img.fieldEditor="gridpicker"
+    //% img.fieldOptions.taggedTemplate="img"
+    export function imageEditor2(img: Image): Image {
+        return img;
+    }
+
     /**
      * Image editor...
      * @param img the iamge
@@ -66,6 +80,16 @@ namespace template {
      */
     //% blockId=shadow_template block="%img=imageeditor"
     export function shadowBlockTemplate(img: Image): void {
+
+    }
+
+
+    /**
+     * Image editor...
+     * @param img the iamge
+     */
+    //% blockId=shadow_template2 block="%img=imageeditor2"
+    export function shadowBlockTemplate2(img: Image): void {
 
     }
 
@@ -85,4 +109,44 @@ namespace template {
     export function fixedInstanceArg(fix: Fixed): void {
 
     }
+
+    /**
+     * Create and run an image animation on a sprite
+     * @param frames the frames to animate through
+     * @param sprite the sprite to animate on
+     * @param frameInterval the time between changes, eg: 500
+     */
+    //% blockId=run_image_animation
+    //% block="animate $sprite=variables_get(mySprite) frames $frames=animation_editor interval (ms) $frameInterval=timePicker loop $loop=toggleOnOff"
+    //% group="Animate"
+    export function runImageAnimation(sprite: Image, frames: Image[], frameInterval?: number, loop?: boolean) {
+    }
+
+    //% blockId=animation_editor block="%frames"
+    //% shim=TD_ID
+    //% frames.fieldEditor="animation"
+    //% frames.fieldOptions.decompileLiterals="true"
+    //% frames.fieldOptions.filter="!tile !dialog"
+    //% weight=100 duplicateShadowOnDrag
+    export function _animationFrames(frames: Image[]) {
+        return frames
+    }
+}
+
+namespace music {
+    //% blockId=music_song_field_editor
+    //% block="song $song"
+    //% song.fieldEditor=musiceditor
+    //% song.fieldOptions.decompileLiterals=true
+    //% song.fieldOptions.taggedTemplate="hex;assets.song"
+    //% song.fieldOptions.decompileIndirectFixedInstances="true"
+    //% song.fieldOptions.decompileArgumentAsString="true"
+    export function createSong(song: Buffer): Buffer {
+        return song
+    }
+}
+
+namespace assets {
+    //% pyConvertToTaggedTemplate
+    export function song(lits: any, ...args: any[]): Buffer { return null }
 }

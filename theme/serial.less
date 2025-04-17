@@ -16,6 +16,56 @@
 #serialArea {
     height: 90%;
     padding: 1rem;
+
+    #serialCsv,
+    #serialCsvViewLatest {
+        display: none;
+    }
+
+    .common-editor-toggle-outer {
+        padding-left: 1.5rem;
+    }
+
+    &.csv-view {
+        #serialCsv {
+            display: block;
+
+            table:last-child thead {
+                position: sticky;
+                top: -0.75rem;
+                box-shadow: inset 0 2px 0 #ddd, inset 0 -2px 0 #ddd;
+            }
+        }
+
+        #serialCharts,
+        #serialPlaceholder,
+        #serialConsole,
+        .csv-hide {
+            display: none;
+        }
+
+        #serialCsvViewLatest {
+            display: block;
+            position: absolute;
+            margin-left: auto;
+            margin-right: auto;
+            text-align: center;
+            left: 0;
+            right: 0;
+            max-width: 15rem;
+            margin-top: -3em;
+        }
+
+        &.hide-view-latest {
+            #serialCsvViewLatest {
+                display: none;
+            }
+        }
+    }
+
+    &.no-toggle #serial-editor-toggle {
+        display: none
+    }
 }
 
 #serialArea .ui.divider {
@@ -60,7 +110,8 @@
     transition: border-radius 1s ease-in-out;
 }
 
-#serialConsole {
+#serialConsole,
+#serialCsv {
     margin-top: 0.5rem;
     height: calc(30% - 2.5rem);
     overflow-y: auto;
@@ -72,6 +123,42 @@
     font-family: @serialConsoleFont;
 }
 
+#serialConsole.noconsole {
+    display:none;
+}
+
+#serialCsv {
+    height: 100%;
+
+    table {
+        border-collapse: collapse;
+        margin-top: 1em;
+        text-align: right;
+        border-spacing: 2px;
+        border-color: grey;
+    }
+
+    thead {
+        font-weight: 700;
+    }
+
+    tbody tr, thead tr {
+        background: @white;
+    }
+
+    tbody tr.odd {
+        background: #f2f2f2;
+    }
+    td, th {
+        border: 1px solid #ddd;
+        padding: 8px;
+        min-width: 8ch;
+    }
+}
+#serialConsole.nochart {
+    height: calc(100% - 12.5rem);
+}
+
 #serialConsole span {
     word-wrap: break-word;
 }
@@ -81,9 +168,17 @@
     overflow-y: auto;
 }
 
-#serialCharts .seriallabel {
+#serialCharts.nochart {
+    display: none;
+}
+
+#serialCharts.noconsole {
+    height: calc(100% - 2.5rem);
+}
+
+#serialCharts .seriallabel,
+#serialPlaceholder .seriallabel {
     padding: 5px 10px 5px 10px;
-    border: 1px solid black;
     color: #000;
     width: auto;
     border-radius: 20px;
@@ -91,7 +186,16 @@
     font-family: monospace;
 }
 
-#serialCharts .ui.segment {
+#serialCharts .seriallabel {
+    border: 1px solid black;
+}
+
+#serialPlaceholder .seriallabel {
+    background-color: transparent;
+}
+
+#serialCharts .ui.segment,
+#serialPlaceholder {
     padding: 0.4rem;
     height: 12rem;
     background-color: @serialGraphBackground;
@@ -137,6 +241,12 @@
     outline: none;
 }
 
+.fullscreensim #serialPreview,
+.simView #serialPreview {
+    display: none !important;
+    z-index: -10 !important;
+}
+
 .serialindicator {
     cursor: pointer;
 }
@@ -164,4 +274,3 @@ div.smoothie-chart-tooltip {
     font-size: 0.8rem;
     pointer-events: none;
 }
-     

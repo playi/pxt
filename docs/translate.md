@@ -1,78 +1,63 @@
 # Help translate
 
-Microsoft MakeCode supports localized content for both MakeCode web app and target documentation.
-The default language is currently always English.
+Microsoft MakeCode supports localized content for the MakeCode editors, their documentation, and the document pages on the [makecode.com](https://makecode.com/docs) website. Support for localization lets people use, learn, and enjoy MakeCode in their own language.
 
-Our translations are managed via Crowdin, a translation management platform. It is free to join
-and you can volunteer to translate parts of the web site.
+Localization of MakeCode is made possible by the contributions of translators all over the world working to get MakeCode translated into many languages. Our translations are managed by [Crowdin](https://crowdin.com/project/makecode), a translation management platform for crowd-based localization. It is free to join and you can volunteer to translate parts of the MakeCode editors and website.
 
 ## Crowdin project
 
-The project below contains the resources from https://makecode.com and the menu items of @homeurl@.
+Our Crowdin translation project contains the text resources for the MakeCode UI, programming blocks, and content pages.
 
-* [https://crowdin.com/project/kindscript](https://crowdin.com/project/kindscript)
+* **[Microsoft MakeCode Crowdin Project](https://crowdin.com/project/makecode)**
 
-If you want to help translating the editor, please sign in to Crowdin and send us a translator request.
+If you want to help with translating the MakeCode project, please sign in to Crowdin (or [join](https://crowdin.com/join) first if you don't already have an account) and send us a translator request.
 
 ### ~ hint
 
-Looking to help translate **microbit.org**? Try http://translate.microbit.org/ to help the Microbit Foundation!
+#### Sign up to translate
+
+For a quick explaination of how to sign up and join a MakeCode translation team, watch this
+short video:
+
+https://youtu.be/4PqWq50e8C4
 
 ### ~
 
-## [Tasks](https://crowdin.com/project/kindscript/tasks)
+## Get started #get-started
 
-We have create a [tasks for each language and editor](https://crowdin.com/project/kindscript/tasks) to help navigate the translation system.
+After you've joined a translation team and are signed in, choose the **[language](/translate/languages)** you're translating for. Under that language you will find **[files](/translate/files)** for the common text and folders for the different editors (also called _targets_). You begin by choosing a file listed or a file in one of the target folders. In these files are strings, or text, that are the **[parts](/translate/parts)** of MakeCode you will translate.
 
-* **Common / User Interface / Translation**: translating the menu items, buttons and other common UI elements. Available to **translators** for a given language.
-* **Common / User Interface / Proofreading**: proofreading the menu items, buttons and other common UI elements. Available to **proof readers** for a given language.
+When you translate, you have the **[role](/translate/roles)** of a _translator_ which lets you suggest and save any new or better translation for a string. A _proofreader_ reviews your translations and will approve them if they are accurate. Other translators may suggest a different one if they think yours is incorrect and you can discuss it to agree on which one is correct. Once your translation is approved, it will appear online for that string when your language is selected in the editor or website.
 
-![UI elements](/static/translationui.png)
+If you're more comfortable translating while actually using and seeing the strings in the editor, you can add your translations with the **[in context translation](/translate/in-context)** feature. This lets you do much of the translation work outside of the Crowdin website.
 
-* **Minecraft / Blocks+description / Translation**: translating the blocks and block descriptions. Available to **translators** for a given language.
-* **Minecraft / Blocks+description / Proofreading**: proofreading the blocks and block descriptions. Available to **proof readers** for a given language.
+## Translation topics
 
-* **micro:bit / Blocks+description / Translation**: translating the blocks and block descriptions. Available to **translators** for a given language.
-* **micro:bit / Blocks+description / Proofreading**: proofreading the blocks and block descriptions. Available to **proof readers** for a given language.
+Although they are linked in the [Get started](#get-started) section above, you can further familiarize yourself with the translation activities by reviewing these topics:
 
-![UI elements](/static/translationblocks.png)
+1. [Translation languages](/translate/languages)
+2. [Localization files](/translate/files)
+3. [Parts to translate](/translate/parts)
+4. [Translating markdown](/translate/markdown)
+5. [Translator roles](/translate/roles)
+6. [In context translation](/translate/in-context)
 
+### Quick reference info
 
-## Live Translations
+* [Tips](/translate/tips-faq#tips)
+* [FAQ](/translate/tips-faq#faq)
 
-To test your changes "live", use **beta** build and the ``#liveforcelang=CODE`` hash argument where ``CODE`` is your language ISO code. For example, to see the french translations:
+### ~ hint
 
-* https://pxt.microbit.org/beta?liveforcelang=fr
+#### Check the FAQ first
 
-Note that there may be a delay of up to 5 minutes before your changes in Crowdin make it into the "live" view.
-Also, the language will only be available in the editor's language selection if the target has enabled that locale - which is why you need to use the hash mentioned above.
+Just need a quick answer to a translation question? You can check the [FAQ](/translate/tips-faq#faq) first.
 
-## Translating the editor interface
+### ~
 
-All the editor interface strings, like the "Download" button are in the ``strings.json`` file.
+## Crowdin deep dive
 
-## Translating the blocks and reference documentation
+If you're interested in the technical aspects of how the localization process works in MakeCode, watch this video for an overview.
 
-You will find target specific localization files under folders in crowdin. For example, all blocks, reference translations for the **microbit** are under ``/microbit`` , one for the block definition and one for the descriptions:
+https://youtu.be/XpdUzpBVKFU
 
-* ``core-strings.json``: contains the block definitions
-* ``core-jsdoc-strings.json``: contains the descriptions
-
-The block definition should be carefully translated using the [block definition syntax](https://makecode.com/defining-blocks).
-Open the developer tools and watch the console, PXT will validate the localized string and flag potential issues.
-
-### Block localization guidance
-
-* Do not capitalize blocks
-* Do not translate ``%variable`` names
-* Do not reorder parameters
-* Maintain the same structure of ``|`` and ``%variables%``
-
-## Translating Target specific strings
-
-The `pxtarget.json` file contains a number of strings which
-show up on doc pages (mostly menu items and target name). These strings are uploaded as the ``targetid/target-strings.json`` file in Crowdin and loaded by the editor on demand.
-
-## Translating Documentation
-
-Translation of documentation pages are pulled from crowdin by the cloud backend automatically.

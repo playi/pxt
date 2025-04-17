@@ -19,17 +19,19 @@ myNumbers.insertAt(3, 2);
 ## Parameters
 
 * **index**: a [number](/types/number) which is the position in the array to insert the element at.
+* **value**: a value to insert into the array at the position of **index**. The value has the same [type](/types) as the type that array was created with, [number](/types/number), [boolean](/types/boolean), [string](/types/string), etc.
 
 ## Example
 
 Make a ordered array that has the numbers from a jumbled an array in order of lowest to highest.
 
 ```blocks
-let jumbled = [4, 5, 2, 1, 6, 9, 0, 3, 8, 7];
-let ordered = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+let removed = 0
+let jumbled = [4, 5, 2, 1, 6, 9, 0, 3, 8, 7]
+let ordered = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 for (let item of jumbled) {
-    ordered.insertAt(item, item);
-    ordered.removeAt(item + 1);
+    ordered.insertAt(item, item)
+    removed = ordered.removeAt(item + 1)
 }
 ```
 

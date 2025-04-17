@@ -448,6 +448,37 @@ describe("comment attribute parser", () => {
             chai.assert(parsed.parts.filter(p => p.kind === "param" && p.name === name && p.shadowBlockId == shadow).length === 1);
         }
     });
+
+    it("should allow block.LOCALE", () => {
+        const parsed = ts.pxtc.parseCommentString(`
+            /**
+             * Bla
+             */
+            //% block="foo $bar"
+            //% block.loc.fr="FRENCH $bar"
+            //% block.loc.es="SPANISH $bar"
+            //% jsdoc.loc.fr="bli"
+            //% bar.loc.fr="bah"
+        `);
+
+        chai.assert(parsed.locs["fr|block"] == "FRENCH $bar", JSON.stringify(parsed.locs));
+        chai.assert(parsed.locs["es|block"] == "SPANISH $bar", JSON.stringify(parsed.locs));
+        chai.assert(parsed.locs["fr|jsdoc"] == "bli", JSON.stringify(parsed.locs));
+        chai.assert(parsed.locs["fr|param|bar"] == "bah", JSON.stringify(parsed.locs));
+    });
+
+    it("should parse parameter snippets", () => {
+        const parsed = ts.pxtc.parseCommentString(`
+            /**
+             * Bla
+             */
+            //% block="foo $bar"
+            //% bar.snippet="hello"
+            //% bar.pySnippet="goodbye"
+        `);
+        chai.assert(parsed.paramSnippets?.["bar"].ts === "hello", "bar.snippet === \"hello\"")
+        chai.assert(parsed.paramSnippets?.["bar"].python === "goodbye", "bar.pySnippet === \"goodbye\"")
+    });
 });
 
 function brk(): pxtc.BlockBreak {

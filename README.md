@@ -1,11 +1,8 @@
 # Microsoft MakeCode
 
-* [Try our the editors in your browser...](https://makecode.com)
+* [Try out the editors in your browser...](https://makecode.com)
 
-[![Build Status](https://travis-ci.org/Microsoft/pxt.svg?branch=master)](https://travis-ci.org/Microsoft/pxt) 
-[![Community Discord](https://img.shields.io/discord/448979533891371018.svg)](https://aka.ms/makecodecommunity)
-
-Microsoft MakeCode is based on the open source project [Microsoft Programming Experience Toolkit (PXT)](https://github.com/Microsoft/pxt). ``Microsoft MakeCode`` is the name in the user-facing editors, ``PXT`` is used in all the GitHub sources.
+Microsoft MakeCode is based on the open source project [Microsoft Programming Experience Toolkit (PXT)](https://github.com/microsoft/pxt). ``Microsoft MakeCode`` is the name in the user-facing editors, ``PXT`` is used in all the GitHub sources.
 
 PXT is a framework for creating special-purpose programming experiences for
 beginners, especially focused on computer science education. PXT's underlying
@@ -14,7 +11,7 @@ features).
 
 The main features of PXT are:
 * a Blockly-based code editor along with converter to the text format
-* a Monaco code editor that powers [VS Code](https://github.com/Microsoft/vscode), editor's features are listed [here](https://code.visualstudio.com/docs/editor/editingevolved).
+* a Monaco code editor that powers [VS Code](https://github.com/microsoft/vscode), editor's features are listed [here](https://code.visualstudio.com/docs/editor/editingevolved).
 * extensibility support to define new blocks in TypeScript
 * an ARM Thumb machine code emitter
 * a command-line package manager
@@ -23,44 +20,20 @@ More info:
 * [About](https://makecode.com/about)
 * [Documentation](https://makecode.com/docs)
 
-Examples of Editors built with PXT:
+Examples of Editors built with MakeCode:
 
 * https://makecode.microbit.org
+* https://arcade.makecode.com
 * https://makecode.adafruit.com
-* https://makecode.chibitronics.com
 * https://minecraft.makecode.com
+* https://makecode.mindstorms.com
+* https://makecode.chibitronics.com
 * More editors at https://makecode.com/labs
 
 ## Branches
 
-* `wonder_master` is the branch that we use for Code builds.
-* `stable(stable build)` stable branches from the upstream reopsitory (Microsoft/pxt)
-* `wonder_stable(stable build)` stable branches with our changes merged in
-* To update PXT in pxt-wonder with a new stable branch from microsoft, follow these steps:
-0. `git fetch upstream stable(stable build)` fetch the upstream stable branch from microsoft/pxt
-    (Note, if you have not set your 'upstream' to be Microsoft/pxt branch, then you can either create a remote upstream      
-    pointing to the MS repro, or you can use the MS Repro https url instead of 'upstream')
-1. `git checkout stable(stable branch)` check out Microsoft's stable branch
-2. `git checkout -b wonder_stable(stable build)` create a local branch off the stable branch adding the prefix `wonder_`
-3. `git merge wonder_master` merge the wonder workshop specific changes from our wonder_master branch down
-4. Fix any merge conflict issues. (I reccomend setting up p4 as a git mergetool)
-5. `git push origin wonder_stable(StableBuild#)` Push the wonder_stable branch to github as a record of the changes
-6. Build/ spotTest the new pxt changes to make sure there are no major regressions/ issues
-7. go to the 'wonder_stable(Build#)' branch on github
-8. click the 'new pull request' button
-9. change the 'branch' to merge into to 'wonder_master' (it will default to Microsoft/pxt)
-10. Create the pull request to wonder_master
-11. Merge the PR into wonder_master
-
-
-12. Now you need to update pxt-wonder repro's 'pxt' submodule
-13. In your pxt-wonder repro, cd into `modules/pxt` submodule folder
-14. `git checkout wonder_master` branch
-15. git pull origin wonder_master to get the latest changes you have just committed to the pxt
-16. cd ../.. to be in your 'pxt-wonder' repo
-17. commit your new pxt submodule to pxt-wonder (note you may need to create a branch and merge that pr into pxt-wonder master)
-
-Congrats, you have updated the pxt submodule!
+* ``master`` is the active development branch, currently ``v3.*`` builds
+* ``v*`` is the servicing branch for ``v*.*`` builds
 
 ## Running a target from localhost
 
@@ -71,7 +44,7 @@ Please follow the [instructions here](https://makecode.com/cli).
 If you are modifying your own instance of PXT and want a target (such as pxt-microbit) to use your local version, cd to the directory of the target (pxt-microbit, in our example, which should be a directory sibling of pxt) and perform
 
 ```
-npm link ../pxt
+pxt link ../pxt
 ```
 
 If you have multiple checkouts of pxt, you can do the following:
@@ -82,7 +55,7 @@ If you run `npm i` afterwards (in either the target or pxt), you might need to r
 
 ## Build
 
-First, install [Node](https://nodejs.org/en/): minimum version 8. 
+First, install [Node](https://nodejs.org/en/): minimum version 8.
 
 To build the PXT command line tools:
 
@@ -97,10 +70,35 @@ Then install the `pxt` command line tool (only need to do it once):
 npm install -g pxt
 ```
 
+Then install `gulp` (only need to do it once):
+```
+npm install -g gulp
+```
+
 After this you can run `pxt` from anywhere within the build tree.
 
 To start the local web server, run `pxt serve` from within the root
 of an app target (e.g. pxt-microbit). PXT will open the editor in your default web browser.
+
+If you are developing against pxt, you can run `gulp watch` from within the root of the
+pxt repository to watch for changes and rebuild.
+
+```
+gulp watch
+```
+
+If you are working on the CLI exclusively,
+
+```
+gulp watchCli
+```
+
+If you don't need to build the suite of associated webapps (skillmap, multiplayer, etc.), you can skip them and speed up your build a bit:
+
+```
+gulp --no-webapps
+```
+
 
 ### Icons
 
@@ -116,6 +114,34 @@ npm install -g svgo
 svgo svgicons/myicon.svg
 ```
 
+### Shared Styling
+
+When adding a CSS color or other style element that will be shared across editor targets (e.g. micro:bit, Arcade) and sub-applications (a.k.a. "CRAs", like skillmap, teachertool, etc.). Declare a CSS variable for it in `theme/themepacks.less`:
+
+1. Add the new variable to the `:root` pseudo-class. Choose a reasonable default value according to the guidlines in the file.
+2. Add the new variable to all theme classes defined in that file. At the time of this writing, only `theme-highcontrast` is defined. Choose a value that works well for the given theme.
+3. Add the new variable to the theme overrides for each target. This will be done in the target repo's `theme/themepacks.less` file (e.g. pxt-microbit, pxt-arcade).
+
+Variables declared this way will be available to CRAs at runtime, and they will be initialized with the override values defined by the target in which they're running.
+
+
+### Documentation Highlighting
+
+In the documentation, highlighting of code snippets uses highlight.js (hljs).
+Currently, the following languages are included:
+
+* TypeScript
+* Python
+* JavaScript
+* HTML,XML
+* Markdown
+
+If you need to add other languages or update existing ones,
+you can find the distribution at [https://highlightjs.org/download/](https://highlightjs.org/download/);
+select all the languages you want to include (including the ones above!),
+download and unzip,
+and finally copy over `highlight.pack.js` into `webapp/public/highlight.js/`.
+
 ## Tests
 
 The tests are located in the `tests/` subdirectory and are a combination of node and
@@ -123,7 +149,7 @@ browser tests. To execute them, run `npm run test:all` in the root directory.
 
 ## License
 
-MIT
+[MIT License](https://github.com/microsoft/pxt/blob/master/LICENSE)
 
 ## Code of Conduct
 
@@ -132,3 +158,7 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 ## Contact Us
 
 [Get in touch](https://makecode.com/contact)
+
+## Trademarks
+
+MICROSOFT, the Microsoft Logo, and MAKECODE are registered trademarks of Microsoft Corporation. They can only be used for the purposes described in and in accordance with Microsoft’s Trademark and Brand guidelines published at https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general.aspx. If the use is not covered in Microsoft’s published guidelines or you are not sure, please consult your legal counsel or MakeCode team (makecode@microsoft.com).

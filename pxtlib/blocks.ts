@@ -3,10 +3,23 @@
 namespace pxt.blocks {
     const THIS_NAME = "this";
 
+    export let showBlockIdInTooltip: boolean = false;
+
+    // These interfaces are extended in localtypings/pxtblockly.d.ts
+    export interface PxtBlockly {
+    }
+    export interface BlocklyModule {
+    }
+
+    // patched in webapp/pxtrunner
+    export let requirePxtBlockly: () => PxtBlockly = () => undefined;
+    export let requireBlockly: () => BlocklyModule = () => undefined;
+    export let registerFieldEditor: (selector: string, proto: any, validator?: any) => void = () => {}
+
     // The JS Math functions supported in the blocks. The order of this array
     // determines the order of the dropdown in the math_js_op block
     export const MATH_FUNCTIONS = {
-        unary: ["sqrt", "sin", "cos", "tan"],
+        unary: ["sqrt", "sin", "cos", "tan", "asin", "acos"],
         binary: ["atan2"],
         infix: ["idiv", "imul"]
     };
@@ -26,6 +39,9 @@ namespace pxt.blocks {
         // Parameter name as it appears in the block string. This is the name that
         // gets used for the input/field in the Blockly block
         definitionName: string;
+
+        // The index of this parameter in the block string
+        definitionIndex?: number;
 
         // Shadow block ID specified in the block string (if present)
         shadowBlockId?: string;
@@ -82,15 +98,15 @@ namespace pxt.blocks {
         if (!b) return b;
         // normalize and validate common errors
         // made while translating
-        let nb = b.replace(/[^\\]%\s+/g, '%');
+        let nb = b.replace(/(?:^|[^\\])([%$])\s+/g, '$1');
         if (nb != b) {
             err(`block has extra spaces: ${b}`);
-            return b;
+            b = nb;
         }
 
         // remove spaces around %foo = ==> %foo=
         b = nb;
-        nb = b.replace(/(%\w+)\s*=\s*(\w+)/, '$1=$2');
+        nb = b.replace(/([%$]\w+)\s*=\s*(\w+)/, '$1=$2');
         if (nb != b) {
             err(`block has space between %name and = : ${b}`)
             b = nb;
@@ -98,6 +114,7 @@ namespace pxt.blocks {
 
         // remove spaces before after pipe
         nb = nb.replace(/\s*\|\s*/g, '|');
+
         return nb;
     }
 
@@ -133,12 +150,20 @@ namespace pxt.blocks {
             const def = refMap[THIS_NAME] || defParameters[0];
             const defName = def.name;
             const isVar = !def.shadowBlockId || def.shadowBlockId === "variables_get";
+
+            let defaultValue: string;
+
+            if (isVar) {
+                defaultValue = def.varName || fn.attributes.paramDefl[defName] || fn.attributes.paramDefl["this"];
+            }
+
             res.thisParameter = {
                 actualName: THIS_NAME,
                 definitionName: defName,
                 shadowBlockId: def.shadowBlockId,
                 type: fn.namespace,
-                defaultValue: isVar ? def.varName : undefined,
+                defaultValue: defaultValue,
+                definitionIndex: defParameters.indexOf(def),
 
                 // Normally we pass ths actual parameter name, but the "this" parameter doesn't have one
                 fieldEditor: fieldEditor(defName, THIS_NAME),
@@ -167,13 +192,14 @@ namespace pxt.blocks {
                     }
 
                     const defName = def ? def.name : (bInfo ? bInfo.params[defIndex++] : p.name);
-                    const isVar = (def && def.shadowBlockId) === "variables_get";
+                    const isVarOrArray = def && (def.shadowBlockId === "variables_get" || def.shadowBlockId == "lists_create_with");
 
                     (res.parameters as BlockParameter[]).push({
                         actualName: p.name,
                         type: p.type,
-                        defaultValue: isVar ? (def.varName || p.default) : p.default,
+                        defaultValue: isVarOrArray ? (def.varName || p.default) : p.default,
                         definitionName: defName,
+                        definitionIndex: def ? defParameters.indexOf(def) : i,
                         shadowBlockId: def && def.shadowBlockId,
                         isOptional: defParameters ? defParameters.indexOf(def) >= optionalStart : false,
                         fieldEditor: fieldEditor(defName, p.name),
@@ -218,6 +244,66 @@ namespace pxt.blocks {
         }
     }
 
+    export function hasHandler(fn: pxtc.SymbolInfo) {
+        return fn.parameters && fn.parameters.some(p => (
+            p.type == "() => void" ||
+            p.type == "Action" ||
+            !!p.properties?.length ||
+            !!p.handlerParameters?.length
+        ));
+    }
+
+    export function getHelpUrl(fn: pxtc.SymbolInfo) {
+        if (fn.attributes.help) {
+            const helpUrl = fn.attributes.help.replace(/^\//, '');
+            if (/^github:/.test(helpUrl)) {
+                return helpUrl;
+            } else if (helpUrl !== "none") {
+                return "/reference/" + helpUrl;
+            }
+        } else if (fn.pkg && !pxt.appTarget.bundledpkgs[fn.pkg]) {// added package
+            let anchor = fn.qName.toLowerCase().split('.');
+            if (anchor[0] == fn.pkg) anchor.shift();
+            return `/pkg/${fn.pkg}#${encodeURIComponent(anchor.join('-'))}`;
+        }
+
+        return undefined;
+    }
+
+    /**
+     * Returns which Blockly block type to use for an argument reporter based
+     * on the specified TypeScript type.
+     * @param varType The variable's TypeScript type
+     * @return The Blockly block type of the reporter to be used
+     */
+    export function reporterTypeForArgType(varType: string) {
+        let reporterType = "argument_reporter_custom";
+
+        if (varType === "boolean" || varType === "number" || varType === "string") {
+            reporterType = `argument_reporter_${varType}`;
+        }
+
+        if (/^(?:Array<(?:.+)>)|(?:(?:.+)\[\])$/.test(varType)) {
+            reporterType = "argument_reporter_array";
+        }
+
+        return reporterType;
+    }
+
+    export function defaultIconForArgType(typeName: string = "") {
+        switch (typeName) {
+            case "number":
+                return "calculator";
+            case "string":
+                return "text width";
+            case "boolean":
+                return "random";
+            case "Array":
+                return "list";
+            default:
+                return "align justify"
+        }
+    }
 
     export interface FieldDescription {
         n: string;
@@ -248,6 +334,7 @@ namespace pxt.blocks {
         block?: Map<string>;
         blockTextSearch?: string; // Which block text to use for searching; if undefined, search uses all texts in BlockDefinition.block, joined with space
         tooltipSearch?: string; // Which tooltip to use for searching; if undefined, search uses all tooltips in BlockDefinition.tooltip, joined with space
+        translationIds?: string[];
     }
 
     let _blockDefinitions: Map<BlockDefinition>;
@@ -277,7 +364,7 @@ namespace pxt.blocks {
             'pxt_controls_for': {
                 name: Util.lf("a loop that repeats the number of times you say"),
                 tooltip: Util.lf("Have the variable '{0}' take on the values from 0 to the end number, counting by 1, and do the specified blocks."), // The name of the iteration variable that goes in {0} is replaced in blocklyloader
-                url: 'blocks/loops/for',
+                url: '/blocks/loops/for',
                 category: 'loops',
                 block: {
                     message0: Util.lf("for %1 from 0 to %2"),
@@ -288,7 +375,7 @@ namespace pxt.blocks {
             'controls_simple_for': {
                 name: Util.lf("a loop that repeats the number of times you say"),
                 tooltip: Util.lf("Have the variable '{0}' take on the values from 0 to the end number, counting by 1, and do the specified blocks."), // The name of the iteration variable that goes in {0} is replaced in blocklyloader
-                url: 'blocks/loops/for',
+                url: '/blocks/loops/for',
                 category: 'loops',
                 block: {
                     message0: Util.lf("for %1 from 0 to %2"),
@@ -299,7 +386,7 @@ namespace pxt.blocks {
             'pxt_controls_for_of': {
                 name: Util.lf("a loop that repeats for each value in an array"),
                 tooltip: Util.lf("Have the variable '{0}' take the value of each item in the array one by one, and do the specified blocks."), // The name of the iteration variable that goes in {0} is replaced in blocklyloader
-                url: 'blocks/loops/for-of',
+                url: '/blocks/loops/for-of',
                 category: 'loops',
                 block: {
                     message0: Util.lf("for element %1 of %2"),
@@ -310,7 +397,7 @@ namespace pxt.blocks {
             'controls_for_of': {
                 name: Util.lf("a loop that repeats for each value in an array"),
                 tooltip: Util.lf("Have the variable '{0}' take the value of each item in the array one by one, and do the specified blocks."), // The name of the iteration variable that goes in {0} is replaced in blocklyloader
-                url: 'blocks/loops/for-of',
+                url: '/blocks/loops/for-of',
                 category: 'loops',
                 block: {
                     message0: Util.lf("for element %1 of %2"),
@@ -341,26 +428,26 @@ namespace pxt.blocks {
             },
             'math_number': {
                 name: Util.lf("{id:block}number"),
-                url: '/blocks/math/random',
+                url: '/types/number',
                 category: 'math',
                 tooltip: (pxt.appTarget && pxt.appTarget.compile) ?
                     Util.lf("a decimal number") : Util.lf("an integer number")
             },
             'math_integer': {
                 name: Util.lf("{id:block}number"),
-                url: '/blocks/math/random',
+                url: '/types/number',
                 category: 'math',
                 tooltip: Util.lf("an integer number")
             },
             'math_whole_number': {
                 name: Util.lf("{id:block}number"),
-                url: '/blocks/math/random',
+                url: '/types/number',
                 category: 'math',
                 tooltip: Util.lf("a whole number")
             },
             'math_number_minmax': {
                 name: Util.lf("{id:block}number"),
-                url: '/blocks/math/random',
+                url: '/blocks/math',
                 category: 'math'
             },
             'math_arithmetic': {
@@ -381,7 +468,7 @@ namespace pxt.blocks {
                     MATH_ADDITION_SYMBOL: Util.lf("{id:op}+"),
                     MATH_SUBTRACTION_SYMBOL: Util.lf("{id:op}-"),
                     MATH_MULTIPLICATION_SYMBOL: Util.lf("{id:op}×"),
-                    MATH_DIVISION_SYMBOL: Util.lf("{id:op}÷"),
+                    MATH_DIVISION_SYMBOL: Util.lf("{id:op}/"),
                     MATH_POWER_SYMBOL: Util.lf("{id:op}**")
                 }
             },
@@ -391,7 +478,7 @@ namespace pxt.blocks {
                 url: '/blocks/math',
                 category: 'math',
                 block: {
-                    MATH_MODULO_TITLE: Util.lf("remainder of %1 ÷ %2")
+                    MATH_MODULO_TITLE: Util.lf("remainder of %1 / %2")
                 }
             },
             'math_js_op': {
@@ -400,6 +487,8 @@ namespace pxt.blocks {
                     "sqrt": Util.lf("Returns the square root of the argument"),
                     "sin": Util.lf("Returns the sine of the argument"),
                     "cos": Util.lf("Returns the cosine of the argument"),
+                    "acos": Util.lf("Returns the arccosine of the argument"),
+                    "asine": Util.lf("Returns the arcsine of the argument"),
                     "tan": Util.lf("Returns the tangent of the argument"),
                     "atan2": Util.lf("Returns the arctangent of the quotient of the two arguments"),
                     "idiv": Util.lf("Returns the integer portion of the division operation on the two arguments"),
@@ -414,9 +503,11 @@ namespace pxt.blocks {
                     "sqrt": Util.lf("{id:op}square root"),
                     "sin": Util.lf("{id:op}sin"),
                     "cos": Util.lf("{id:op}cos"),
+                    "asin": Util.lf("{id:op}asin"),
+                    "acos": Util.lf("{id:op}acos"),
                     "tan": Util.lf("{id:op}tan"),
                     "atan2": Util.lf("{id:op}atan2"),
-                    "idiv": Util.lf("{id:op}integer ÷"),
+                    "idiv": Util.lf("{id:op}integer /"),
                     "imul": Util.lf("{id:op}integer ×"),
                 }
             },
@@ -595,7 +686,7 @@ namespace pxt.blocks {
             'text': {
                 name: Util.lf("a piece of text"),
                 tooltip: Util.lf("A letter, word, or line of text."),
-                url: 'types/string',
+                url: '/types/string',
                 category: 'text',
                 block: {
                     search: Util.lf("a piece of text") // Only used for search; this string is not surfaced in the block's text
@@ -604,7 +695,7 @@ namespace pxt.blocks {
             'text_length': {
                 name: Util.lf("number of characters in the string"),
                 tooltip: Util.lf("Returns the number of letters (including spaces) in the provided text."),
-                url: 'reference/text/length',
+                url: '/reference/text/length',
                 category: 'text',
                 block: {
                     TEXT_LENGTH_TITLE: Util.lf("length of %1")
@@ -613,7 +704,7 @@ namespace pxt.blocks {
             'text_join': {
                 name: Util.lf("join items to create text"),
                 tooltip: Util.lf("Create a piece of text by joining together any number of items."),
-                url: 'reference/text/join',
+                url: '/reference/text/join',
                 category: 'text',
                 block: {
                     TEXT_JOIN_TITLE_CREATEWITH: Util.lf("join")
@@ -622,7 +713,7 @@ namespace pxt.blocks {
             'procedures_defnoreturn': {
                 name: Util.lf("define the function"),
                 tooltip: Util.lf("Create a function."),
-                url: 'types/function/define',
+                url: '/types/function/define',
                 category: 'functions',
                 block: {
                     PROCEDURES_DEFNORETURN_TITLE: Util.lf("function"),
@@ -632,10 +723,47 @@ namespace pxt.blocks {
             'procedures_callnoreturn': {
                 name: Util.lf("call the function"),
                 tooltip: Util.lf("Call the user-defined function."),
-                url: 'types/function/call',
+                url: '/types/function/call',
                 category: 'functions',
                 block: {
                     PROCEDURES_CALLNORETURN_TITLE: Util.lf("call function")
+                }
+            },
+            'function_return': {
+                name: Util.lf("return a value from within a function"),
+                tooltip: Util.lf("Return a value from within a user-defined function."),
+                url: '/types/function/return',
+                category: 'functions',
+                block: {
+                    message_with_value: Util.lf("return %1"),
+                    message_no_value: Util.lf("return")
+                }
+            },
+            'function_definition': {
+                name: Util.lf("define the function"),
+                tooltip: Util.lf("Create a function."),
+                url: '/types/function/define',
+                category: 'functions',
+                block: {
+                    FUNCTIONS_EDIT_OPTION: Util.lf("Edit Function")
+                }
+            },
+            'function_call': {
+                name: Util.lf("call the function"),
+                tooltip: Util.lf("Call the user-defined function."),
+                url: '/types/function/call',
+                category: 'functions',
+                block: {
+                    FUNCTIONS_CALL_TITLE: Util.lf("call"),
+                    FUNCTIONS_GO_TO_DEFINITION_OPTION: Util.lf("Go to Definition")
+                }
+            },
+            'function_call_output': {
+                name: Util.lf("call the function with a return value"),
+                tooltip: Util.lf("Call the user-defined function with a return value."),
+                url: '/types/function/call',
+                category: 'functions',
+                block: {
                 }
             }
         };
@@ -657,5 +785,62 @@ namespace pxt.blocks {
                 message0: Util.lf("pause until %1")
             }
         };
+        _blockDefinitions[pxtc.TS_BREAK_TYPE] = {
+            name: Util.lf("break"),
+            tooltip: Util.lf("Break out of the current loop or switch"),
+            url: '/blocks/loops/break',
+            category: 'loops',
+            block: {
+                message0: Util.lf("break")
+            }
+        }
+        _blockDefinitions[pxtc.TS_CONTINUE_TYPE] = {
+            name: Util.lf("continue"),
+            tooltip: Util.lf("Skip current iteration and continues with the next iteration in the loop"),
+            url: '/blocks/loops/continue',
+            category: 'loops',
+            block: {
+                message0: Util.lf("continue")
+            }
+        }
+
+        if (pxt.blocks.showBlockIdInTooltip) {
+            for (const id of Object.keys(_blockDefinitions)) {
+                const tooltip = _blockDefinitions[id].tooltip;
+                if (typeof tooltip === "object" && tooltip !== null) {
+                    for (const innerKey in tooltip) {
+                        if (tooltip.hasOwnProperty(innerKey)) {
+                            (_blockDefinitions[id].tooltip as any)[innerKey] = `${tooltip[innerKey]} (id: ${id})`;
+                        }
+                    }
+                } else {
+                    _blockDefinitions[id].tooltip = `${_blockDefinitions[id].tooltip} (id: ${id})`;
+                }
+            }
+        }
+    }
+
+    export async function initInContextTranslationAsync() {
+        if (!_blockDefinitions) cacheBlockDefinitions();
+
+        const msg: pxt.Map<string> = {}
+        await Promise.all(
+            Util.values(_blockDefinitions).filter(b => b.block).map(async b => {
+                const keys = Object.keys(b.block);
+                b.translationIds = Util.values(b.block);
+                await Promise.all(
+                    keys.map(async k => {
+                        const r = await pxt.crowdin.inContextLoadAsync(b.block[k])
+                        b.block[k] = r;
+                        // override builtin blockly namespace strings
+                        if (/^[A-Z_]+$/.test(k)) {
+                            msg[k] = r;
+                        }
+                    })
+                );
+            })
+        );
+
+        return msg;
     }
 }

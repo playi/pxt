@@ -16,11 +16,10 @@ namespace ts.pxtc.ir {
         FieldAccess,
         Store,
         CellRef,
-        Incr,
-        Decr,
         Sequence,
         JmpValue,
         Nop,
+        InstanceOf,
     }
 
     let currExprId = 0
@@ -39,6 +38,8 @@ namespace ts.pxtc.ir {
         argIdx: number;
         method: string;
         returnsRef?: boolean;
+        refTag?: pxt.BuiltInType;
+        refTagNullable?: boolean;
     }
 
     export interface MaskInfo {
@@ -47,7 +48,8 @@ namespace ts.pxtc.ir {
     }
 
     export class Expr extends Node {
-        public jsInfo: string;
+        public jsInfo: {};
+        public prevTotalUses: number;
         public totalUses: number; // how many references this expression has; only for the only child of Shared
         public currUses: number;
         public irCurrUses: number;
@@ -64,7 +66,7 @@ namespace ts.pxtc.ir {
         }
 
         static clone(e: Expr) {
-            let copy = new Expr(e.exprKind, e.args.slice(0), e.data)
+            let copy = new Expr(e.exprKind, e.args ? e.args.slice(0) : null, e.data)
             if (e.jsInfo)
                 copy.jsInfo = e.jsInfo
             if (e.totalUses) {
@@ -73,7 +75,27 @@ namespace ts.pxtc.ir {
             }
             copy.callingConvention = e.callingConvention
             copy.mask = e.mask
+            copy.isStringLiteral = e.isStringLiteral
             return copy
+        }
+
+        reset() {
+            this.currUses = 0
+            if (this.prevTotalUses)
+                this.totalUses = this.prevTotalUses
+        }
+
+        ptrlabel() {
+            if (this.jsInfo instanceof Stmt)
+                return this.jsInfo as Stmt
+            return null
+        }
+
+        hexlit() {
+            const anyJs = this.jsInfo as any
+            if (anyJs.hexlit != null)
+                return anyJs.hexlit
+            return null
         }
 
         isExpr() { return true }
@@ -127,9 +149,8 @@ namespace ts.pxtc.ir {
                     return false;
 
                 case EK.SharedDef:
-                case EK.Incr:
-                case EK.Decr:
                 case EK.FieldAccess:
+                case EK.InstanceOf:
                     return this.args[0].canUpdateCells()
 
                 case EK.RuntimeCall:
@@ -153,15 +174,16 @@ namespace ts.pxtc.ir {
         Jmp,
         StackEmpty,
         Breakpoint,
+        Comment,
     }
 
     export enum JmpMode {
         Always = 1,
         IfZero,
         IfNotZero,
-        IfJmpValEq,
-        IfLambda
     }
+
+    export const lblNumUsesJmpNext = -101
 
     export class Stmt extends Node {
         public lblName: string;
@@ -212,13 +234,7 @@ namespace ts.pxtc.ir {
                         return `SHARED_REF(#${a0.getId()})`
 
                     case EK.SharedDef:
-                        return `SHARED_DEF(#${a0.getId()}: ${str(a0)})`
-
-                    case EK.Incr:
-                        return `INCR(${str(a0)})`
-
-                    case EK.Decr:
-                        return `DECR(${str(a0)})`
+                        return `SHARED_DEF(#${a0.getId()} u(${a0.totalUses}): ${str(a0)})`
 
                     case EK.FieldAccess:
                         return `${str(a0)}.${(e.data as FieldAccessInfo).name}`
@@ -236,6 +252,9 @@ namespace ts.pxtc.ir {
 
                     case EK.Sequence:
                         return "(" + e.args.map(str).join("; ") + ")"
+
+                    case EK.InstanceOf:
+                        return "(" + str(e.args[0]) + " instanceof " + (e.data as ClassInfo).id + ")"
 
                     case EK.Store:
                         return `{ ${str(e.args[0])} := ${str(e.args[1])} }`
@@ -259,16 +278,14 @@ namespace ts.pxtc.ir {
                                 return `    if (! ${inner}) ${fin}`
                             case JmpMode.IfNotZero:
                                 return `    if (${inner}) ${fin}`
-                            case JmpMode.IfJmpValEq:
-                                return `    if (r0 == ${inner}) ${fin}`
-                            case JmpMode.IfLambda:
-                                return `    if (LAMBDA) return ${inner}`
                             default: throw oops();
                         }
                     case ir.SK.StackEmpty:
                         return "    ;\n"
                     case ir.SK.Breakpoint:
                         return "    // brk " + (stmt.breakpointInfo.id) + "\n"
+                    case ir.SK.Comment:
+                        return "    // " + stmt.expr.data + "\n"
                     case ir.SK.Label:
                         return stmt.lblName + ":\n"
                     default: throw oops();
@@ -284,11 +301,19 @@ namespace ts.pxtc.ir {
         _isLocal = false;
         _isGlobal = false;
         _debugType = "?";
+        isUserVariable = false;
         bitSize = BitSize.None;
+        repl: Expr;
+        replUses: number;
 
         constructor(public index: number, public def: Declaration, public info: VariableAddInfo) {
-            if (def && info) {
-                setCellProps(this)
+            if (def) {
+                if (!isInPxtModules(def)) {
+                    this.isUserVariable = true
+                }
+                if (info) {
+                    setCellProps(this)
+                }
             }
         }
 
@@ -328,7 +353,7 @@ namespace ts.pxtc.ir {
         load() {
             let r = this.loadCore()
 
-            if (target.isNative && this.bitSize != BitSize.None) {
+            if (target.isNative && !isStackMachine() && this.bitSize != BitSize.None) {
                 if (this.bitSize == BitSize.UInt32)
                     return rtcall("pxt::fromUInt", [r])
                 return rtcall("pxt::fromInt", [r])
@@ -337,14 +362,7 @@ namespace ts.pxtc.ir {
             if (this.isByRefLocal())
                 return rtcall("pxtrt::ldlocRef", [r])
 
-            if (this.refCountingHandledHere())
-                return op(EK.Incr, [r])
-
             return r
-        }
-
-        refCountingHandledHere() {
-            return !this.isByRefLocal()
         }
 
         isByRefLocal() {
@@ -359,21 +377,12 @@ namespace ts.pxtc.ir {
             if (this.isByRefLocal()) {
                 return rtcall("pxtrt::stlocRef", [this.loadCore(), src])
             } else {
-                if (target.isNative && this.bitSize != BitSize.None) {
+                if (target.isNative && !isStackMachine() && this.bitSize != BitSize.None) {
                     let cnv = this.bitSize == BitSize.UInt32 ? "pxt::toUInt" : "pxt::toInt"
                     return this.storeDirect(rtcall(cnv, [src], 1))
                 }
 
-                if (this.refCountingHandledHere()) {
-                    let tmp = shared(src)
-                    return op(EK.Sequence, [
-                        op(EK.Decr, [tmp]),
-                        op(EK.Decr, [this.loadCore()]),
-                        this.storeDirect(tmp)
-                    ])
-                } else {
-                    return this.storeDirect(src)
-                }
+                return this.storeDirect(src)
             }
         }
 
@@ -411,55 +420,119 @@ namespace ts.pxtc.ir {
     }
 
     export interface ProcId {
-        proc: Procedure;
-        virtualIndex: number;
-        ifaceIndex: number;
-        mapMethod?: string;
-        mapIdx?: number;
+        proc?: Procedure;
+        callLocationIndex?: number;
+        virtualIndex?: number;
+        ifaceIndex?: number;
+        classInfo?: ClassInfo;
+        isSet?: boolean;
+        isThis?: boolean; // it's a call of the form this.foo(...) - no need to check subtyping
+        noArgs?: boolean; // this property access, with no arguments, except for 'this', passed
     }
 
-    export interface ProcQuery {
-        action: ts.FunctionLikeDeclaration;
-    }
-
-    function noRefCount(e: ir.Expr): boolean {
+    // estimated cost in bytes of Thumb code to execute given expression
+    function inlineWeight(e: ir.Expr): number {
+        const cantInline = 1000000
+        const inner = () => {
+            if (!e.args) return 0
+            let inner = 0
+            for (let ee of e.args)
+                inner += inlineWeight(ee)
+            if (e.mask && e.mask.conversions)
+                inner += e.mask.conversions.length * 4
+            return inner
+        }
         switch (e.exprKind) {
-            case ir.EK.Sequence:
-                return noRefCount(e.args[e.args.length - 1])
-            case ir.EK.NumberLiteral:
-                return true
-            case ir.EK.RuntimeCall:
-                switch (e.data as string) {
-                    case "String_::mkEmpty":
-                    case "pxt::ptrOfLiteral":
-                        return true
-                    default:
-                        return false
-                }
-            case ir.EK.SharedDef:
-            case ir.EK.SharedRef:
-                return noRefCount(e.args[0])
+            case EK.NumberLiteral:
+                return 2
+            case EK.PointerLiteral:
+                return 2 + 4
+            case EK.RuntimeCall:
+                return inner() + 2 + 2 + 4
+            case EK.CellRef:
+                return 2
+            case EK.FieldAccess:
+                return inner() + ((e.data as FieldAccessInfo).needsCheck ? 4 : 0) + 2;
+
+            case EK.ProcCall:
+            case EK.SharedRef:
+            case EK.SharedDef:
+            case EK.Store:
+            case EK.Sequence:
+            case EK.JmpValue:
+            case EK.Nop:
+            case EK.InstanceOf:
+                return cantInline
+
+            /* maybe in future
+            case EK.ProcCall:
+                return inner() + 2 * e.args.length + 4 + 2
+            case EK.SharedRef:
+                return 2
+            case EK.SharedDef:
+                return inner() + 2
+            case EK.Store:
+                return inner()
+            case EK.Sequence:
+                return inner()
+            case EK.JmpValue:
+                return 0
+            case EK.Nop:
+                return 0
+            case EK.InstanceOf:
+                return inner() + 8
+                */
             default:
-                return false
+                throw U.oops()
+        }
+    }
+
+    function inlineSubst(e: Expr): Expr {
+        e = Expr.clone(e)
+        switch (e.exprKind) {
+            case EK.PointerLiteral:
+            case EK.NumberLiteral:
+                return e
+            case EK.RuntimeCall:
+                for (let i = 0; i < e.args.length; ++i)
+                    e.args[i] = inlineSubst(e.args[i])
+                return e
+            case EK.CellRef:
+                const cell = e.data as Cell
+                if (cell.repl) {
+                    cell.replUses++
+                    return cell.repl
+                }
+                return e
+            case EK.FieldAccess:
+                e.args[0] = inlineSubst(e.args[0])
+                return e
+            default:
+                throw U.oops()
         }
     }
 
     export class Procedure extends Node {
         numArgs = 0;
-        info: FunctionAddInfo;
-        seqNo: number;
+        info: FunctionAddInfo = null;
+        seqNo: number = -1;
         isRoot = false;
         locals: Cell[] = [];
         captured: Cell[] = [];
         args: Cell[] = [];
-        parent: Procedure;
-        debugInfo: ProcDebugInfo;
-        fillDebugInfo: (th: assembler.File) => void;
-        classInfo: ClassInfo;
+        parent: Procedure = null;
+        debugInfo: ProcDebugInfo = null;
+        fillDebugInfo: (th: assembler.File) => void = null;
+        classInfo: ClassInfo = null;
+        perfCounterName: string = null;
+        perfCounterNo = 0;
 
         body: Stmt[] = [];
         lblNo = 0;
-        action: ts.FunctionLikeDeclaration;
+        action: ts.FunctionLikeDeclaration = null;
+        inlineBody: ir.Expr;
+        cachedJS: string = null;
+        usingCtx: PxtNode = null;
 
         reset() {
             this.body = []
@@ -469,12 +542,16 @@ namespace ts.pxtc.ir {
             this.args = []
         }
 
-        label() {
-            return getFunctionLabel(this.action)
+        isGetter() {
+            return this.action && this.action.kind == ts.SyntaxKind.GetAccessor
         }
 
-        matches(id: ProcQuery) {
-            return (this.action == id.action)
+        vtLabel() {
+            return this.label() + (isStackMachine() ? "" : "_args")
+        }
+
+        label() {
+            return getFunctionLabel(this.action)
         }
 
         toString(): string {
@@ -505,6 +582,15 @@ namespace ts.pxtc.ir {
             this.emit(lbl)
         }
 
+        getFullName() {
+            let name = getDeclName(this.action)
+            if (this.action) {
+                let info = ts.pxtc.nodeLocationInfo(this.action)
+                name = info.fileName.replace("pxt_modules/", "") + "(" + (info.line + 1) + "," + (info.column + 1) + "): " + name
+            }
+            return name
+        }
+
         getName() {
             let text = this.action && this.action.name ? (<Identifier>this.action.name).text : null
             return text || "inline"
@@ -532,16 +618,6 @@ namespace ts.pxtc.ir {
             this.emit(stmt(SK.StackEmpty, null))
         }
 
-        emitClrIfRef(p: Cell) {
-            assert(!p.isGlobal() && !p.iscap, "!p.isGlobal() && !p.iscap")
-            this.emitExpr(op(EK.Decr, [p.loadCore()]))
-        }
-
-        emitClrs(finlbl: ir.Stmt, retval: ir.Expr) {
-            if (this.isRoot) return;
-            this.locals.forEach(p => this.emitClrIfRef(p))
-        }
-
         emitJmpZ(trg: string | Stmt, expr: Expr) {
             this.emitJmp(trg, expr, JmpMode.IfZero)
         }
@@ -562,6 +638,31 @@ namespace ts.pxtc.ir {
             }
 
             this.emit(jmp)
+        }
+
+        inlineSelf(args: ir.Expr[]) {
+            const { precomp, flattened } = flattenArgs(args, false, true)
+            U.assert(flattened.length == this.args.length)
+            this.args.map((a, i) => {
+                a.repl = flattened[i]
+                a.replUses = 0
+            })
+            const r = inlineSubst(this.inlineBody)
+            this.args.forEach((a, i) => {
+                if (a.repl.exprKind == EK.SharedRef) {
+                    if (!a.repl.args[0].prevTotalUses)
+                        a.repl.args[0].prevTotalUses = a.repl.args[0].totalUses
+                    a.repl.args[0].totalUses += a.replUses - 1
+                }
+                a.repl = null
+                a.replUses = 0
+            })
+            if (precomp.length) {
+                precomp.push(r)
+                return op(EK.Sequence, precomp)
+            } else {
+                return r
+            }
         }
 
         resolve() {
@@ -603,15 +704,7 @@ namespace ts.pxtc.ir {
 
                 iterargs(e, opt)
 
-                if ((e.exprKind == EK.Decr || e.exprKind == EK.Incr) && noRefCount(e.args[0])) {
-                    return e.args[0]
-                }
-
                 switch (e.exprKind) {
-                    case EK.Decr:
-                        if (e.args[0].exprKind == EK.Incr)
-                            return e.args[0].args[0]
-                        break;
                     case EK.Sequence:
                         e.args = e.args.filter((a, i) => {
                             if (i != e.args.length - 1 && a.isPure()) {
@@ -647,6 +740,13 @@ namespace ts.pxtc.ir {
                         U.assert(e.args[0].totalUses > 0, "e.args[0].totalUses > 0")
                         e.args[0].totalUses++;
                         return e;
+                    case EK.PointerLiteral:
+                        const pl = e.ptrlabel()
+                        if (pl) {
+                            if (!pl.lblNumUses) pl.lblNumUses = 0
+                            pl.lblNumUses++
+                        }
+                        break
                 }
                 iterargs(e, cntuses)
                 return e
@@ -665,10 +765,7 @@ namespace ts.pxtc.ir {
                             return arg
                         }
                         arg.irCurrUses++
-                        //console.log("SH", e.data, arg.toString(), arg.irCurrUses, arg.sharingInfo())
-                        if (e.data === "noincr" || arg.irCurrUses == arg.totalUses)
-                            return e; // final one, no incr
-                        return op(EK.Incr, [e])
+                        return e
                     default:
                         iterargs(e, sharedincr)
                         return e
@@ -709,6 +806,7 @@ namespace ts.pxtc.ir {
                     case ir.SK.StackEmpty:
                     case ir.SK.Label:
                     case ir.SK.Breakpoint:
+                    case ir.SK.Comment:
                         break;
                     default: oops();
                 }
@@ -716,13 +814,50 @@ namespace ts.pxtc.ir {
 
             let allBrkp: Breakpoint[] = []
 
+            let prev: Stmt = null
+            let canInline = target.debugMode ? false : true
+            let inlineBody: Expr = null
             for (let s of this.body) {
                 if (s.expr) {
                     s.expr = opt(sharedincr(s.expr))
                 }
 
+                // mark Jump-to-next-instruction
+                if (prev && prev.lbl == s &&
+                    prev.stmtKind == ir.SK.Jmp &&
+                    s.stmtKind == ir.SK.Label &&
+                    prev.jmpMode == ir.JmpMode.Always &&
+                    s.lblNumUses == 1) {
+                    s.lblNumUses = lblNumUsesJmpNext
+                }
+                prev = s
+
                 if (s.stmtKind == ir.SK.Breakpoint) {
                     allBrkp[s.breakpointInfo.id] = s.breakpointInfo
+                } else if (canInline) {
+                    if (s.stmtKind == ir.SK.Jmp) {
+                        if (s.expr) {
+                            if (inlineBody) canInline = false
+                            else inlineBody = s.expr
+                        }
+                    } else if (s.stmtKind == ir.SK.StackEmpty) {
+                        // OK
+                    } else if (s.stmtKind == ir.SK.Label) {
+                        if (s.lblNumUses != lblNumUsesJmpNext)
+                            canInline = false
+                    } else {
+                        canInline = false
+                    }
+                }
+            }
+
+            if (canInline && inlineBody) {
+                const bodyCost = inlineWeight(inlineBody)
+                const callCost = 4 * this.args.length + 4 + 2
+                const inlineBonus = target.isNative ? 4 : 30
+                if (bodyCost <= callCost + inlineBonus) {
+                    this.inlineBody = inlineBody
+                    //pxt.log("INLINE: " + inlineWeight(inlineBody) + "/" + callCost + " - " + this.toString())
                 }
             }
 
@@ -756,6 +891,10 @@ namespace ts.pxtc.ir {
         return new Stmt(kind, expr)
     }
 
+    export function comment(msg: string): Stmt {
+        return stmt(SK.Comment, ptrlit(msg, msg))
+    }
+
     export function op(kind: EK, args: Expr[], data?: any): Expr {
         return new Expr(kind, args, data)
     }
@@ -764,7 +903,7 @@ namespace ts.pxtc.ir {
         return op(EK.NumberLiteral, null, v)
     }
 
-    function sharedCore(expr: Expr, data: string) {
+    export function shared(expr: Expr) {
         switch (expr.exprKind) {
             case EK.SharedRef:
                 expr = expr.args[0]
@@ -775,24 +914,12 @@ namespace ts.pxtc.ir {
         }
 
         let r = op(EK.SharedRef, [expr])
-        r.data = data
         return r
     }
 
-    export function sharedNoIncr(expr: Expr) {
-        return sharedCore(expr, "noincr")
-    }
-
-    export function shared(expr: Expr) {
-        return sharedCore(expr, null)
-    }
-
-    export function ptrlit(lbl: string, jsInfo: string, full = false): Expr {
+    export function ptrlit(lbl: string, jsInfo: string): Expr {
         let r = op(EK.PointerLiteral, null, lbl)
         r.jsInfo = jsInfo
-        if (full) {
-            r.args = []
-        }
         return r
     }
 
@@ -815,10 +942,10 @@ namespace ts.pxtc.ir {
         return r
     }
 
-    export function flattenArgs(topExpr: ir.Expr) {
-        let didStateUpdate = false
+    export function flattenArgs(args: ir.Expr[], reorder = false, keepcomplex = false) {
+        let didStateUpdate = reorder ? args.some(a => a.canUpdateCells()) : false
         let complexArgs: ir.Expr[] = []
-        for (let a of U.reversed(topExpr.args)) {
+        for (let a of U.reversed(args)) {
             if (a.isStateless()) continue
             if (a.exprKind == EK.CellRef && !didStateUpdate) continue
             if (a.canUpdateCells()) didStateUpdate = true
@@ -826,8 +953,11 @@ namespace ts.pxtc.ir {
         }
         complexArgs.reverse()
 
+        if (isStackMachine() && !keepcomplex)
+            complexArgs = []
+
         let precomp: ir.Expr[] = []
-        let flattened = topExpr.args.map(a => {
+        let flattened = args.map(a => {
             let idx = complexArgs.indexOf(a)
             if (idx >= 0) {
                 let sharedRef = a

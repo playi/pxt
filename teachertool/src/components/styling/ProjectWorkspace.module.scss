@@ -1,0 +1,21 @@
+.panel {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background-color: var(--pxt-headerbar-accent-smoke);
+
+    .projectName {
+        height: 100%;
+        font-size: 1.125rem;
+        font-style: normal;
+        font-weight: 700;
+        line-height: normal;
+        display: flex;
+        align-items: center;
+    }
+
+    iframe {
+        flex: 1 1 0%;
+    }
+}
