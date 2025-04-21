@@ -1,7 +1,9 @@
 {
     "name": "pytests",
     "description": "Test for the python helpers",
-    "installedVersion": "file:.",
+    "dependencies": {
+        "bare": "file:../bare"
+    },
     "files": [
         "pysplit.ts",
         "pystrip.ts",
@@ -9,7 +11,5 @@
         "pxt-python-helpers.ts"
     ],
     "public": true,
-    "dependencies": {
-        "bare": "file:../bare"
-    }
+    "installedVersion": "file:."
 }

@@ -1,6 +1,7 @@
 {
     "name": "bare",
     "description": "A feature-less testing target for PXT",
+    "dependencies": {},
     "files": [
         "README.md",
         "pxt-core.d.ts",
@@ -8,6 +9,5 @@
         "basic.ts"
     ],
     "public": true,
-    "dependencies": {},
     "installedVersion": "file:../../libs/bare"
 }

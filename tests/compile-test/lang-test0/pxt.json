@@ -1,7 +1,9 @@
 {
     "name": "lang-test0",
     "description": "Test for the TypeScript -> HEX compiler",
-    "installedVersion": "file:.",
+    "dependencies": {
+        "bare": "file:../bare"
+    },
     "files": [
         "lang-test0.ts",
         "01arguments.ts",
@@ -57,7 +59,5 @@
         "99final.ts"
     ],
     "public": true,
-    "dependencies": {
-        "bare": "file:../bare"
-    }
+    "installedVersion": "file:."
 }

@@ -1,6 +1,7 @@
 {
     "name": "testBlocks",
     "description": "Project that defines a variety of blocks to be used in decompiler test cases",
+    "dependencies": {},
     "files": [
         "basic.ts",
         "banned.ts",
@@ -17,6 +18,5 @@
         "spritekind.ts"
     ],
     "public": true,
-    "dependencies": {},
     "installedVersion": "file:."
 }
