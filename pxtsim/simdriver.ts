@@ -447,6 +447,15 @@ namespace pxsim {
             return urlObject.toString();
         }
 
+        private checkURL(frame: any){
+            let lastSlashIndex = location.href.lastIndexOf('/');
+            let baseUrl = location.href.substring(0, lastSlashIndex);
+            if(location.hostname == "localhost"){
+                return  location.pathname.includes("/vendor/pxt/") ?  location.origin + '/vendor/pxt/simulator.html#' + frame.id :  location.origin + '/sim/simulator.html#' + frame.id;
+            }
+            return baseUrl + '/simulator.html#' + frame.id;
+        }
+
         private createFrame(url?: string): HTMLDivElement {
             const wrapper = document.createElement("div") as HTMLDivElement;
             wrapper.className = `simframe ui embed`;
@@ -459,9 +468,7 @@ namespace pxsim {
             frame.setAttribute('sandbox', 'allow-same-origin allow-scripts');
             frame.className = 'no-select';
 
-            let furl = this.setRunOptionQueryParams(url || this.getSimUrl().toString());
-            furl += '#' + frame.id;
-
+            let furl = this.checkURL(frame)
             frame.src = furl;
             frame.frameBorder = "0";
             frame.dataset['runid'] = this.runId;

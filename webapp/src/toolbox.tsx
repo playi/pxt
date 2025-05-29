@@ -448,7 +448,6 @@ export class Toolbox extends data.Component<ToolboxProps, ToolboxState> {
     renderCore() {
         const { editorname, parent } = this.props;
         const { showAdvanced, visible, loading, selectedItem, expandedItem, hasSearch, showSearchBox, hasError, tryToDeleteNamespace } = this.state;
-        console.log(this.state,'......state')
         if (!visible) return <div style={{ display: 'none' }} />
 
         const theme = pxt.appTarget.appTheme;
