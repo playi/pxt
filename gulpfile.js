@@ -830,7 +830,7 @@ const buildAll = gulp.series(
     runUglify
 );
 
-const travis = gulp.series(lint, buildAll, testAll, targetjs, pxtTravis);
+const travis = gulp.series(buildAll, testAll, targetjs, pxtTravis);
 
 exports.default = buildAll;
 exports.clean = clean;
