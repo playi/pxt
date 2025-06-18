@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useContext, useEffect, useState } from "react";
 import { showToast } from "../state/actions";
 import { AppStateContext, dispatch } from "../state/AppStateContext";
+import { IconProp } from "@fortawesome/fontawesome-svg-core";
 
 export default function Render(props: {
     copyValue: string;
@@ -58,13 +59,13 @@ export default function Render(props: {
             )}
             {!copySuccessful && (
                 <FontAwesomeIcon
-                    icon={faCopy}
+                    icon={faCopy as IconProp}
                     className="tw-text-[65%] hover:tw-scale-110 tw-ease-linear tw-duration-[50ms]"
                 />
             )}
             {copySuccessful && (
                 <FontAwesomeIcon
-                    icon={faCheck}
+                    icon={faCheck as IconProp}
                     className="tw-text-[65%] tw-text-green-600"
                 />
             )}

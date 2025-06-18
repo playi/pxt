@@ -9,6 +9,7 @@ import { dismissToast } from "../state/actions";
 
 // eslint-disable-next-line import/no-unassigned-import
 import "../App.css";
+import { IconProp } from "@fortawesome/fontawesome-svg-core";
 
 const backgroundColors: { [type in ToastType]: string } = {
     success: "tw-bg-green-300",
@@ -106,7 +107,7 @@ function Toast(props: ToastWithId) {
                                 className={
                                     "tw-cursor-pointer hover:tw-scale-125 tw-transition-all"
                                 }
-                                icon={faTimesCircle}
+                                icon={faTimesCircle as IconProp}
                             />
                         </div>
                     </div>
@@ -115,7 +116,7 @@ function Toast(props: ToastWithId) {
                     <div className="tw-flex tw-flex-grow tw-justify-end">
                         <div>
                             <FontAwesomeIcon
-                                icon={faCircleNotch}
+                                icon={faCircleNotch as IconProp} 
                                 className="fa-spin"
                             />
                         </div>
