@@ -646,8 +646,8 @@ namespace pxt {
             this.isLoaded = true;
             const str = this.readFile(pxt.CONFIG_NAME);
             if (str == null) {
-                // if (!isInstall)
-                //     U.userError("Package not installed: " + this.id + ", did you forget to run `pxt install`?")
+                if (!isInstall)
+                    U.userError("Package not installed: " + this.id + ", did you forget to run `pxt install`?")
             } else {
                 this.parseConfig(str);
             }
