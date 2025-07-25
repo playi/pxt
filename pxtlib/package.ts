@@ -636,7 +636,7 @@ namespace pxt {
             return dependencies;
         }
 
-        async loadAsync(isInstall = false, targetVersion?: string): Promise<void> {
+        async loadAsync(isInstall = true, targetVersion?: string): Promise<void> {
             if (this.isLoaded) return;
 
 
