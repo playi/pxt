@@ -792,7 +792,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                 if (res.outfiles[tsName]) {
                     return res.outfiles[tsName]
                 }
-                return ""
+                return "// on start"
             })
     }
 

@@ -287,6 +287,21 @@ export function decompileAsync(fileName: string, blockInfo?: ts.pxtc.BlocksInfo,
         .then(resp => {
             // try to patch event locations
             if (resp.success && blockInfo && oldWorkspace && blockFile) {
+                // Parse XML to remove duplicate on_start blocks
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(resp.outfiles[blockFile], "application/xml");
+                const blocks = xmlDoc.getElementsByTagName("block");
+                let onStartCount = 0;
+                for (let i = blocks.length - 1; i >= 0; i--) {
+                    if (blocks[i].getAttribute("type") === "pxt-on-start") {
+                        if (onStartCount > 0) {
+                            blocks[i].parentNode.removeChild(blocks[i]);
+                        }
+                        onStartCount++;
+                    }
+                }
+                const serializer = new XMLSerializer();
+                resp.outfiles[blockFile] = serializer.serializeToString(xmlDoc);
                 const newXml = pxtblockly.patchBlocksFromOldWorkspace(blockInfo, oldWorkspace, resp.outfiles[blockFile]);
                 resp.outfiles[blockFile] = newXml;
             }
