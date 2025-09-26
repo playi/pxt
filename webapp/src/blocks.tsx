@@ -36,6 +36,8 @@ import SimState = pxt.editor.SimState;
 import { DuplicateOnDragConnectionChecker } from "../../pxtblocks/plugins/duplicateOnDrag";
 import { PathObject } from "../../pxtblocks/plugins/renderer/pathObject";
 
+import { emitButtonToggle } from "./buttonEvents";
+
 
 export class Editor extends toolboxeditor.ToolboxEditor {
     editor: Blockly.WorkspaceSvg;
@@ -696,6 +698,24 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                     Blockly.Events.setGroup(false);
                 }
             }
+        })
+
+        this.editor.addChangeListener((e:any) => {
+            if(e.type === Blockly.Events.BLOCK_CREATE ||  e.type === Blockly.Events.BLOCK_DELETE) {
+                console.log('checking foe create and delete',this.editor.getAllBlocks());
+                let buttonXmlString = ""
+                this.editor.getAllBlocks().forEach((block:any) => {
+                    if(block.codeCard.blocksXml){
+                        buttonXmlString += block.codeCard.blocksXml
+                    }
+                })
+                if (buttonXmlString.includes("Buttons.Main")) {
+                    emitButtonToggle("Main", true);
+                } else {
+                    emitButtonToggle("Main", false);
+                }
+            }
+            pxt.tickEvent
         })
 
 

@@ -7,7 +7,7 @@ import * as sui from "./sui";
 import MuteState = pxt.editor.MuteState;
 import SimState = pxt.editor.SimState;
 import ISettingsProps = pxt.editor.ISettingsProps;
-
+import { onButtonToggle } from "./buttonEvents";
 export interface SimulatorProps extends ISettingsProps {
     collapsed?: boolean;
     simSerialActive?: boolean;
@@ -16,11 +16,12 @@ export interface SimulatorProps extends ISettingsProps {
     showSimulatorSidebar?: () => void;
 }
 
-export class SimulatorToolbar extends data.Component<SimulatorProps, {}> {
+export class SimulatorToolbar extends data.Component<SimulatorProps, any> {
 
     constructor(props: SimulatorProps) {
         super(props);
         this.state = {
+            buttons:{main:false}
         }
 
         // iOS requires interactive consent to use audio
@@ -38,6 +39,15 @@ export class SimulatorToolbar extends data.Component<SimulatorProps, {}> {
         this.takeScreenshot = this.takeScreenshot.bind(this);
         this.toggleDebug = this.toggleDebug.bind(this);
     }
+
+    componentDidMount() {
+        onButtonToggle((button, visible) => {
+            if (button === "Main") {
+                this.setState({buttons:{main:visible}});
+            }
+        });
+    }
+    
 
     openInstructions() {
         pxt.tickEvent("simulator.make", undefined, { interactiveConsent: true });
@@ -150,6 +160,7 @@ export class SimulatorToolbar extends data.Component<SimulatorProps, {}> {
                     icon={`${collapsed ? 'play' : 'stop'}`}
                     title={collapseIconTooltip} onClick={this.toggleSimulatorCollapse}
                 />}
+                {this.state.buttons.main && <sui.Button>Main</sui.Button>}
             </div>
             {!isHeadless && <div className={`ui icon tiny buttons computer only`} style={{ padding: "0" }}>
                 {audio && <MuteButton onClick={this.toggleMute} state={parent.state.mute} />}

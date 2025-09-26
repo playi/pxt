@@ -30,6 +30,7 @@ import IProjectView = pxt.editor.IProjectView;
 import ErrorListState = pxt.editor.ErrorListState;
 
 import * as pxtblockly from "../../pxtblocks";
+import { emitButtonToggle } from "./buttonEvents";
 
 const MIN_EDITOR_FONT_SIZE = 10
 const MAX_EDITOR_FONT_SIZE = 40
@@ -1019,6 +1020,15 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                 // Clear ranges because the model changed
                 if (this.fieldEditors)
                     this.fieldEditors.clearRanges(editor);
+            })
+
+            this.editor.onDidChangeModelContent((ev) => {
+                const editorText = this.editor.getValue();
+                if (editorText.includes("Buttons.Main")) {
+                    emitButtonToggle("Main", true);
+                } else {
+                    emitButtonToggle("Main", false);
+                }
             })
         })
     }

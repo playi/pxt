@@ -3563,7 +3563,7 @@ export class ProjectView
 
     expandSimulator() {
         if (pxt.appTarget.simulator.headless) {
-            simulator.unhide();
+            pxt.appTarget.simulator.headless = false; // force non-headless mode
         }
         else {
             this.startSimulator();
@@ -3573,10 +3573,9 @@ export class ProjectView
     }
 
     collapseSimulator() {
-        simulator.hide(() => {
-            this.setState({ collapseEditorTools: true });
-            this.fireResize();
-        })
+        pxt.appTarget.simulator.headless = true; // force headless mode
+        this.setState({ collapseEditorTools: true });
+        this.fireResize();
     }
 
     // Close on escape
