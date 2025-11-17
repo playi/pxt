@@ -147,44 +147,12 @@ export class SimulatorToolbar extends data.Component<SimulatorProps, any> {
 
         const showSerialEditorSection = isFullscreen && (simSerialActive || devSerialActive);
 
-        return <aside className={"ui item grid centered simtoolbar" + (sandbox ? "" : " portrait ")} role="complementary" aria-label={lf("Simulator toolbar")}>
-            <div className={`ui icon tiny buttons`} style={{ padding: "0" }}>
-                {make && <sui.Button disabled={debugging} icon='configure' className="secondary" title={makeTooltip} onClick={this.openInstructions} />}
-                {run && !targetTheme.bigRunButton && <PlayButton parent={parent} simState={parentState.simState} debugging={parentState.debugging} />}
-                {fullscreen && <sui.Button key='fullscreenbtn' className="fullscreen-button tablet only hidefullscreen" icon="xicon fullscreen" title={fullscreenTooltip} onClick={this.toggleSimulatorFullscreen} />}
-                {restart && <sui.Button disabled={!runControlsEnabled} key='restartbtn' className={`restart-button`} icon="refresh" title={restartTooltip} onClick={this.restartSimulator} />}
-                {run && debug && <sui.Button disabled={!debugBtnEnabled} key='debugbtn' className={`debug-button ${debugging ? "orange" : ""}`} icon="icon bug" title={debugTooltip} onClick={this.toggleDebug} />}
-                {audio && isTabTutorial && <MuteButton onClick={this.toggleMute} state={parent.state.mute} className="hidefullscreen tutorial"/>}
-                {collapse && <sui.Button
-                    className={`expand-button portrait only editortools-btn hidefullscreen`}
-                    icon={`${collapsed ? 'play' : 'stop'}`}
-                    title={collapseIconTooltip} onClick={this.toggleSimulatorCollapse}
-                />}
-                {this.state.buttons.main && <sui.Button>Main</sui.Button>}
-            </div>
+        return  <aside className={"ui item grid simtoolbar" + (sandbox ? "" : " portrait ")} role="complementary" aria-label={lf("Simulator toolbar")}>
             {!isHeadless && <div className={`ui icon tiny buttons computer only`} style={{ padding: "0" }}>
-                {audio && <MuteButton onClick={this.toggleMute} state={parent.state.mute} />}
-                {simOpts.keymap && <sui.Button key='keymap' className="keymap-button" icon="keyboard" title={keymapTooltip} onClick={parent.toggleKeymap} />}
-            </div>}
-            {showSerialEditorSection && <div className={`ui item tiny buttons full-screen-console`}>
-                {simSerialActive && <sui.Button
-                    icon="list"
-                    className="purple"
-                    title={simSerialTooltip}
-                    onClick={this.openDeviceSimulator}
-                />}
-                {devSerialActive && <sui.Button
-                    icon="usb"
-                    className="purple"
-                    title={devSerialTooltip}
-                    onClick={this.openDeviceSerial}
-                />}
-            </div>}
-            {!isHeadless && <div className={`ui icon tiny buttons computer only`} style={{ padding: "0" }}>
-                {screenshot && <sui.Button disabled={!isRunning} key='screenshotbtn' className={`screenshot-button ${screenshotClass}`} icon={`icon camera left`} title={screenshotTooltip} onClick={this.takeScreenshot} />}
                 {fullscreen && <sui.Button key='fullscreenbtn' className={`fullscreen-button`} icon={`xicon ${isFullscreen ? 'fullscreencollapse' : 'fullscreen'}`} title={fullscreenTooltip} onClick={this.toggleSimulatorFullscreen} />}
             </div>}
-        </aside >;
+        </aside>
+        ;
     }
 }
 

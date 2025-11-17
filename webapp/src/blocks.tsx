@@ -700,25 +700,6 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             }
         })
 
-        this.editor.addChangeListener((e:any) => {
-            if(e.type === Blockly.Events.BLOCK_CREATE ||  e.type === Blockly.Events.BLOCK_DELETE) {
-                console.log('checking foe create and delete',this.editor.getAllBlocks());
-                let buttonXmlString = ""
-                this.editor.getAllBlocks().forEach((block:any) => {
-                    if(block.codeCard.blocksXml){
-                        buttonXmlString += block.codeCard.blocksXml
-                    }
-                })
-                if (buttonXmlString.includes("Buttons.Main")) {
-                    emitButtonToggle("Main", true);
-                } else {
-                    emitButtonToggle("Main", false);
-                }
-            }
-            pxt.tickEvent
-        })
-
-
         if (this.shouldShowCategories()) {
             this.renderToolbox();
         }

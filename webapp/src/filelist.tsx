@@ -393,14 +393,7 @@ export class FileList extends data.Component<ISettingsProps, FileListState> {
         const mainPkg = pkg.mainEditorPkg()
         const plus = showFiles && !pxt.shell.isReadOnly() && (!mainPkg.files[customFile] || pxt.appTarget.appTheme.addNewTypeScriptFile);
         const meta: pkg.PackageMeta = this.getData("open-pkg-meta:" + mainPkg.getPkgId());
-        return <div role="tree" className={`ui tiny vertical ${targetTheme.invertedMenu ? `inverted` : ''} menu filemenu landscape only hidefullscreen`}>
-            <div role="treeitem" aria-selected={showFiles} aria-expanded={showFiles} aria-label={lf("File explorer toolbar")} key="projectheader" className="link item" onClick={this.toggleVisibility} tabIndex={0} onKeyDown={fireClickOnEnter}>
-                {lf("Explorer")}
-                <sui.Icon icon={`chevron ${showFiles ? "up" : "down"} icon`} />
-                {plus ? <sui.Button className="primary label" icon="plus" title={lf("Add custom blocks?")} onClick={this.handleCustomBlocksClick} onKeyDown={this.handleButtonKeydown} /> : undefined}
-                {!meta.numErrors ? null : <span className='ui label red'>{meta.numErrors}</span>}
-            </div>
-            {showFiles ? pxt.Util.concat(pkg.allEditorPkgs().map(p => this.filesWithHeader(p))) : undefined}
+        return <div>
         </div>;
     }
 }

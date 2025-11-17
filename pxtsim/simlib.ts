@@ -111,7 +111,10 @@ namespace pxsim {
             const notifyOne = this.notifyID && this.notifyOneID && id == this.notifyOneID;
             if (notifyOne)
                 id = this.notifyID;
-            let queues = this.getQueues(id, evid, true).concat(this.getQueues(id, evid, false))
+            let queues = [
+                this.start(id, evid, true),
+                this.start(id, evid, false)
+            ].filter(q => q);
             this.lastEventValue = evid;
             this.lastEventTimestampUs = U.perfNowUs();
 

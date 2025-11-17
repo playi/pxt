@@ -3,6 +3,14 @@
 import { runValidatorPlan } from "./code-validation/runValidatorPlan";
 import IProjectView = pxt.editor.IProjectView;
 
+export interface EventData {
+  type: string;
+  event?: string;
+  state?: string;
+  sound?: string;
+}
+
+
 const pendingRequests: pxt.Map<{
     resolve: (res?: pxt.editor.EditorMessageResponse | PromiseLike<pxt.editor.EditorMessageResponse>) => void;
     reject: (err: any) => void;
@@ -57,15 +65,28 @@ export function bindEditorMessages(getEditorAsync: () => Promise<IProjectView>) 
                     p = p.then(() => req.resolve(data as pxt.editor.EditorMessageResponse));
                 }
             } else if (data.type == "pxteditor") { // request from the editor
+                const simIframe = document.querySelector('iframe[title="Simulator"]') as HTMLIFrameElement;
                 p = p.then(() => {
-                    return getEditorAsync().then(projectView => {
+                    return getEditorAsync().then((projectView:any) => {
                         const req = data as pxt.editor.EditorMessageRequest;
                         pxt.debug(`pxteditor: ${req.action}`);
                         switch (req.action.toLowerCase()) {
                             case "switchjavascript": return Promise.resolve().then(() => projectView.openJavaScript());
                             case "switchpython": return Promise.resolve().then(() => projectView.openPython());
                             case "switchblocks": return Promise.resolve().then(() => projectView.openBlocks());
-                            case "startsimulator": return Promise.resolve().then(() => projectView.startSimulator());
+                            case "startsimulator": return Promise.resolve().then(() => {
+                                const events = extractEventsFromInput(projectView.editorFile.content)
+                                if (simIframe?.contentWindow) {
+                                    simIframe.contentWindow.postMessage(
+                                        {
+                                            source: "blocks-editor",
+                                            data:events
+                                        },
+                                        "*"
+                                    );
+                                }
+                                projectView.startSimulator();
+                            });
                             case "restartsimulator": return Promise.resolve().then(() => projectView.restartSimulator());
                             case "hidesimulator": return Promise.resolve().then(() => projectView.collapseSimulator());
                             case "showsimulator": return Promise.resolve().then(() => projectView.expandSimulator());
@@ -222,14 +243,14 @@ export function bindEditorMessages(getEditorAsync: () => Promise<IProjectView>) 
                             case "shareproject": {
                                 const msg = data as pxt.editor.EditorShareRequest;
                                 return projectView.anonymousPublishHeaderByIdAsync(msg.headerId, msg.projectName)
-                                    .then(scriptInfo => {
+                                    .then((scriptInfo: any) => {
                                         resp = scriptInfo;
                                     });
                             }
                             case "savelocalprojectstocloud": {
                                 const msg = data as pxt.editor.EditorMessageSaveLocalProjectsToCloud;
                                 return projectView.saveLocalProjectsToCloudAsync(msg.headerIds)
-                                    .then(guidMap => {
+                                    .then((guidMap: any) => {
                                         resp = <pxt.editor.EditorMessageSaveLocalProjectsToCloudResponse>{
                                             headerIdMap: guidMap
                                         };
@@ -346,4 +367,92 @@ export function postHostMessageAsync(msg: pxt.editor.EditorMessageRequest): Prom
         if (!msg.response)
             resolve(undefined)
     })
+}
+
+export function extractEventsFromInput(input: string): EventData[] {
+  const isXml = input.trim().startsWith("<xml");
+  const result: EventData[] = [];
+
+  if (isXml) {
+    // 🧩 Parse XML input
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(input, "text/xml");
+    const blocks = xmlDoc.querySelectorAll("block[type*='event'], block[type*='wait'], block[type^='dash_'][type$='_if'], block[type*='draw']");
+
+    blocks.forEach(block => {
+      const type = block.getAttribute("type") ?? "";
+      const event = block.querySelector("field[name='event']")?.textContent ?? "";
+      const state = block.querySelector("field[name='state']")?.textContent ?? "";
+      const sound = block.querySelector("field[name='sound']")?.textContent ?? "";
+
+      const data: EventData = { type };
+      if (event) data.event = event;
+      if (state) data.state = state;
+      if (sound) data.sound = sound;
+
+      result.push(data);
+    });
+  } else {
+    // 💬 Text parsing (JS code style)
+    const patterns = [
+      {
+        regex: /events\.waitUntilObstacle\s*\(\s*(Obstacles\.\w+)\s*,\s*(ObstacleState\.\w+)\s*\)/g,
+        type: "dash_obstacle_wait",
+      },
+      {
+        regex: /events\.waitUntilButton\s*\(\s*(Buttons\.\w+)\s*,\s*(ButtonState\.\w+)\s*\)/g,
+        type: "dash_button_wait",
+      },
+      {
+        regex: /events\.waitUntilHeard\s*\(\s*(Heard\.\w+)\s*\)/g,
+        type: "dash_sound_wait",
+      },
+      {
+        regex: /events\.waitUntilPickedUp\s*\(/g,
+        type: "dash_kidnap_wait",
+      },
+      {
+        regex: /events\.whenButton\s*\(\s*(Buttons\.\w+)\s*,\s*(ButtonState\.\w+)/g,
+        type: "dash_button_event",
+      },
+      {
+        regex: /events\.whenPickedUp\s*\(/g,
+        type: "dash_kidnap_event",
+      },
+      {
+        regex: /events\.whenObstacle\s*\(\s*(Obstacles\.\w+)\s*,\s*(ObstacleState\.\w+)/g,
+        type: "dash_obstacle_event",
+      },
+      {
+        regex: /events\.whenHeard\s*\(\s*(Heard\.\w+)/g,
+        type: "dash_sound_event",
+      },
+      {
+        regex: /accessories\.markerDown\s*\(/g,
+        type: "dash_draw",
+      },
+      {
+        regex: /accessories\.markerUp\s*\(/g,
+        type: "dash_do_not_draw",
+      },
+    ];
+
+    for (const { regex, type } of patterns) {
+      let match;
+      while ((match = regex.exec(input)) !== null) {
+        const data: EventData = { type };
+        if (type.includes("button")) {
+          if (match[1]) data.event = match[1];
+          if (match[2]) data.state = match[2];
+        } else if (type.includes("obstacle")) {
+          if (match[1]) data.event = match[1];
+          if (match[2]) data.state = match[2];
+        } else if (type.includes("sound")) {
+          if (match[1]) data.sound = match[1];
+        }
+        result.push(data);
+      }
+    }
+  }
+  return result;
 }
