@@ -5765,6 +5765,15 @@ document.addEventListener("DOMContentLoaded", async () => {
     pxt.perf.measureStart("setAppTarget");
     pkg.setupAppTarget((window as any).pxtTargetBundle);
 
+    // The host app already knows synchronously (no network round-trip)
+    // whether there's a logged-in profile at all. When it tells us there
+    // definitely isn't one, force headless mode before the editor ever
+    // mounts, so the simulator sidebar never gets a chance to render
+    // visible even for a single frame.
+    if (optsQuery["simnotloggedin"] == "1" && pxt.appTarget.simulator) {
+        pxt.appTarget.simulator.headless = true;
+    }
+
     // DO NOT put any async code before this line! The serviceworker must be initialized before
     // the window load event fires
     appcache.init(() => theEditor.reloadEditor());
