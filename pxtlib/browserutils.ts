@@ -268,6 +268,7 @@ namespace pxt.BrowserUtils {
         const unsupportedBrowsers = pxt.appTarget?.unsupportedBrowsers
             || (window as any).pxtTargetBundle?.unsupportedBrowsers as BrowserOptions[];
         if (unsupportedBrowsers?.some(b => b.id == browser())) {
+            console.log("[isBrowserSupported] rejected by target unsupportedBrowsers", { browser: browser(), unsupportedBrowsers })
             return false
         }
 
@@ -293,6 +294,33 @@ namespace pxt.BrowserUtils {
 
         //Bypass
         isSupported = isSupported || /anybrowser=(true|1)/.test(window.location.href)
+
+        console.log("[isBrowserSupported]", {
+            userAgent: navigator.userAgent,
+            browser: browser(),
+            os: os(),
+            versionString,
+            v,
+            isChrome: isChrome(),
+            isFirefox: isFirefox(),
+            isEdge: isEdge(),
+            isSafari: isSafari(),
+            isOpera: isOpera(),
+            isRecentChrome,
+            isRecentFirefox,
+            isRecentEdge,
+            isRecentSafari,
+            isRecentOpera,
+            isModernBrowser,
+            isMidori: isMidori(),
+            isLinux: isLinux(),
+            isARM: isARM(),
+            isEpiphany: isEpiphany(),
+            isUnsupportedRPI,
+            isNotSupported,
+            anybrowser: /anybrowser=(true|1)/.test(window.location.href),
+            isSupported,
+        })
 
         if (!hasLoggedBrowser) {
             pxt.log(`Browser: ${browser()} ${versionString} on ${os()}`)
